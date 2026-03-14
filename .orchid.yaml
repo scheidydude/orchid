@@ -1,0 +1,24 @@
+# .orchid.yaml — per-project Orchid configuration
+# All fields are optional — Orchid's defaults apply if omitted.
+
+project: orchid
+description: ""
+
+# Model preference: claude | local | auto
+# Overrides routing.default from orchid.defaults.yaml
+model_preference: auto
+
+# Agent roles active for this project
+agent_roles:
+  - developer
+  - researcher
+  - reviewer
+
+# Extra files to include in agent context (relative to project root)
+# context_files:
+#   - README.md
+#   - docs/architecture.md
+
+# Override memory settings (optional)
+# memory:
+#   compression_threshold: 8000

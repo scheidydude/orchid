@@ -14,7 +14,7 @@ models:
     provider: openai_compat
     base_url: "${LLAMA_BASE_URL:-http://localhost:8080/v1}"
     api_key: "${LLAMA_API_KEY:-none}"
-    model: local-model        # whatever llama.cpp is serving
+    model: "${LLAMA_MODEL:-qwen3.5-35b-a3b-q6}"
     max_tokens: 4096
     temperature: 0.5
 

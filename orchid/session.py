@@ -65,7 +65,26 @@ class Session:
         )
 
     def save(self) -> None:
-        """Persist all mutated state back to disk."""
+        """Persist all mutated session state to disk.
+
+        This method is idempotent and can be called multiple times.
+        It writes the following to disk:
+
+        - tasks: Updated task list (via mem_state.save_tasks)
+        - hot_memory: Current hot memory content (via mem_state.save_hot_memory)
+
+        Side effects:
+        - Does NOT write decisions (those are persisted immediately upon creation)
+        - Does NOT write session logs (handled by _write_session_log)
+        - Does NOT compress hot memory (handled by _maybe_compress_hot_memory)
+
+        Thread safety:
+        - Not thread-safe. Callers should ensure single-threaded access.
+
+        Usage:
+            Typically called from close() after compression, or periodically
+            during long-running sessions to prevent data loss.
+        """
         mem_state.save_tasks(self.tasks, self.project_dir)
         mem_state.save_hot_memory(self.hot_memory, self.project_dir)
         logger.info("Session saved.")

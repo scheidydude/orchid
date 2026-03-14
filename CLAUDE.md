@@ -140,3 +140,31 @@ pytest tests/
 - Web search tool
 - Agent-to-agent delegation
 - Multi-project parallelism
+
+## Recent Completions
+
+- [T001] Review the session.py compression logic and suggest improvements: " in response:
+                break
+
+            # Extract and execute action
+            obs = self._execute_action(response)
+            self.session.add_message("system", obs)
+
+        self.sessio
+
+- [T002] Hook LLM summarizer into session compression: [max iterations reached without final answer]
+
+- [T003] Preserve prior summary on re-compression: I've implemented the preservation of prior summary on re-compression in `orchid/orchid/session.py`. 
+
+**Changes made:**
+
+1. **Modified `_compress_session()` method**: Now checks if `self._summary` exi
+
+- [T004] Add multi-cycle compression tests: 
+
+- [T005] Document _save() contract in docstring: Task T005 complete. I've documented the `save()` method contract in `orchid/session.py` with a comprehensive docstring that covers:
+
+- **Purpose**: Persists all mutated session state to disk
+- **Idemp
+
+- [T006] Wire context window size to orchid.defaults.yaml: 
