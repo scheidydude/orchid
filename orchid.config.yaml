@@ -1,0 +1,54 @@
+# Orchid configuration
+# Override any value with environment variables (ORCHID_<SECTION>_<KEY>)
+
+models:
+  # Claude API — used for orchestration, review, complex reasoning
+  claude:
+    provider: anthropic
+    model: claude-sonnet-4-6
+    max_tokens: 8192
+    temperature: 0.3
+
+  # Local llama.cpp — used for bulk/draft/worker tasks
+  local:
+    provider: openai_compat
+    base_url: "${LLAMA_BASE_URL:-http://localhost:8080/v1}"
+    api_key: "${LLAMA_API_KEY:-none}"
+    model: local-model        # whatever llama.cpp is serving
+    max_tokens: 4096
+    temperature: 0.5
+
+routing:
+  # Task types routed to Claude API
+  claude_tasks:
+    - orchestrate
+    - review
+    - plan
+    - critique
+    - synthesize
+  # Task types routed to local model
+  local_tasks:
+    - draft
+    - search
+    - transform
+    - summarize
+    - code_generate
+  # Fallback when type is unknown
+  default: local
+  # Token threshold: tasks estimated above this use Claude
+  complexity_token_threshold: 2000
+
+memory:
+  hot_memory_file: CLAUDE.md
+  tasks_file: tasks.md
+  decisions_file: .orchid/decisions.json
+  session_log_dir: .orchid/session_logs
+  max_hot_memory_tokens: 4000
+  compression_threshold: 6000   # compress when hot memory exceeds this
+
+agents:
+  max_react_iterations: 15
+  tool_timeout_seconds: 30
+  bash_timeout_seconds: 60
+
+projects_dir: projects
