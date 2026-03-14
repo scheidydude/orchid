@@ -73,8 +73,16 @@ def load_tasks(project_dir: str | Path = ".") -> list[Task]:
     if not path.exists():
         return []
     tasks = []
+    in_comment = False
     for line in path.read_text(encoding="utf-8").splitlines():
-        m = _TASK_RE.match(line.strip())
+        stripped = line.strip()
+        if "<!--" in stripped:
+            in_comment = True
+        if in_comment:
+            if "-->" in stripped:
+                in_comment = False
+            continue
+        m = _TASK_RE.match(stripped)
         if not m:
             continue
         tags = re.findall(r"#(\w+)", m.group("rest") or "")

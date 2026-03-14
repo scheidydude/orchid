@@ -1,9 +1,20 @@
-"""CLI entry point — interactive and autonomous modes."""
+"""CLI entry point.
+
+Top-level flags handle the common case:
+  orchid --project <path> --mode auto
+  orchid --project <path> --mode interactive
+  orchid --project <path> --status
+  orchid --project <path> --add-task "Build the login page"
+
+Subcommands for less frequent operations:
+  orchid init [PATH]           scaffold CLAUDE.md / tasks.md / .orchid.yaml
+  orchid decide TITLE -d TEXT  record an architectural decision
+"""
 
 from __future__ import annotations
 
 import logging
-import sys
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -12,13 +23,17 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Prompt
+from rich.table import Table
 
 app = typer.Typer(
     name="orchid",
-    help="Orchid AI agent orchestration framework",
-    no_args_is_help=True,
+    help="Orchid — AI agent orchestration framework",
+    invoke_without_command=True,
+    no_args_is_help=False,
 )
 console = Console()
+
+_TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 
 
 def _setup_logging(level: str) -> None:
@@ -36,23 +51,67 @@ def _make_session(project: str) -> "Session":
     return s
 
 
-# ── Commands ──────────────────────────────────────────────────────────────────
+def _resolve_project(project: str) -> Path:
+    return Path(project).expanduser().resolve()
 
 
-@app.command()
-def run(
-    project: str = typer.Argument(".", help="Path to the project directory"),
-    max_tasks: int = typer.Option(50, "--max-tasks", "-n", help="Max tasks per session"),
+# ── Main callback — handles --mode, --status, --add-task ─────────────────────
+
+
+@app.callback(invoke_without_command=True)
+def main(
+    ctx: typer.Context,
+    project: str = typer.Option(".", "--project", "-p", help="Path to the project directory"),
+    mode: Optional[str] = typer.Option(
+        None, "--mode", "-m",
+        help="Run mode: auto (autonomous) | interactive (chat)",
+    ),
+    status: bool = typer.Option(False, "--status", "-s", help="Show task board and hot memory"),
+    add_task: Optional[str] = typer.Option(
+        None, "--add-task", "-a",
+        help="Add a new task (title string). Use --type and --priority to customise.",
+    ),
+    task_type: str = typer.Option("draft", "--type", help="Task type for --add-task"),
+    priority: int = typer.Option(2, "--priority", help="Priority for --add-task (1=high)"),
+    max_tasks: int = typer.Option(50, "--max-tasks", "-n", help="Max tasks for auto mode"),
     log_level: str = typer.Option("INFO", "--log-level", "-l"),
 ) -> None:
-    """Run the orchestrator autonomously until all tasks are done."""
+    if ctx.invoked_subcommand:
+        return
+
     _setup_logging(log_level)
+    proj = str(_resolve_project(project))
+
+    if status:
+        _cmd_status(proj)
+        return
+
+    if add_task:
+        _cmd_add_task(proj, add_task, task_type, priority)
+        return
+
+    if mode == "auto":
+        _cmd_auto(proj, max_tasks)
+    elif mode == "interactive":
+        _cmd_interactive(proj)
+    else:
+        # No flags given — show help
+        console.print(ctx.get_help())
+
+
+# ── Mode implementations ──────────────────────────────────────────────────────
+
+
+def _cmd_auto(project: str, max_tasks: int) -> None:
+    """Autonomous mode — run all pending tasks."""
     session = _make_session(project)
     pending = [t for t in session.tasks if t.status.value == "TODO"]
+
     console.print(Panel(
         f"[bold green]Orchid — Autonomous Mode[/bold green]\n"
-        f"Project: {Path(project).resolve().name}\n"
-        f"Tasks pending: {len(pending)}",
+        f"Project: [cyan]{session.project_name}[/cyan]"
+        + (f"\n{session.project_description}" if session.project_description else "")
+        + f"\nTasks pending: {len(pending)}",
         border_style="green",
     ))
 
@@ -69,16 +128,9 @@ def run(
         console.print("[green]Session saved.[/green]")
 
 
-@app.command()
-def chat(
-    project: str = typer.Argument(".", help="Path to the project directory"),
-    model: str = typer.Option("claude", "--model", "-m", help="Model key: claude or local"),
-    log_level: str = typer.Option("WARNING", "--log-level", "-l"),
-) -> None:
-    """Interactive chat with an agent in the context of a project."""
-    _setup_logging(log_level)
+def _cmd_interactive(project: str, model: str = "claude") -> None:
+    """Interactive chat mode."""
     session = _make_session(project)
-
     from orchid.agents.base import BaseAgent
 
     class _ChatAgent(BaseAgent):
@@ -87,8 +139,8 @@ def chat(
     agent = _ChatAgent(session_context=session.context_block())
 
     console.print(Panel(
-        f"[bold cyan]Orchid — Interactive Chat[/bold cyan]\n"
-        f"Project: {Path(project).resolve().name}  |  Model: {model}\n"
+        f"[bold cyan]Orchid — Interactive Mode[/bold cyan]\n"
+        f"Project: [cyan]{session.project_name}[/cyan]  |  Model: {model}\n"
         "Type [bold]exit[/bold] or [bold]quit[/bold] to end.",
         border_style="cyan",
     ))
@@ -103,31 +155,30 @@ def chat(
         result = agent.run(user_input)
         console.print(Panel(Markdown(result), title="[bold green]Orchid[/bold green]", border_style="green"))
 
-    session.close(summary="Interactive chat session.")
+    session.close(summary="Interactive session.")
     console.print("[dim]Session saved. Goodbye.[/dim]")
 
 
-@app.command()
-def status(
-    project: str = typer.Argument(".", help="Path to the project directory"),
-) -> None:
-    """Show current project state: tasks and hot memory summary."""
+def _cmd_status(project: str) -> None:
+    """Print task board and hot memory."""
+    from rich.markup import escape
     session = _make_session(project)
-
-    from orchid.memory.state import TaskStatus
-    from rich.table import Table
-
-    table = Table(title=f"Tasks — {Path(project).resolve().name}", show_lines=True)
-    table.add_column("ID", style="cyan", no_wrap=True)
-    table.add_column("Status", style="bold")
-    table.add_column("Title")
-    table.add_column("Type", style="dim")
-    table.add_column("P", justify="center")
+    proj_path = _resolve_project(project)
 
     status_color = {
         "TODO": "white", "IN_PROGRESS": "yellow", "DONE": "green",
         "BLOCKED": "red", "CANCELLED": "dim",
     }
+
+    table = Table(
+        title=f"[bold]{escape(session.project_name)}[/bold]  {escape(str(proj_path))}",
+        show_lines=True,
+    )
+    table.add_column("ID", style="cyan", no_wrap=True)
+    table.add_column("Status", style="bold")
+    table.add_column("Title")
+    table.add_column("Type", style="dim")
+    table.add_column("P", justify="center")
 
     for t in session.tasks:
         color = status_color.get(t.status.value, "white")
@@ -143,9 +194,87 @@ def status(
         ))
 
 
+def _cmd_add_task(project: str, title: str, task_type: str, priority: int) -> None:
+    """Add a task directly from the CLI."""
+    session = _make_session(project)
+    from orchid.memory.state import Task, save_tasks
+
+    tid = f"T{len(session.tasks) + 1:03d}"
+    t = Task(id=tid, title=title, type=task_type, priority=priority)
+    session.tasks.append(t)
+    save_tasks(session.tasks, project)
+    console.print(f"[green]Added {tid}: {title} (type={task_type}, p{priority})[/green]")
+
+
+# ── Subcommands ───────────────────────────────────────────────────────────────
+
+
+@app.command()
+def init(
+    path: str = typer.Argument(".", help="Directory to initialise (defaults to cwd)"),
+    name: Optional[str] = typer.Option(None, "--name", "-n", help="Project name (defaults to dirname)"),
+    description: str = typer.Option("", "--description", "-d", help="One-line project description"),
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing files"),
+) -> None:
+    """Scaffold CLAUDE.md, tasks.md, and .orchid.yaml in a project directory."""
+    target = Path(path).expanduser().resolve()
+    target.mkdir(parents=True, exist_ok=True)
+
+    project_name = name or target.name
+    subs = {"project_name": project_name, "description": description}
+
+    created: list[str] = []
+    skipped: list[str] = []
+
+    for tmpl in _TEMPLATES_DIR.iterdir():
+        dest = target / tmpl.name
+        if dest.exists() and not force:
+            skipped.append(tmpl.name)
+            continue
+        content = tmpl.read_text(encoding="utf-8")
+        for key, val in subs.items():
+            content = content.replace("{" + key + "}", val)
+        dest.write_text(content, encoding="utf-8")
+        created.append(tmpl.name)
+
+    # Ensure .orchid/ is in .gitignore
+    gitignore = target / ".gitignore"
+    entry = ".orchid/"
+    if gitignore.exists():
+        existing = gitignore.read_text(encoding="utf-8")
+        if entry not in existing:
+            gitignore.write_text(existing.rstrip() + f"\n{entry}\n", encoding="utf-8")
+            created.append(".gitignore (updated)")
+    else:
+        gitignore.write_text(f"{entry}\n", encoding="utf-8")
+        created.append(".gitignore")
+
+    for f in created:
+        console.print(f"[green]  created[/green]  {f}")
+    for f in skipped:
+        console.print(f"[dim]  skipped[/dim]  {f} (already exists, use --force to overwrite)")
+
+    console.print(f"\n[bold green]Orchid initialised in {target}[/bold green]")
+    console.print(f"  Edit [cyan]CLAUDE.md[/cyan] and [cyan].orchid.yaml[/cyan], then add tasks and run:")
+    console.print(f"  [bold]orchid --project {path} --mode auto[/bold]")
+
+
+@app.command()
+def decide(
+    title: str = typer.Argument(..., help="Short decision title"),
+    decision: str = typer.Option(..., "--decision", "-d", help="The decision made"),
+    rationale: str = typer.Option("", "--rationale", "-r", help="Why this decision was made"),
+    project: str = typer.Option(".", "--project", "-p", help="Project directory"),
+) -> None:
+    """Record an architectural decision in the project's decision log."""
+    from orchid.memory.decisions import record_decision
+    rec = record_decision(title, decision, rationale, project_dir=project)
+    console.print(f"[green]Recorded {rec['id']}: {title}[/green]")
+
+
 @app.command()
 def task(
-    action: str = typer.Argument(..., help="add | done | block"),
+    action: str = typer.Argument(..., help="add | done | block | cancel"),
     project: str = typer.Option(".", "--project", "-p"),
     task_id: Optional[str] = typer.Option(None, "--id"),
     title: str = typer.Option("", "--title", "-t"),
@@ -153,9 +282,8 @@ def task(
     priority: int = typer.Option(2, "--priority"),
     description: str = typer.Option("", "--desc", "-d"),
 ) -> None:
-    """Manage tasks: add, mark done, or block."""
+    """Manage tasks: add, mark done, block, or cancel."""
     session = _make_session(project)
-
     from orchid.memory.state import Task, TaskStatus, save_tasks
 
     if action == "add":
@@ -163,44 +291,28 @@ def task(
         t = Task(id=tid, title=title, type=task_type, priority=priority, description=description)
         session.tasks.append(t)
         save_tasks(session.tasks, project)
-        console.print(f"[green]Added task {tid}: {title}[/green]")
+        console.print(f"[green]Added {tid}: {title}[/green]")
 
-    elif action == "done":
+    elif action in ("done", "block", "cancel"):
         if not task_id:
             console.print("[red]--id required[/red]")
             raise typer.Exit(1)
-        if session.update_task_status(task_id, TaskStatus.DONE):
+        status_map = {
+            "done": TaskStatus.DONE,
+            "block": TaskStatus.BLOCKED,
+            "cancel": TaskStatus.CANCELLED,
+        }
+        new_status = status_map[action]
+        if session.update_task_status(task_id, new_status):
             save_tasks(session.tasks, project)
-            console.print(f"[green]Marked {task_id} as DONE[/green]")
+            console.print(f"[green]Marked {task_id} as {new_status.value}[/green]")
         else:
             console.print(f"[red]Task {task_id} not found[/red]")
-
-    elif action == "block":
-        if not task_id:
-            console.print("[red]--id required[/red]")
             raise typer.Exit(1)
-        if session.update_task_status(task_id, TaskStatus.BLOCKED):
-            save_tasks(session.tasks, project)
-            console.print(f"[yellow]Marked {task_id} as BLOCKED[/yellow]")
-        else:
-            console.print(f"[red]Task {task_id} not found[/red]")
 
     else:
-        console.print(f"[red]Unknown action: {action}. Use add|done|block[/red]")
+        console.print(f"[red]Unknown action: {action}. Use add|done|block|cancel[/red]")
         raise typer.Exit(1)
-
-
-@app.command()
-def decide(
-    title: str = typer.Argument(..., help="Short decision title"),
-    decision: str = typer.Option(..., "--decision", "-d"),
-    rationale: str = typer.Option("", "--rationale", "-r"),
-    project: str = typer.Option(".", "--project", "-p"),
-) -> None:
-    """Record an architectural decision."""
-    from orchid.memory.decisions import record_decision
-    rec = record_decision(title, decision, rationale, project_dir=project)
-    console.print(f"[green]Recorded {rec['id']}: {title}[/green]")
 
 
 if __name__ == "__main__":

@@ -51,4 +51,4 @@ agents:
   tool_timeout_seconds: 30
   bash_timeout_seconds: 60
 
-projects_dir: projects
+# projects_dir is no longer used — projects are standalone external repos

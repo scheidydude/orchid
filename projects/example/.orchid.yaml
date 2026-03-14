@@ -1,0 +1,12 @@
+project: example
+description: "Example project demonstrating the Orchid pipeline"
+
+model_preference: auto
+
+agent_roles:
+  - developer
+  - researcher
+  - reviewer
+
+context_files:
+  - CLAUDE.md

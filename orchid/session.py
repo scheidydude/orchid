@@ -19,15 +19,26 @@ class Session:
     """
     Encapsulates all project state for one orchestrator run.
 
-    project_dir: path to the project being worked on.
-                 Defaults to cwd. Can be a subdirectory under projects/.
+    project_dir: absolute path to the external project being worked on.
+                 Can be any directory — does not need to be under orchid/.
     """
 
     def __init__(self, project_dir: str | Path = "."):
         self.project_dir = Path(project_dir).resolve()
+
+        # Merge orchid defaults with this project's .orchid.yaml
+        self.config = cfg.configure_for_project(self.project_dir)
+
+        # Project metadata from .orchid.yaml (if present)
+        project_cfg = cfg.load_project_config(self.project_dir)
+        self.project_name: str = project_cfg.get("project") or self.project_dir.name
+        self.project_description: str = project_cfg.get("description", "")
+        self.context_files: list[str] = project_cfg.get("context_files", [])
+
         self.started_at = datetime.now(timezone.utc)
         self.tasks: list[mem_state.Task] = []
         self.hot_memory: str = ""
+        self.extra_context: str = ""
         self.decisions: list[dict[str, Any]] = []
         self._log_path: Path | None = None
 
@@ -38,6 +49,7 @@ class Session:
         self.tasks = mem_state.load_tasks(self.project_dir)
         self.hot_memory = mem_state.load_hot_memory(self.project_dir)
         self.decisions = load_decisions(self.project_dir)
+        self.extra_context = self._load_context_files()
 
         log_dir = self.project_dir / cfg.get("memory.session_log_dir", ".orchid/session_logs")
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -45,7 +57,8 @@ class Session:
         self._log_path = log_dir / f"session_{ts}.jsonl"
 
         logger.info(
-            "Session loaded: %d tasks, %d decisions, hot_memory=%d chars",
+            "Session loaded: project=%s tasks=%d decisions=%d hot_memory=%d chars",
+            self.project_name,
             len(self.tasks),
             len(self.decisions),
             len(self.hot_memory),
@@ -58,13 +71,23 @@ class Session:
         logger.info("Session saved.")
 
     def close(self, summary: str = "") -> None:
-        """
-        Save state and write a session summary to the log.
-        Triggers hot memory compression if over threshold.
-        """
+        """Save state, compress hot memory if needed, write session log."""
         self._maybe_compress_hot_memory()
         self.save()
         self._write_session_log(summary)
+
+    # ── Context files ─────────────────────────────────────────────────────────
+
+    def _load_context_files(self) -> str:
+        """Load extra context files listed in .orchid.yaml into a single string."""
+        parts: list[str] = []
+        for rel_path in self.context_files:
+            full = self.project_dir / rel_path
+            if full.exists():
+                parts.append(f"### {rel_path}\n{full.read_text(encoding='utf-8')}")
+            else:
+                logger.debug("context_file not found: %s", full)
+        return "\n\n".join(parts)
 
     # ── Hot memory compression ─────────────────────────────────────────────────
 
@@ -132,8 +155,15 @@ class Session:
     def context_block(self) -> str:
         """Return a formatted context string for injecting into agent prompts."""
         task_lines = [t.to_md_line() for t in self.tasks[:20]]
-        return (
-            f"## Project: {self.project_dir.name}\n\n"
-            f"### Hot Memory\n{self.hot_memory[:2000]}\n\n"
-            f"### Current Tasks\n" + "\n".join(task_lines)
-        )
+        parts = [
+            f"## Project: {self.project_name}",
+        ]
+        if self.project_description:
+            parts.append(self.project_description)
+        parts += [
+            f"\n### Hot Memory\n{self.hot_memory[:2000]}",
+            f"\n### Current Tasks\n" + "\n".join(task_lines),
+        ]
+        if self.extra_context:
+            parts.append(f"\n### Additional Context\n{self.extra_context[:2000]}")
+        return "\n".join(parts)
