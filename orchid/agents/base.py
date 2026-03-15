@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable
 
 from orchid import config as cfg
@@ -100,6 +102,7 @@ _ACTION_BRACKET_RE = re.compile(
     r"Action:\s*(\w+)\[([^\]]+)\]",
 )
 _FINAL_RE = re.compile(r"Final Answer:\s*(.*)", re.DOTALL)
+_THOUGHT_RE = re.compile(r"Thought:\s*(.*?)(?=\nAction:|\nFinal Answer:|$)", re.DOTALL)
 
 
 class BaseAgent:
@@ -118,6 +121,8 @@ class BaseAgent:
         self,
         extra_tools: dict[str, ToolFn] | None = None,
         session_context: str = "",
+        stream_callback: Callable[[dict[str, Any]], None] | None = None,
+        injection_queue_path: str | Path | None = None,
     ):
         self.tools: dict[str, ToolFn] = {**_BUILTIN_TOOLS, **(extra_tools or {})}
         self.session_context = session_context
@@ -126,6 +131,11 @@ class BaseAgent:
         # Delegation — set by AgentDelegator when spawning sub-agents
         self.delegator: Any = None
         self.delegation_depth: int = 0
+        # Streaming and injection
+        self.stream_callback = stream_callback
+        self.injection_queue_path = (
+            Path(injection_queue_path) if injection_queue_path else None
+        )
 
     def register_tool(self, name: str, fn: ToolFn) -> None:
         self.tools[name] = fn
@@ -155,12 +165,31 @@ class BaseAgent:
             f"{self.session_context}"
         )
 
+    def _check_injection_queue(self) -> None:
+        """Prepend any pending injected context to history."""
+        if not self.injection_queue_path or not self.injection_queue_path.exists():
+            return
+        try:
+            text = self.injection_queue_path.read_text(encoding="utf-8").strip()
+            if not text:
+                return
+            # Clear the queue
+            self.injection_queue_path.write_text("", encoding="utf-8")
+            inject_msg = f"## Injected context from user:\n{text}"
+            self.history.append(Message("user", inject_msg))
+            logger.info("[%s] Injected context applied: %s", self.__class__.__name__, text[:100])
+        except Exception as exc:
+            logger.debug("Failed to read injection queue: %s", exc)
+
     def run(self, task_description: str) -> str:
         """Execute the ReAct loop for a given task. Returns the final answer."""
         self.history = [Message("user", task_description)]
         logger.info("[%s] Starting task: %s", self.__class__.__name__, task_description[:80])
 
         for iteration in range(self.max_iterations):
+            # Check for injected context before each iteration
+            self._check_injection_queue()
+
             response = call(
                 messages=self.history,
                 model_key=self.model_key,
@@ -174,6 +203,15 @@ class BaseAgent:
             if final_m:
                 answer = final_m.group(1).strip()
                 logger.info("[%s] Final answer at iter %d", self.__class__.__name__, iteration)
+                if self.stream_callback:
+                    thought_m = _THOUGHT_RE.search(response)
+                    self.stream_callback({
+                        "iter": iteration,
+                        "thought": thought_m.group(1).strip() if thought_m else "",
+                        "action": "final_answer",
+                        "observation": answer[:200],
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    })
                 return answer
 
             # Check for action — try JSON format first, then bracket shorthand
@@ -206,6 +244,17 @@ class BaseAgent:
 
             logger.debug("[%s] Tool %s → %s", self.__class__.__name__, tool_name, observation[:200])
             self.history.append(Message("user", f"Observation: {observation}"))
+
+            # Stream iteration data
+            if self.stream_callback:
+                thought_m = _THOUGHT_RE.search(response)
+                self.stream_callback({
+                    "iter": iteration,
+                    "thought": thought_m.group(1).strip() if thought_m else "",
+                    "action": tool_name or "",
+                    "observation": observation[:300],
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
 
         return "[max iterations reached without final answer]"
 

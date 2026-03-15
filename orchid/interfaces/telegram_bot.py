@@ -52,8 +52,13 @@ class TelegramBot:
         self.multi_project = multi_project
 
         from orchid.interfaces.background_runner import BackgroundRunner
-        self._runner = BackgroundRunner(self.project_path)
+        self._runner = BackgroundRunner(
+            self.project_path,
+            notification_callback=self._on_notification,
+        )
         self._app: Any = None
+        # Chat IDs that initiated /auto or /run — for proactive notifications
+        self._notify_chat_ids: set[int] = set()
 
     # ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -82,6 +87,7 @@ class TelegramBot:
             ("search", self._cmd_search),
             ("decide", self._cmd_decide),
             ("cancel", self._cmd_cancel),
+            ("inject", self._cmd_inject),
         ]
         for name, handler in handlers:
             self._app.add_handler(CommandHandler(name, self._guard(handler)))
@@ -124,6 +130,18 @@ class TelegramBot:
         s.load()
         return s
 
+    async def _on_notification(self, event: str, data: dict[str, Any]) -> None:
+        """Handle lifecycle notifications from BackgroundRunner."""
+        from orchid.interfaces.telegram_formatter import format_notification
+        msg = format_notification(event, data)
+        if msg is None:
+            return
+        for chat_id in list(self._notify_chat_ids):
+            try:
+                await self._app.bot.send_message(chat_id=chat_id, text=msg)
+            except Exception as exc:
+                logger.warning("Notification send failed (chat_id=%s): %s", chat_id, exc)
+
     # ── Command handlers ───────────────────────────────────────────────────────
 
     async def _cmd_start(self, update: "Update", ctx: "ContextTypes.DEFAULT_TYPE") -> None:
@@ -135,6 +153,7 @@ class TelegramBot:
             "/run <task\\_id> — run a task\n"
             "/auto — run all pending tasks\n"
             "/add <description> — add a task\n"
+            "/inject <text> — inject context into running agent\n"
             "/recall <query> — search memory\n"
             "/search <query> — web search\n"
             "/decide <title> | <decision> | <rationale> — record decision\n"
@@ -175,8 +194,10 @@ class TelegramBot:
         await self._reply(update, format_task_started(task_id, task.title))
 
         chat_id = update.effective_chat.id
+        self._notify_chat_ids.add(chat_id)
 
         async def on_done(tid: str, result: str | None, error: str | None) -> None:
+            self._notify_chat_ids.discard(chat_id)
             if error:
                 msg = format_task_failed(tid, error)
             else:
@@ -202,6 +223,7 @@ class TelegramBot:
         await self._reply(update, f"🚀 Starting auto run — {len(pending)} pending tasks…")
         chat_id = update.effective_chat.id
         loop = self._get_loop()
+        self._notify_chat_ids.add(chat_id)
 
         async def on_task(tid: str, result: str | None, error: str | None) -> None:
             if error:
@@ -211,6 +233,7 @@ class TelegramBot:
             await self._app.bot.send_message(chat_id=chat_id, text=msg)
 
         async def on_done(done_ids: list[str], failed_ids: list[str]) -> None:
+            self._notify_chat_ids.discard(chat_id)
             msg = format_auto_summary(done_ids, failed_ids)
             await self._app.bot.send_message(chat_id=chat_id, text=msg)
 
@@ -231,6 +254,21 @@ class TelegramBot:
         session.tasks.append(t)
         save_tasks(session.tasks, self.project_path)
         await self._reply(update, f"✅ Added {tid}: {description}  (type=draft, p2)")
+
+    async def _cmd_inject(self, update: "Update", ctx: "ContextTypes.DEFAULT_TYPE") -> None:
+        """Inject context into the running agent."""
+        args = ctx.args or []
+        if not args:
+            await self._reply(update, "Usage: /inject <text>")
+            return
+
+        text = " ".join(args)
+        if not self._runner.is_running():
+            await self._reply(update, "⚠️ No task is currently running.")
+            return
+
+        self._runner.inject(text)
+        await self._reply(update, f"💉 Injected: {text[:100]}")
 
     async def _cmd_recall(self, update: "Update", ctx: "ContextTypes.DEFAULT_TYPE") -> None:
         from orchid.interfaces.telegram_formatter import format_recall_results

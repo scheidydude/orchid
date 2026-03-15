@@ -84,6 +84,14 @@ def main(
     search: Optional[str] = typer.Option(
         None, "--search", help="Run a web search and print results (embeds if vector enabled)",
     ),
+    code_model: Optional[str] = typer.Option(
+        None, "--code-model",
+        help="Force model for all tasks: claude | local | auto",
+    ),
+    tail: bool = typer.Option(False, "--tail", help="Tail the most recent live agent log"),
+    inject: Optional[str] = typer.Option(
+        None, "--inject", help="Inject context into the running agent via inject.queue",
+    ),
     log_level: str = typer.Option("INFO", "--log-level", "-l"),
 ) -> None:
     if ctx.invoked_subcommand:
@@ -108,8 +116,16 @@ def main(
         _cmd_add_task(proj, add_task, task_type, priority)
         return
 
+    if tail:
+        _cmd_tail(proj)
+        return
+
+    if inject is not None:
+        _cmd_inject(proj, inject)
+        return
+
     if mode == "auto":
-        _cmd_auto(proj, max_tasks)
+        _cmd_auto(proj, max_tasks, code_model=code_model)
     elif mode == "interactive":
         _cmd_interactive(proj)
     else:
@@ -120,16 +136,18 @@ def main(
 # ── Mode implementations ──────────────────────────────────────────────────────
 
 
-def _cmd_auto(project: str, max_tasks: int) -> None:
+def _cmd_auto(project: str, max_tasks: int, code_model: str | None = None) -> None:
     """Autonomous mode — run all pending tasks."""
     session = _make_session(project)
     pending = [t for t in session.tasks if t.status.value == "TODO"]
 
+    model_note = f"  Model override: {code_model}" if code_model else ""
     console.print(Panel(
         f"[bold green]Orchid — Autonomous Mode[/bold green]\n"
         f"Project: [cyan]{session.project_name}[/cyan]"
         + (f"\n{session.project_description}" if session.project_description else "")
-        + f"\nTasks pending: {len(pending)}",
+        + f"\nTasks pending: {len(pending)}"
+        + model_note,
         border_style="green",
     ))
 
@@ -138,7 +156,7 @@ def _cmd_auto(project: str, max_tasks: int) -> None:
         raise typer.Exit()
 
     from orchid.orchestrator import Orchestrator
-    orch = Orchestrator(session)
+    orch = Orchestrator(session, cli_model_override=code_model)
     try:
         orch.run_loop(max_tasks=max_tasks)
     finally:
@@ -219,10 +237,18 @@ def _cmd_status(project: str) -> None:
     table.add_column("Title")
     table.add_column("Type", style="dim")
     table.add_column("P", justify="center")
+    table.add_column("Deps", style="dim")
 
+    completed_ids = {t.id for t in session.tasks if t.status.value == "DONE"}
     for t in session.tasks:
         color = status_color.get(t.status.value, "white")
-        table.add_row(t.id, f"[{color}]{t.status.value}[/{color}]", t.title, t.type, str(t.priority))
+        deps_str = ""
+        if t.depends_on:
+            waiting = [d for d in t.depends_on if d not in completed_ids]
+            deps_str = ",".join(t.depends_on)
+            if waiting:
+                deps_str = f"⏳ {','.join(waiting)}"
+        table.add_row(t.id, f"[{color}]{t.status.value}[/{color}]", t.title, t.type, str(t.priority), deps_str)
 
     console.print(table)
 
@@ -340,6 +366,59 @@ def _cmd_recall(project: str, query: str) -> None:
                 border_style="dim",
             )
         )
+
+
+def _cmd_tail(project: str) -> None:
+    """Tail the most recent live agent log."""
+    import time
+    from rich.markup import escape
+
+    log_dir = _resolve_project(project) / ".orchid" / "session_logs"
+    if not log_dir.exists():
+        console.print("[yellow]No session logs found.[/yellow]")
+        return
+
+    # Prefer active .live.log; fall back to most recent .log
+    live_logs = sorted(log_dir.glob("*.live.log"))
+    finished_logs = sorted(log_dir.glob("*.log"))
+    if live_logs:
+        log_path = live_logs[-1]
+        console.print(f"[cyan]Tailing live log: {log_path.name}[/cyan]  (Ctrl+C to stop)")
+    elif finished_logs:
+        log_path = finished_logs[-1]
+        console.print(f"[dim]No active log. Showing last completed: {log_path.name}[/dim]")
+        console.print(escape(log_path.read_text(encoding="utf-8")))
+        return
+    else:
+        console.print("[yellow]No log files found.[/yellow]")
+        return
+
+    try:
+        with open(log_path, encoding="utf-8") as f:
+            # Print existing content first
+            existing = f.read()
+            if existing:
+                console.print(escape(existing), end="")
+            # Then tail new content
+            while log_path.exists():
+                line = f.readline()
+                if line:
+                    console.print(escape(line), end="")
+                else:
+                    time.sleep(0.2)
+    except KeyboardInterrupt:
+        console.print("\n[dim]Stopped.[/dim]")
+
+
+def _cmd_inject(project: str, text: str) -> None:
+    """Inject context into a running agent via the inject.queue file."""
+    proj_path = _resolve_project(project)
+    queue_path = proj_path / ".orchid" / "inject.queue"
+    queue_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(queue_path, "a", encoding="utf-8") as f:
+        f.write(text + "\n")
+    console.print(f"[green]Injected into queue: {text[:100]}[/green]")
+    console.print(f"[dim]Agent will pick this up on next ReAct iteration.[/dim]")
 
 
 def _cmd_add_task(project: str, title: str, task_type: str, priority: int) -> None:

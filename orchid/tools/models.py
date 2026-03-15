@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 from typing import Any
 
 from orchid import config as cfg
@@ -13,6 +14,22 @@ logger = logging.getLogger(__name__)
 # Cached availability flags so we don't re-probe on every embed() call
 _llama_embed_available: bool | None = None  # None = not yet checked
 _st_model: Any = None  # sentence-transformers model cache
+
+COMPLEXITY_KEYWORDS = [
+    "regex", "parser", "parsing", "tokenize", "ast",
+    "algorithm", "concurrent", "async", "threading",
+    "cryptograph", "compression", "binary", "protocol",
+    "authentication", "oauth", "jwt", "security",
+    "optimize", "performance", "benchmark", "websocket",
+    "serialize", "deserializ", "encoding", "decoding",
+]
+
+
+@dataclass
+class RouteDecision:
+    model: str    # "claude" | "local"
+    reason: str
+    source: str   # "cli_flag" | "task_annotation" | "project_config" | "heuristic" | "default"
 
 
 class Message:
@@ -155,12 +172,69 @@ def reset_embed_cache() -> None:
     _st_model = None
 
 
-def route(task_type: str) -> str:
-    """Return the config model key for a given task type."""
+def route(
+    task_type: str,
+    task_model_override: str | None = None,
+    cli_override: str | None = None,
+    task_title: str = "",
+) -> RouteDecision:
+    """
+    Multi-tier routing. Priority order (highest wins):
+      1. CLI flag (cli_override)
+      2. Task annotation (task_model_override from model:claude in tasks.md)
+      3. Keyword heuristic (if auto mode)
+      4. Type-based default from config
+
+    Returns a RouteDecision with model key, reason, and source.
+    """
+    # 1. CLI flag overrides everything
+    if cli_override and cli_override not in ("auto", ""):
+        return RouteDecision(
+            model=cli_override,
+            reason=f"CLI --code-model {cli_override}",
+            source="cli_flag",
+        )
+
+    # 2. Task annotation overrides config and heuristic
+    if task_model_override and task_model_override not in ("auto", ""):
+        return RouteDecision(
+            model=task_model_override,
+            reason=f"task annotation model:{task_model_override}",
+            source="task_annotation",
+        )
+
+    # 3. Keyword escalation (runs when cli_override/task_override is absent or "auto")
+    escalation_cfg = cfg.get("routing.escalation", {})
+    if escalation_cfg.get("enabled", True):
+        threshold = escalation_cfg.get("threshold", 1)
+        keywords = escalation_cfg.get("keywords", COMPLEXITY_KEYWORDS)
+        title_lower = task_title.lower()
+        matched = [kw for kw in keywords if kw in title_lower]
+        if len(matched) >= threshold:
+            return RouteDecision(
+                model="claude",
+                reason=f"keyword match {matched[0]!r}",
+                source="heuristic",
+            )
+
+    # 4. Type-based default
     claude_tasks = set(cfg.get("routing.claude_tasks", []))
     local_tasks = set(cfg.get("routing.local_tasks", []))
     if task_type in claude_tasks:
-        return "claude"
+        return RouteDecision(
+            model="claude",
+            reason=f"task type {task_type!r} in claude_tasks",
+            source="default",
+        )
     if task_type in local_tasks:
-        return "local"
-    return cfg.get("routing.default", "local")
+        return RouteDecision(
+            model="local",
+            reason=f"task type {task_type!r} in local_tasks",
+            source="default",
+        )
+    default = cfg.get("routing.default", "local")
+    return RouteDecision(
+        model=default,
+        reason="fallback default",
+        source="default",
+    )

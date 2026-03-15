@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from enum import Enum
@@ -9,6 +10,8 @@ from pathlib import Path
 from typing import Optional
 
 from orchid import config as cfg
+
+logger = logging.getLogger(__name__)
 
 
 class TaskStatus(str, Enum):
@@ -29,6 +32,12 @@ class Task:
     description: str = ""
     agent: Optional[str] = None   # assigned agent class
     tags: list[str] = field(default_factory=list)
+    depends_on: list[str] = field(default_factory=list)   # task IDs this task waits for
+    model_override: Optional[str] = None                  # claude | local | auto
+
+    def is_runnable(self, completed_ids: set[str]) -> bool:
+        """True when all declared dependencies are done."""
+        return all(dep in completed_ids for dep in self.depends_on)
 
     def to_md_line(self) -> str:
         tag_str = " ".join(f"#{t}" for t in self.tags)
@@ -41,6 +50,10 @@ class Task:
         ]
         if self.agent:
             parts.append(f"`agent:{self.agent}`")
+        if self.depends_on:
+            parts.append(f"`needs:{','.join(self.depends_on)}`")
+        if self.model_override:
+            parts.append(f"`model:{self.model_override}`")
         if tag_str:
             parts.append(tag_str)
         return " ".join(parts)
@@ -85,7 +98,20 @@ def load_tasks(project_dir: str | Path = ".") -> list[Task]:
         m = _TASK_RE.match(stripped)
         if not m:
             continue
-        tags = re.findall(r"#(\w+)", m.group("rest") or "")
+        rest = m.group("rest") or ""
+        tags = re.findall(r"#(\w+)", rest)
+
+        # Parse needs:T001,T002 annotation
+        needs_m = re.search(r"`needs:([^`]+)`", rest)
+        depends_on = (
+            [d.strip() for d in needs_m.group(1).split(",") if d.strip()]
+            if needs_m else []
+        )
+
+        # Parse model:claude|local|auto annotation
+        model_m = re.search(r"`model:([^`]+)`", rest)
+        model_override = model_m.group(1).strip() if model_m else None
+
         tasks.append(Task(
             id=m.group("id").strip(),
             title=m.group("title").strip(),
@@ -94,6 +120,8 @@ def load_tasks(project_dir: str | Path = ".") -> list[Task]:
             priority=int(m.group("pri") or 2),
             agent=m.group("agent"),
             tags=tags,
+            depends_on=depends_on,
+            model_override=model_override,
         ))
     return tasks
 
@@ -119,9 +147,45 @@ def save_tasks(tasks: list[Task], project_dir: str | Path = ".") -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def detect_dependency_cycles(tasks: list[Task]) -> list[list[str]]:
+    """Return list of cycle paths detected in the dependency graph."""
+    task_map = {t.id: t for t in tasks}
+    cycles: list[list[str]] = []
+    visited: set[str] = set()
+
+    def dfs(task_id: str, path: list[str]) -> None:
+        if task_id in path:
+            cycle_start = path.index(task_id)
+            cycles.append(path[cycle_start:] + [task_id])
+            return
+        if task_id in visited:
+            return
+        visited.add(task_id)
+        task = task_map.get(task_id)
+        if task:
+            for dep in task.depends_on:
+                dfs(dep, path + [task_id])
+
+    for task in tasks:
+        if task.id not in visited:
+            dfs(task.id, [])
+    return cycles
+
+
 def next_task(tasks: list[Task]) -> Task | None:
-    """Pick the highest-priority TODO task."""
-    candidates = [t for t in tasks if t.status == TaskStatus.TODO]
+    """Pick the highest-priority runnable TODO task."""
+    completed_ids = {t.id for t in tasks if t.status == TaskStatus.DONE}
+
+    if cfg.get("dependencies.enabled", True) and cfg.get("dependencies.cycle_detection", True):
+        todo_tasks = [t for t in tasks if t.status == TaskStatus.TODO]
+        cycles = detect_dependency_cycles(todo_tasks)
+        if cycles:
+            logger.warning("Circular dependencies detected: %s", cycles)
+
+    candidates = [
+        t for t in tasks
+        if t.status == TaskStatus.TODO and t.is_runnable(completed_ids)
+    ]
     if not candidates:
         return None
     return min(candidates, key=lambda t: t.priority)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Callable
 
 from orchid import config as cfg
 from orchid.memory.state import Task, TaskStatus
@@ -42,9 +42,12 @@ class Orchestrator:
     6. Saves and closes the session
     """
 
-    def __init__(self, session: Session):
+    def __init__(self, session: Session, cli_model_override: str | None = None):
         self.session = session
         self.registry = _get_registry()
+        self.cli_model_override = cli_model_override
+        # Optional stream callback — set by BackgroundRunner for progress notifications
+        self.stream_callback: Callable[[dict[str, Any]], None] | None = None
         # Delegation support — shared delegator across all tasks in this run
         from orchid.agents.delegator import AgentDelegator
         self._delegator = AgentDelegator(
@@ -75,9 +78,27 @@ class Orchestrator:
     # ── Task execution ─────────────────────────────────────────────────────────
 
     def _execute_task(self, task: Task) -> dict[str, Any]:
-        logger.info("Executing task %s: %s [type=%s]", task.id, task.title, task.type)
+        # Resolve routing before execution and log the decision
+        decision = route(
+            task_type=task.type,
+            task_model_override=task.model_override,
+            cli_override=self.cli_model_override,
+            task_title=task.title,
+        )
+        logger.info(
+            "Routing %s → %s (reason: %s, source: %s)",
+            task.id, decision.model, decision.reason, decision.source,
+        )
+
+        logger.info("Executing task %s: %s [type=%s model=%s]", task.id, task.title, task.type, decision.model)
         self.session.update_task_status(task.id, TaskStatus.IN_PROGRESS)
-        self.session.log_event("task_start", {"task_id": task.id, "title": task.title})
+        self.session.log_event("task_start", {
+            "task_id": task.id,
+            "title": task.title,
+            "model": decision.model,
+            "routing_reason": decision.reason,
+            "routing_source": decision.source,
+        })
 
         try:
             # Optionally plan/decompose complex tasks via Claude first
@@ -89,7 +110,14 @@ class Orchestrator:
 
             # Dispatch to agent
             agent_cls = self._resolve_agent(task)
-            agent = agent_cls(session_context=self.session.context_block())
+            injection_queue = self.session.project_dir / ".orchid" / "inject.queue"
+            agent = agent_cls(
+                session_context=self.session.context_block(),
+                stream_callback=self._make_stream_callback(task.id),
+                injection_queue_path=injection_queue,
+            )
+            # Override model_key based on routing decision
+            agent.model_key = decision.model
             agent.delegator = self._delegator
             result_text = agent.run(plan)
 
@@ -110,6 +138,28 @@ class Orchestrator:
             self.session.update_task_status(task.id, TaskStatus.BLOCKED)
             self.session.log_event("task_error", {"task_id": task.id, "error": str(e)})
             return {"task_id": task.id, "status": "error", "error": str(e)}
+
+    def _make_stream_callback(self, task_id: str) -> Callable[[dict[str, Any]], None] | None:
+        """Build a stream callback that writes to live log and optionally fires progress notifications."""
+        outer_stream = self.stream_callback
+        session = self.session
+        progress_interval = cfg.get("streaming.telegram_progress_interval", 3)
+
+        def _cb(data: dict[str, Any]) -> None:
+            # Write to live log
+            session.stream_react(data)
+            # Fire progress notification every N iterations
+            if outer_stream is not None:
+                iteration = data.get("iter", 0)
+                if iteration > 0 and iteration % progress_interval == 0:
+                    outer_stream({
+                        "event": "task_progress",
+                        "task_id": task_id,
+                        "iter": iteration,
+                        "thought_snippet": data.get("thought", "")[:80],
+                    })
+
+        return _cb
 
     def _plan_task(self, task: Task) -> str:
         """Use Claude to produce a step-by-step plan for complex tasks."""

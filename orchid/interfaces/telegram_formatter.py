@@ -52,6 +52,7 @@ def format_status(session: Any) -> str:
     if not session.tasks:
         lines.append("No tasks found.")
     else:
+        completed_ids = {t.id for t in session.tasks if t.status.value == "DONE"}
         counts: dict[str, int] = {}
         for t in session.tasks:
             sv = t.status.value
@@ -61,7 +62,12 @@ def format_status(session: Any) -> str:
         for t in session.tasks:
             emoji = _STATUS_EMOJI.get(t.status.value, "❓")
             ttype = _TYPE_ABBREV.get(t.type, t.type[:4])
-            lines.append(f"{emoji} {t.id}  {t.title}  ({ttype} p{t.priority})")
+            line = f"{emoji} {t.id}  {t.title}  ({ttype} p{t.priority})"
+            # Show blocked deps
+            if t.depends_on and not t.is_runnable(completed_ids):
+                waiting = ", ".join(t.depends_on)
+                line += f"  [waiting on: {waiting}]"
+            lines.append(line)
 
         summary_parts = [f"{v}x{k}" for k, v in counts.items() if v]
         lines.append("")
@@ -150,3 +156,76 @@ def format_auto_summary(done: list[str], failed: list[str]) -> str:
     if not done and not failed:
         lines.append("No tasks were run.")
     return "\n".join(lines)
+
+
+# ── Notification event formatters ─────────────────────────────────────────────
+
+def format_notification(event: str, data: dict[str, Any]) -> str | None:
+    """Format a lifecycle notification event into a Telegram message.
+
+    Returns None if the event should not be displayed.
+    """
+    if event == "session_start":
+        project = data.get("project", "project")
+        pending = data.get("pending", 0)
+        return f"🌸 Orchid session started — {pending} task{'s' if pending != 1 else ''} pending ({project})"
+
+    if event == "task_start":
+        task_id = data.get("task_id", "?")
+        title = data.get("title", "")
+        remaining = data.get("remaining")
+        msg = f"🤖 {task_id} starting — {title}"
+        if remaining is not None:
+            msg += f"  ({remaining} remaining)"
+        return msg
+
+    if event == "task_progress":
+        task_id = data.get("task_id", "?")
+        iteration = data.get("iter", "?")
+        snippet = data.get("thought_snippet", "")
+        msg = f"⚙️ {task_id} iter {iteration}"
+        if snippet:
+            msg += f" — {snippet[:80]}"
+        return msg
+
+    if event == "task_complete":
+        task_id = data.get("task_id", "?")
+        snippet = data.get("result_snippet", "")
+        done_so_far = data.get("done_so_far")
+        msg = f"✅ {task_id} done"
+        if done_so_far is not None:
+            msg += f"  ({done_so_far} completed)"
+        if snippet:
+            msg += f"\n{snippet[:200]}"
+        return _truncate(msg)
+
+    if event == "task_failed":
+        task_id = data.get("task_id", "?")
+        error = data.get("error", "unknown error")
+        return _truncate(f"❌ {task_id} failed\n{str(error)[:200]}")
+
+    if event == "task_blocked":
+        task_id = data.get("task_id", "?")
+        waiting_on = data.get("waiting_on", [])
+        msg = f"⚠️ {task_id} blocked"
+        if waiting_on:
+            msg += f" — waiting on: {', '.join(waiting_on)}"
+        return msg
+
+    if event == "needs_input":
+        task_id = data.get("task_id", "?")
+        return f"❓ {task_id} needs input — reply /inject <context>"
+
+    if event == "session_complete":
+        done = data.get("done", [])
+        failed = data.get("failed", [])
+        total = len(done) + len(failed)
+        msg = f"🎉 Session complete — {len(done)}/{total} tasks done"
+        if failed:
+            msg += f"  ({len(failed)} failed: {', '.join(failed)})"
+        return msg
+
+    if event == "session_idle":
+        return "💤 No tasks to run — queue empty"
+
+    return None

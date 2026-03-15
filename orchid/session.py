@@ -43,6 +43,7 @@ class Session:
         self.decisions: list[dict[str, Any]] = []
         self.delegations: list[dict[str, Any]] = []
         self._log_path: Path | None = None
+        self._live_log_path: Path | None = None
         self._vector: VectorMemory | None = None
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -58,6 +59,10 @@ class Session:
         log_dir.mkdir(parents=True, exist_ok=True)
         ts = self.started_at.strftime("%Y%m%d_%H%M%S")
         self._log_path = log_dir / f"session_{ts}.jsonl"
+
+        # Live streaming log (human-readable, tailable)
+        if cfg.get("streaming.enabled", True):
+            self._live_log_path = log_dir / f"session_{ts}.live.log"
 
         # Lazy vector store init (non-fatal if unavailable)
         if cfg.get("vector_memory.enabled", True):
@@ -109,6 +114,7 @@ class Session:
         self._maybe_compress_hot_memory()
         self.save()
         self._write_session_log(summary)
+        self._finalize_live_log()
         self._auto_embed_session(summary)
 
     # ── Context files ─────────────────────────────────────────────────────────
@@ -209,6 +215,46 @@ class Session:
             logger.info("Session log embedded into vector store (%s).", session_id)
         except Exception as exc:
             logger.warning("Auto-embed of session log failed: %s", exc)
+
+    # ── Live streaming log ─────────────────────────────────────────────────────
+
+    def stream_react(self, data: dict[str, Any]) -> None:
+        """Append a ReAct iteration record to the live streaming log."""
+        if not self._live_log_path:
+            return
+        ts = data.get("timestamp", datetime.now(timezone.utc).isoformat())
+        iteration = data.get("iter", "?")
+        thought = data.get("thought", "").strip()
+        action = data.get("action", "").strip()
+        observation = data.get("observation", "").strip()
+
+        lines = [f"[{ts}] iter={iteration}"]
+        if thought:
+            lines.append(f"  Thought: {thought[:300]}")
+        if action:
+            lines.append(f"  Action:  {action[:200]}")
+        if observation:
+            lines.append(f"  Obs:     {observation[:300]}")
+        lines.append("")
+
+        try:
+            with open(self._live_log_path, "a", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+        except Exception as exc:
+            logger.debug("stream_react write failed: %s", exc)
+
+    def _finalize_live_log(self) -> None:
+        """Rename .live.log → .log to signal completion."""
+        if not self._live_log_path or not self._live_log_path.exists():
+            return
+        # Strip ".live.log" suffix and replace with ".log"
+        name = self._live_log_path.name
+        final = self._live_log_path.parent / (name[: -len(".live.log")] + ".log")
+        try:
+            self._live_log_path.rename(final)
+            logger.debug("Live log finalized: %s", final)
+        except Exception as exc:
+            logger.debug("Failed to finalize live log: %s", exc)
 
     # ── Session log ────────────────────────────────────────────────────────────
 

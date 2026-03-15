@@ -16,11 +16,19 @@ Standalone AI agent orchestration tool. Installed globally, invoked against exte
 ## Usage
 ```bash
 orchid --project <path> --mode auto|interactive
+orchid --project <path> --mode auto --code-model claude|local|auto
 orchid --project <path> --status|--recall "q"|--search "q"|--add-task "t"
+orchid --project <path> --tail             # tail live agent log
+orchid --project <path> --inject "text"    # inject context into running agent
 orchid init <path> [--name --description --force]
 orchid decide "Title" --decision "..." --rationale "..." --project <path>
 orchid task add|done --project <path>
 orchid telegram --project <path>   # token: TELEGRAM_BOT_TOKEN
+```
+
+tasks.md syntax:
+```
+- [ ] **T003** Task title `type:code_generate` `p1` `needs:T001,T002` `model:claude`
 ```
 
 ## Architecture Decisions
@@ -39,6 +47,11 @@ orchid telegram --project <path>   # token: TELEGRAM_BOT_TOKEN
 - **D0013** Sub-context slimming: passes task + top-3 vector recall + 1000-char parent context slice. Never full parent ReAct trace.
 - **D0014** Telegram: thin layer — TelegramBot (command dispatch), BackgroundRunner (thread pool/asyncio bridge), telegram_formatter (plain-text). No business logic in bot.
 - **D0015** User whitelist: TELEGRAM_ALLOWED_USERS (comma-separated IDs). Unset = warn + accept all (dev mode).
+- **D0016** Multi-tier model routing: CLI flag → task `model:` annotation → keyword heuristic → type-based default. Returns RouteDecision(model, reason, source). Logged at each task start.
+- **D0017** Task dependencies via `needs:T001,T002` annotation in tasks.md. `is_runnable(completed_ids)` gates task selection. Cycle detection warns and skips. Controlled by `dependencies.enabled`.
+- **D0018** Live streaming log: session writes `.live.log` (human-readable ReAct iterations). Renamed to `.log` on close. CLI `--tail` tails it. Agents call `stream_callback` after each iteration.
+- **D0019** Mid-run context injection via `.orchid/inject.queue` file. Agent reads+clears on each ReAct iteration. CLI `--inject`, Telegram `/inject`, BackgroundRunner.inject() all write to same file.
+- **D0020** Proactive Telegram notifications: BackgroundRunner fires `notification_callback(event, data)` at session_start/task_start/task_complete/task_failed/session_complete. Configurable via `telegram.notify_on`.
 
 ## Key Files
 ```
@@ -72,8 +85,9 @@ cp .env.example .env  # ANTHROPIC_API_KEY required
 |----|--------|-------|
 | T007 | **Incomplete** | DDG ad-result filter (y.js URLs) — needs finish |
 | T008 | **Incomplete** | decisions.json JSON Lines parse error — needs fix |
-| T009–T021 | Done | (T015 threading issue noted; T017/T018/T019 hit max iterations) |
-| All 84 tests | Passing | (T021) |
+| T009–T023 | Done | Phase 2 complete |
+| Phase 3 M3.0 | **Done** | Fix 1–5 (deps, streaming, injection, notifications, routing) |
+| All 130 tests | Passing | 84 original + 46 new |
 
 ## Not Built Yet
 - Slack interface (reserved, same pattern as Telegram)
