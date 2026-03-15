@@ -52,3 +52,13 @@ agents:
   bash_timeout_seconds: 60
 
 # projects_dir is no longer used — projects are standalone external repos
+
+vector_memory:
+  enabled: true
+  chunk_size: 512
+  chunk_overlap: 64
+  n_results: 5
+  embedding_model: nomic-embed-text
+  fallback_model: all-MiniLM-L6-v2
+  auto_recall_on_load: true
+  auto_embed_on_save: true

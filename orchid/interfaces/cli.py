@@ -74,6 +74,9 @@ def main(
     task_type: str = typer.Option("draft", "--type", help="Task type for --add-task"),
     priority: int = typer.Option(2, "--priority", help="Priority for --add-task (1=high)"),
     max_tasks: int = typer.Option(50, "--max-tasks", "-n", help="Max tasks for auto mode"),
+    recall: Optional[str] = typer.Option(
+        None, "--recall", help="Query vector memory and print top results",
+    ),
     log_level: str = typer.Option("INFO", "--log-level", "-l"),
 ) -> None:
     if ctx.invoked_subcommand:
@@ -84,6 +87,10 @@ def main(
 
     if status:
         _cmd_status(proj)
+        return
+
+    if recall is not None:
+        _cmd_recall(proj, recall)
         return
 
     if add_task:
@@ -192,6 +199,54 @@ def _cmd_status(project: str) -> None:
             title="[bold]Hot Memory (CLAUDE.md)[/bold]",
             border_style="blue",
         ))
+
+
+def _cmd_recall(project: str, query: str) -> None:
+    """Query vector memory and pretty-print results."""
+    from orchid.memory.vector import VectorMemory  # noqa: PLC0415
+    from orchid import config as cfg  # noqa: PLC0415
+
+    proj_path = _resolve_project(project)
+    cfg.configure_for_project(proj_path)
+
+    vm = VectorMemory(project_dir=proj_path)
+    if not vm.available:
+        console.print("[yellow]Vector memory not available for this project.[/yellow]")
+        return
+
+    n = cfg.get("vector_memory.n_results", 5)
+    results = vm.query(query, n=n)
+
+    if not results:
+        console.print("[yellow]No results found.[/yellow]")
+        return
+
+    from rich.markup import escape  # noqa: PLC0415
+
+    console.print(Panel(
+        f"[bold]Recall:[/bold] {escape(query)}  [dim]({len(results)} results)[/dim]",
+        border_style="magenta",
+    ))
+
+    for i, r in enumerate(results, 1):
+        meta = r["metadata"]
+        rtype = meta.get("type", "note")
+        ts = meta.get("timestamp", "")[:19].replace("T", " ")
+        sid = meta.get("session_id", "")
+        score = 1 - r["distance"]
+        title_parts = [f"[{i}]", f"type={rtype}"]
+        if sid:
+            title_parts.append(f"session={sid}")
+        if ts:
+            title_parts.append(ts)
+        title_parts.append(f"score={score:.3f}")
+        console.print(
+            Panel(
+                escape(r["text"][:400]),
+                title="  ".join(title_parts),
+                border_style="dim",
+            )
+        )
 
 
 def _cmd_add_task(project: str, title: str, task_type: str, priority: int) -> None:

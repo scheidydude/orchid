@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
 from orchid import config as cfg
+
+logger = logging.getLogger(__name__)
+
+# Cached availability flags so we don't re-probe on every embed() call
+_llama_embed_available: bool | None = None  # None = not yet checked
+_st_model: Any = None  # sentence-transformers model cache
 
 
 class Message:
@@ -71,6 +78,81 @@ def call(
         **kwargs,
     )
     return response.choices[0].message.content or ""
+
+
+def embed(text: str) -> list[float]:
+    """
+    Return an embedding vector for *text*.
+
+    Priority:
+      1. llama.cpp /v1/embeddings endpoint (LLAMA_EMBED_URL env var,
+         defaults to http://localhost:8081/v1)
+      2. sentence-transformers all-MiniLM-L6-v2 (local Python fallback)
+
+    Raises RuntimeError if neither backend is available.
+    Never calls OpenAI embeddings.
+    """
+    global _llama_embed_available, _st_model  # noqa: PLW0603
+
+    # ── Try llama.cpp embeddings endpoint ─────────────────────────────────────
+    if _llama_embed_available is not False:
+        base = os.environ.get("LLAMA_EMBED_URL", "http://localhost:8081/v1")
+        model_name = cfg.get(
+            "vector_memory.embedding_model",
+            os.environ.get("EMBED_MODEL", "nomic-embed-text"),
+        )
+        try:
+            import httpx  # noqa: PLC0415
+            resp = httpx.post(
+                f"{base}/embeddings",
+                json={"model": model_name, "input": text},
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            vec = data["data"][0]["embedding"]
+            if _llama_embed_available is None:
+                logger.debug("Embedding backend: llama.cpp (%s)", base)
+                _llama_embed_available = True
+            return vec
+        except Exception as exc:
+            if _llama_embed_available is True:
+                # llama.cpp was previously confirmed working but failed this call.
+                # Re-raise to avoid silent dimension mismatch with an ST fallback
+                # (nomic-embed-text=768-dim vs all-MiniLM=384-dim would corrupt collections).
+                raise RuntimeError(
+                    f"llama.cpp embedding endpoint failed after prior success: {exc}"
+                ) from exc
+            logger.warning(
+                "llama.cpp embedding endpoint unavailable (%s): %s — trying fallback.",
+                base,
+                exc,
+            )
+            _llama_embed_available = False
+
+    # ── Fallback: sentence-transformers ───────────────────────────────────────
+    fallback_model = cfg.get("vector_memory.fallback_model", "all-MiniLM-L6-v2")
+    try:
+        if _st_model is None:
+            from sentence_transformers import SentenceTransformer  # noqa: PLC0415
+            logger.info("Loading sentence-transformers model '%s'…", fallback_model)
+            _st_model = SentenceTransformer(fallback_model)
+        vec = _st_model.encode(text, normalize_embeddings=True).tolist()
+        return vec
+    except ImportError:
+        raise RuntimeError(
+            "No embedding backend available. "
+            "Install sentence-transformers or run llama.cpp with nomic-embed-text."
+        )
+    except Exception as exc:
+        raise RuntimeError(f"sentence-transformers embedding failed: {exc}") from exc
+
+
+def reset_embed_cache() -> None:
+    """Reset cached backend availability — useful in tests."""
+    global _llama_embed_available, _st_model  # noqa: PLW0603
+    _llama_embed_available = None
+    _st_model = None
 
 
 def route(task_type: str) -> str:

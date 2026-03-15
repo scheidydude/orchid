@@ -11,6 +11,7 @@ from typing import Any
 from orchid import config as cfg
 from orchid.memory import state as mem_state
 from orchid.memory.decisions import load_decisions
+from orchid.memory.vector import VectorMemory
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ class Session:
         self.extra_context: str = ""
         self.decisions: list[dict[str, Any]] = []
         self._log_path: Path | None = None
+        self._vector: VectorMemory | None = None
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -56,12 +58,23 @@ class Session:
         ts = self.started_at.strftime("%Y%m%d_%H%M%S")
         self._log_path = log_dir / f"session_{ts}.jsonl"
 
+        # Lazy vector store init (non-fatal if unavailable)
+        if cfg.get("vector_memory.enabled", True):
+            chunk_size = cfg.get("vector_memory.chunk_size", 512)
+            chunk_overlap = cfg.get("vector_memory.chunk_overlap", 64)
+            self._vector = VectorMemory(
+                project_dir=self.project_dir,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+            )
+
         logger.info(
-            "Session loaded: project=%s tasks=%d decisions=%d hot_memory=%d chars",
+            "Session loaded: project=%s tasks=%d decisions=%d hot_memory=%d chars vector=%s",
             self.project_name,
             len(self.tasks),
             len(self.decisions),
             len(self.hot_memory),
+            "on" if (self._vector and self._vector.available) else "off",
         )
 
     def save(self) -> None:
@@ -90,10 +103,11 @@ class Session:
         logger.info("Session saved.")
 
     def close(self, summary: str = "") -> None:
-        """Save state, compress hot memory if needed, write session log."""
+        """Save state, compress hot memory if needed, write session log, embed session."""
         self._maybe_compress_hot_memory()
         self.save()
         self._write_session_log(summary)
+        self._auto_embed_session(summary)
 
     # ── Context files ─────────────────────────────────────────────────────────
 
@@ -135,6 +149,64 @@ class Session:
             logger.info("Hot memory compressed to %d chars.", len(self.hot_memory))
         except Exception as e:
             logger.warning("Hot memory compression failed: %s", e)
+
+    # ── Vector memory ─────────────────────────────────────────────────────────
+
+    def recall(self, query: str, n: int | None = None) -> str:
+        """
+        Query vector memory and return a formatted context string.
+
+        Returns empty string when vector memory is unavailable or empty.
+        """
+        if not self._vector or not self._vector.available:
+            return ""
+        n_results = n or cfg.get("vector_memory.n_results", 5)
+        results = self._vector.query(query, n=n_results)
+        if not results:
+            return ""
+        lines = ["## Recalled Context", ""]
+        for i, r in enumerate(results, 1):
+            meta = r["metadata"]
+            rtype = meta.get("type", "note")
+            ts = meta.get("timestamp", "")[:10]
+            sid = meta.get("session_id", "")
+            dist = r["distance"]
+            header = f"### [{i}] type={rtype}"
+            if sid:
+                header += f"  session={sid}"
+            if ts:
+                header += f"  date={ts}"
+            header += f"  score={1 - dist:.3f}"
+            lines.append(header)
+            lines.append(r["text"])
+            lines.append("")
+        return "\n".join(lines)
+
+    def _auto_embed_session(self, summary: str) -> None:
+        """Embed the session log into vector store at session end."""
+        if not cfg.get("vector_memory.auto_embed_on_save", True):
+            return
+        if not self._vector or not self._vector.available:
+            return
+        if not self._log_path or not self._log_path.exists():
+            return
+
+        try:
+            log_text = self._log_path.read_text(encoding="utf-8").strip()
+            if not log_text:
+                return
+            session_id = self._log_path.stem  # e.g. "session_20260314_120000"
+            self._vector.add_session_log(
+                session_id=session_id,
+                log_text=log_text,
+                metadata={
+                    "project": self.project_name,
+                    "summary": summary[:500],
+                },
+            )
+            logger.info("Session log embedded into vector store (%s).", session_id)
+        except Exception as exc:
+            logger.warning("Auto-embed of session log failed: %s", exc)
 
     # ── Session log ────────────────────────────────────────────────────────────
 
@@ -185,4 +257,13 @@ class Session:
         ]
         if self.extra_context:
             parts.append(f"\n### Additional Context\n{self.extra_context[:2000]}")
+
+        # Auto-recall: seed context with semantically relevant past sessions
+        if cfg.get("vector_memory.auto_recall_on_load", True):
+            recall_query = " ".join(t.title for t in self.tasks[:5] if t.title)
+            if recall_query:
+                recalled = self.recall(recall_query)
+                if recalled:
+                    parts.append(f"\n{recalled}")
+
         return "\n".join(parts)

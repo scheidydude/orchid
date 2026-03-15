@@ -60,6 +60,20 @@ Projects are NOT subfolders of Orchid. Orchid is installed globally/in a venv.
 Projects opt in with CLAUDE.md + tasks.md + optional .orchid.yaml.
 `orchid init <path>` scaffolds the three files + updates .gitignore.
 
+### D0007 — Chroma embedded mode (no server)
+ChromaDB runs in embedded/persistent mode at `<project>/.orchid/chroma/`.
+No separate server process needed — zero extra infra, still persistent across sessions.
+
+### D0008 — Embedding model priority
+1. llama.cpp `/v1/embeddings` endpoint (LLAMA_EMBED_URL, default port 8081) with `nomic-embed-text`
+2. sentence-transformers `all-MiniLM-L6-v2` Python fallback if llama.cpp unavailable
+OpenAI embeddings are never used.
+
+### D0009 — Auto-embed on save, auto-recall on load
+At session close: the session log is automatically chunked and embedded into the vector store.
+At `context_block()` build: top-k results from a query over current task titles are injected
+as `## Recalled Context` when `vector_memory.auto_recall_on_load: true`.
+
 ## Project structure
 ```
 orchid/
@@ -80,7 +94,7 @@ orchid/
 │   ├── memory/
 │   │   ├── state.py             tasks.md + CLAUDE.md, HTML comment-aware parser
 │   │   ├── decisions.py         JSON Lines append-only log
-│   │   └── vector.py            Chroma stub
+│   │   └── vector.py            ChromaDB embedded vector store (add/query/session log)
 │   ├── tools/
 │   │   ├── models.py            call() + route() for Claude/llama.cpp
 │   │   ├── filesystem.py        read/write/list/append
@@ -98,6 +112,7 @@ orchid --project <path> --mode auto          # autonomous run
 orchid --project <path> --mode interactive   # chat with agent
 orchid --project <path> --status             # task board + hot memory
 orchid --project <path> --add-task "title"   # add a task
+orchid --project <path> --recall "query"     # semantic search over past sessions
 
 # Subcommands
 orchid init <path> [--name NAME] [--description TEXT] [--force]
@@ -135,7 +150,6 @@ pytest tests/
 ```
 
 ## Not yet built
-- Chroma vector memory (stub: memory/vector.py)
 - Telegram/Slack interfaces (reserved in interfaces/)
 - Web search tool
 - Agent-to-agent delegation
