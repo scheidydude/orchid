@@ -41,6 +41,7 @@ class Session:
         self.hot_memory: str = ""
         self.extra_context: str = ""
         self.decisions: list[dict[str, Any]] = []
+        self.delegations: list[dict[str, Any]] = []
         self._log_path: Path | None = None
         self._vector: VectorMemory | None = None
 
@@ -69,10 +70,11 @@ class Session:
             )
 
         logger.info(
-            "Session loaded: project=%s tasks=%d decisions=%d hot_memory=%d chars vector=%s",
+            "Session loaded: project=%s tasks=%d decisions=%d delegations=%d hot_memory=%d chars vector=%s",
             self.project_name,
             len(self.tasks),
             len(self.decisions),
+            len(self.delegations),
             len(self.hot_memory),
             "on" if (self._vector and self._vector.available) else "off",
         )
@@ -210,6 +212,11 @@ class Session:
 
     # ── Session log ────────────────────────────────────────────────────────────
 
+    def record_delegation(self, record: dict[str, Any]) -> None:
+        """Record a delegation event in-memory and persist to session log."""
+        self.delegations.append(record)
+        self.log_event("delegation", record)
+
     def log_event(self, event_type: str, data: dict[str, Any]) -> None:
         if not self._log_path:
             return
@@ -229,6 +236,7 @@ class Session:
             "duration_seconds": duration,
             "tasks_done": sum(1 for t in self.tasks if t.status == mem_state.TaskStatus.DONE),
             "tasks_total": len(self.tasks),
+            "delegations_total": len(self.delegations),
         })
 
     # ── Convenience accessors ─────────────────────────────────────────────────

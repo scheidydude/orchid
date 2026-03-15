@@ -45,6 +45,13 @@ class Orchestrator:
     def __init__(self, session: Session):
         self.session = session
         self.registry = _get_registry()
+        # Delegation support — shared delegator across all tasks in this run
+        from orchid.agents.delegator import AgentDelegator
+        self._delegator = AgentDelegator(
+            session=session,
+            vector_memory=session._vector,
+            project_name=session.project_name,
+        )
 
     # ── Public entry points ────────────────────────────────────────────────────
 
@@ -83,10 +90,16 @@ class Orchestrator:
             # Dispatch to agent
             agent_cls = self._resolve_agent(task)
             agent = agent_cls(session_context=self.session.context_block())
+            agent.delegator = self._delegator
             result_text = agent.run(plan)
 
             self.session.update_task_status(task.id, TaskStatus.DONE)
-            self.session.log_event("task_done", {"task_id": task.id, "result": result_text[:500]})
+            delegation_count = len(self.session.delegations)
+            self.session.log_event("task_done", {
+                "task_id": task.id,
+                "result": result_text[:500],
+                "delegations": delegation_count,
+            })
 
             # Append result summary to hot memory
             self._update_hot_memory(task, result_text)

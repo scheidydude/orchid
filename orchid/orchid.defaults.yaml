@@ -62,6 +62,13 @@ web_search:
   embed_results: true        # auto-embed into vector store after search
   timeout_seconds: 10
 
+delegation:
+  enabled: true
+  max_depth: 3
+  max_sub_iterations: 5
+  embed_results: true
+  log_delegations: true
+
 vector_memory:
   enabled: true
   chunk_size: 512

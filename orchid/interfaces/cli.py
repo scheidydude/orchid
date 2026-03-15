@@ -173,6 +173,28 @@ def _cmd_interactive(project: str, model: str = "claude") -> None:
     console.print("[dim]Session saved. Goodbye.[/dim]")
 
 
+def _count_last_session_delegations(project: str) -> int:
+    """Count delegation events in the most recent session log, if any."""
+    import json as _json
+    log_dir = Path(project) / ".orchid" / "session_logs"
+    if not log_dir.exists():
+        return 0
+    logs = sorted(log_dir.glob("session_*.jsonl"))
+    if not logs:
+        return 0
+    count = 0
+    try:
+        for line in logs[-1].read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            rec = _json.loads(line)
+            if rec.get("type") == "delegation":
+                count += 1
+    except Exception:
+        pass
+    return count
+
+
 def _cmd_status(project: str) -> None:
     """Print task board and hot memory."""
     from rich.markup import escape
@@ -199,6 +221,14 @@ def _cmd_status(project: str) -> None:
         table.add_row(t.id, f"[{color}]{t.status.value}[/{color}]", t.title, t.type, str(t.priority))
 
     console.print(table)
+
+    delegation_count = _count_last_session_delegations(str(proj_path))
+    summary_parts = [
+        f"tasks={len(session.tasks)}",
+        f"decisions={len(session.decisions)}",
+        f"delegations={delegation_count}",
+    ]
+    console.print(f"[dim]{' · '.join(summary_parts)}[/dim]")
 
     if session.hot_memory:
         console.print(Panel(

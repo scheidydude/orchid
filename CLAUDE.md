@@ -34,6 +34,8 @@ orchid task add|done --project <path>
 - **D0009** Auto-embed session log on close; auto-recall top-k into `## Recalled Context` on load (if `vector_memory.auto_recall_on_load: true`).
 - **D0010** Search priority: SearXNG (SEARXNG_URL) → Brave (BRAVE_API_KEY) → DuckDuckGo (always available). Auto-probes and caches. Forceable via `web_search.backend`.
 - **D0011** Content extraction: trafilatura → BeautifulSoup fallback. Truncated to `web_search.max_page_chars` (default 8000).
+- **D0012** (decisions.json: D0004) Agent delegation via ReAct action `delegate[agent_type | task]`. Depth-limited to `delegation.max_depth` (default 3). Sub-agents run with `max_sub_iterations=5`. Delegator injected by Orchestrator; sub-agents inherit it at depth+1.
+- **D0013** (decisions.json: D0005) Sub-context slimming: delegation passes task description + top-3 vector recall + 1000-char parent context slice. Never passes full parent ReAct trace — keeps sub-agents focused.
 
 ## Key Files
 ```
@@ -42,7 +44,8 @@ orchid/config.py                  load_defaults, configure_for_project, merge_fo
 orchid/orchestrator.py            main loop, task routing, agent dispatch
 orchid/session.py                 state lifecycle, context loading, compression
 orchid/agents/base.py             ReAct loop, tool registry, SIGALRM
-orchid/agents/developer|researcher|reviewer.py
+orchid/agents/developer|researcher|reviewer.py  (delegation-capable via delegator injection)
+orchid/agents/delegator.py            AgentDelegator — spawns sub-agents, depth-limits, embeds results
 orchid/tools/models.py            call/route/embed (Claude/llama.cpp)
 orchid/tools/filesystem|shell|search.py
 orchid/memory/state.py            tasks.md+CLAUDE.md HTML-comment-aware parser
@@ -72,9 +75,29 @@ cp .env.example .env  # ANTHROPIC_API_KEY required
 
 ## Not Built Yet
 - Telegram/Slack interfaces
-- Agent-to-agent delegation
 - Multi-project parallelism
 - SearXNG server setup (DDG fallback active)
 ## Recent Completions
 
 - [T009] Fix orchid task add subcommand - unexpected extra argument error: [max iterations reached without final answer]
+
+- [T010] Research the best approach for implementing a retry mechanism in httpx, then implement a retry wrapper in orchid/tools/models.py using that approach: Thought: Let me try a different approach - I'll create the file using base64 encoding to avoid escaping issues.
+
+Action: bash
+Action Input: {"command": "base64 -d << 'EOF' > orchid/tools/models.py\nIi
+
+- [T011] Fix developer agent prompt to use delegate action for research-first tasks: I've updated the developer agent prompt in `/home/dave/LocalAI/orchid/orchid/agents/developer.py` to include delegation guidelines. The prompt now explicitly instructs the developer agent to:
+
+1. Use
+
+- [T012] Fix decisions.json Extra data parse error - persists after T008: 
+
+- [T013] Fix CLAUDE.md compression truncating decision entries: Thought: The issue is with escaping quotes in the f-string. Let me use a different approach - I'll write the file using base64 encoding to avoid all escaping issues.
+
+Action: bash
+Action Input: {"comm
+
+- [T014] Research best practices for Python async context managers, then implement one in orchid/session.py for safe session lifecycle management: Thought: The nested string escaping is causing issues. Let me try a simpler approach - write the file using base64 encoding to avoid all escaping problems.
+
+Action: bash
+Action Input: {"command": "ech

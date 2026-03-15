@@ -41,6 +41,16 @@ _SEARCH_SCHEMAS = [
     },
 ]
 
+_DELEGATE_SCHEMA = {
+    "name": "delegate",
+    "description": (
+        "Spawn a sub-agent to handle a focused subtask. "
+        "Use Action: delegate[agent_type | task description]. "
+        "agent_type: developer | researcher | reviewer | base. "
+        "Example: Action: delegate[researcher | find the best Python library for PDF parsing]"
+    ),
+}
+
 _BUILTIN_SCHEMAS = [
     {
         "name": "read_file",
@@ -113,16 +123,27 @@ class BaseAgent:
         self.session_context = session_context
         self.history: list[Message] = []
         self.max_iterations = cfg.get("agents.max_react_iterations", 15)
+        # Delegation — set by AgentDelegator when spawning sub-agents
+        self.delegator: Any = None
+        self.delegation_depth: int = 0
 
     def register_tool(self, name: str, fn: ToolFn) -> None:
         self.tools[name] = fn
 
     def system_prompt(self) -> str:
         tool_list = "\n".join(f"- {s['name']}: {s['description']}" for s in _BUILTIN_SCHEMAS)
+        delegation_section = ""
+        if self.delegator is not None:
+            delegation_section = (
+                "\n## Delegation\n"
+                f"- {_DELEGATE_SCHEMA['name']}: {_DELEGATE_SCHEMA['description']}\n"
+                "Use bracket format: Action: delegate[agent_type | task description]\n"
+            )
         return (
             "You are a helpful AI agent working inside the Orchid orchestration framework.\n\n"
             "## Available Tools\n"
-            f"{tool_list}\n\n"
+            f"{tool_list}\n"
+            f"{delegation_section}\n"
             "## ReAct Format\n"
             "Think step by step. When you need to use a tool, respond with:\n"
             "Thought: <your reasoning>\n"
@@ -188,7 +209,28 @@ class BaseAgent:
 
         return "[max iterations reached without final answer]"
 
+    def _do_delegate(self, args: dict[str, Any]) -> str:
+        if self.delegator is None:
+            return "[delegation not available: no delegator configured for this agent]"
+        raw = args.get("input", "").strip()
+        if "|" not in raw:
+            return "[delegate error: expected format delegate[agent_type | task description]]"
+        agent_type, task = raw.split("|", 1)
+        agent_type = agent_type.strip()
+        task = task.strip()
+        if not agent_type or not task:
+            return "[delegate error: agent_type and task are both required]"
+        return self.delegator.delegate(
+            agent_type=agent_type,
+            task=task,
+            context=self.session_context,
+            depth=self.delegation_depth,
+            parent_agent=self.__class__.__name__,
+        )
+
     def _dispatch(self, tool_name: str, args: dict[str, Any]) -> str:
+        if tool_name == "delegate":
+            return self._do_delegate(args)
         fn = self.tools.get(tool_name)
         if fn is None:
             return f"[unknown tool: {tool_name}]"
