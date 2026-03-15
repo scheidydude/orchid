@@ -1,0 +1,47 @@
+# orchid-telegram.service.template
+#
+# systemd unit file for running the Orchid Telegram bot as a persistent service.
+#
+# Usage:
+#   1. Copy to /etc/systemd/system/orchid-telegram.service
+#   2. Edit User, WorkingDirectory, EnvironmentFile, and ExecStart as needed
+#   3. systemctl daemon-reload
+#   4. systemctl enable --now orchid-telegram
+#   5. journalctl -u orchid-telegram -f   # to follow logs
+#
+# Variables to replace:
+#   {{USER}}         — system user that runs the bot (e.g. dave)
+#   {{ORCHID_DIR}}   — path to orchid installation (e.g. /home/dave/LocalAI/orchid)
+#   {{PROJECT_DIR}}  — path to the project to work on (e.g. /home/dave/projects/myapp)
+#   {{ENV_FILE}}     — path to .env file containing TELEGRAM_BOT_TOKEN etc.
+
+[Unit]
+Description=Orchid Telegram Bot — {{PROJECT_DIR}}
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{USER}}
+WorkingDirectory={{ORCHID_DIR}}
+EnvironmentFile={{ENV_FILE}}
+
+ExecStart={{ORCHID_DIR}}/.venv/bin/orchid telegram --project {{PROJECT_DIR}} --log-level INFO
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=orchid-telegram
+
+# Hard limits — the bot should be lightweight
+MemoryMax=512M
+CPUQuota=50%
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths={{PROJECT_DIR}}/.orchid
+
+[Install]
+WantedBy=multi-user.target

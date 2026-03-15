@@ -78,3 +78,11 @@ vector_memory:
   fallback_model: all-MiniLM-L6-v2
   auto_recall_on_load: true
   auto_embed_on_save: true
+
+telegram:
+  enabled: false
+  token: ""              # override with TELEGRAM_BOT_TOKEN env var
+  allowed_users: []      # override with TELEGRAM_ALLOWED_USERS env var (comma-separated IDs)
+  multi_project: false
+  max_message_length: 4000
+  progress_updates: true # send updates as tasks run, not just on completion

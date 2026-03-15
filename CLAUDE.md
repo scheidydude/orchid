@@ -36,6 +36,8 @@ orchid task add|done --project <path>
 - **D0011** Content extraction: trafilatura → BeautifulSoup fallback. Truncated to `web_search.max_page_chars` (default 8000).
 - **D0012** (decisions.json: D0004) Agent delegation via ReAct action `delegate[agent_type | task]`. Depth-limited to `delegation.max_depth` (default 3). Sub-agents run with `max_sub_iterations=5`. Delegator injected by Orchestrator; sub-agents inherit it at depth+1.
 - **D0013** (decisions.json: D0005) Sub-context slimming: delegation passes task description + top-3 vector recall + 1000-char parent context slice. Never passes full parent ReAct trace — keeps sub-agents focused.
+- **D0014** Telegram interface is a thin layer in orchid/interfaces/: TelegramBot (command dispatch), BackgroundRunner (thread pool, asyncio bridge), telegram_formatter (plain-text output). No business logic in bot — all calls go through Orchestrator and Session.
+- **D0015** User whitelist security: TELEGRAM_ALLOWED_USERS env var (comma-separated user IDs). If set, bot silently drops messages from unknown users. If unset, warns on startup and accepts all (dev mode only).
 
 ## Key Files
 ```
@@ -52,6 +54,10 @@ orchid/memory/state.py            tasks.md+CLAUDE.md HTML-comment-aware parser
 orchid/memory/decisions.py        JSON Lines append-only
 orchid/memory/vector.py           ChromaDB embedded
 orchid/interfaces/cli.py
+orchid/interfaces/telegram_bot.py     TelegramBot — command handlers, auth guard
+orchid/interfaces/telegram_formatter.py  plain-text/emoji output helpers
+orchid/interfaces/background_runner.py   BackgroundRunner — thread pool + asyncio bridge
+scripts/orchid-telegram.service.template  systemd unit template
 ```
 
 ## Install
@@ -74,9 +80,14 @@ cp .env.example .env  # ANTHROPIC_API_KEY required
 | T008 | Incomplete | decisions.json JSON Lines vs single-doc parse error — needs fix |
 
 ## Not Built Yet
-- Telegram/Slack interfaces
-- Multi-project parallelism
+- Slack interface (reserved — follows same pattern as Telegram)
+- Multi-project parallelism (--multi mode stub present, not wired)
 - SearXNG server setup (DDG fallback active)
+## Milestone 2.4 — Telegram bot interface (2026-03-14)
+Files added: telegram_bot.py, telegram_formatter.py, background_runner.py, tests/test_telegram.py, scripts/orchid-telegram.service.template
+CLI: `orchid telegram --project <path>` — token from TELEGRAM_BOT_TOKEN env var
+Decisions recorded: D0014 (thin layer architecture), D0015 (whitelist security model)
+
 ## Recent Completions
 
 - [T009] Fix orchid task add subcommand - unexpected extra argument error: [max iterations reached without final answer]

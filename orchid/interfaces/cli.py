@@ -462,5 +462,51 @@ def task(
         raise typer.Exit(1)
 
 
+@app.command()
+def telegram(
+    project: str = typer.Option(".", "--project", "-p", help="Path to the project directory"),
+    token: Optional[str] = typer.Option(None, "--token", help="Telegram bot token (overrides env)"),
+    multi: bool = typer.Option(False, "--multi", help="Multi-project mode (future)"),
+    log_level: str = typer.Option("INFO", "--log-level", "-l"),
+) -> None:
+    """Start the Telegram bot interface for a project."""
+    _setup_logging(log_level)
+    import os
+
+    resolved_token = token or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    if not resolved_token:
+        console.print(
+            "[red]No Telegram bot token found.[/red]\n"
+            "Set [bold]TELEGRAM_BOT_TOKEN[/bold] in your .env, or pass [bold]--token[/bold].\n"
+            "Create a bot via @BotFather on Telegram to get a token."
+        )
+        raise typer.Exit(1)
+
+    raw_users = os.environ.get("TELEGRAM_ALLOWED_USERS", "")
+    allowed_users: list[int] = []
+    for uid in raw_users.split(","):
+        uid = uid.strip()
+        if uid.isdigit():
+            allowed_users.append(int(uid))
+
+    proj = str(_resolve_project(project))
+
+    try:
+        from orchid.interfaces.telegram_bot import TelegramBot
+    except ImportError as exc:
+        console.print(f"[red]Failed to import telegram_bot: {exc}[/red]")
+        console.print("Run: [bold]uv pip install 'python-telegram-bot>=20.0'[/bold]")
+        raise typer.Exit(1)
+
+    bot = TelegramBot(project_path=proj, token=resolved_token, allowed_users=allowed_users, multi_project=multi)
+    console.print(f"[green]Starting Telegram bot for project: {proj}[/green]")
+    console.print("[dim]Press Ctrl+C to stop.[/dim]")
+    try:
+        bot.start()
+    except KeyboardInterrupt:
+        bot.stop()
+        console.print("[dim]Bot stopped.[/dim]")
+
+
 if __name__ == "__main__":
     app()
