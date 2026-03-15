@@ -77,6 +77,9 @@ def main(
     recall: Optional[str] = typer.Option(
         None, "--recall", help="Query vector memory and print top results",
     ),
+    search: Optional[str] = typer.Option(
+        None, "--search", help="Run a web search and print results (embeds if vector enabled)",
+    ),
     log_level: str = typer.Option("INFO", "--log-level", "-l"),
 ) -> None:
     if ctx.invoked_subcommand:
@@ -91,6 +94,10 @@ def main(
 
     if recall is not None:
         _cmd_recall(proj, recall)
+        return
+
+    if search is not None:
+        _cmd_search(proj, search)
         return
 
     if add_task:
@@ -199,6 +206,58 @@ def _cmd_status(project: str) -> None:
             title="[bold]Hot Memory (CLAUDE.md)[/bold]",
             border_style="blue",
         ))
+
+
+def _cmd_search(project: str, query: str) -> None:
+    """Run a web search and print results."""
+    from orchid import config as cfg  # noqa: PLC0415
+    from orchid.tools.search import WebSearchTool, reset_backend_cache  # noqa: PLC0415
+    from rich.markup import escape  # noqa: PLC0415
+
+    proj_path = _resolve_project(project)
+    cfg.configure_for_project(proj_path)
+    reset_backend_cache()
+
+    # Optionally wire vector memory for embedding
+    vector_memory = None
+    if cfg.get("web_search.embed_results", True) and cfg.get("vector_memory.enabled", True):
+        from orchid.memory.vector import VectorMemory  # noqa: PLC0415
+        vector_memory = VectorMemory(project_dir=proj_path)
+
+    project_name = proj_path.name
+    tool = WebSearchTool(vector_memory=vector_memory, project_name=project_name)
+
+    n = cfg.get("web_search.max_results", 5)
+    results = tool.search(query, n=n)
+
+    backend_name = ""
+    if results and results[0].get("source"):
+        backend_name = results[0]["source"]
+
+    console.print(Panel(
+        f"[bold]Search:[/bold] {escape(query)}"
+        + (f"  [dim]via {backend_name}[/dim]" if backend_name else ""),
+        border_style="cyan",
+    ))
+
+    has_error = len(results) == 1 and results[0].get("title") in ("error", "")
+    if has_error:
+        console.print(f"[red]{escape(results[0]['snippet'])}[/red]")
+        return
+
+    for i, r in enumerate(results, 1):
+        title = escape(r.get("title", "(no title)"))
+        url = escape(r.get("url", ""))
+        snippet = escape(r.get("snippet", ""))
+        body = f"[bold]{title}[/bold]"
+        if url:
+            body += f"\n[dim]{url}[/dim]"
+        if snippet:
+            body += f"\n{snippet[:300]}"
+        console.print(Panel(body, title=f"[{i}]", border_style="dim"))
+
+    if vector_memory and vector_memory.available and cfg.get("web_search.embed_results", True):
+        console.print(f"[dim]Results embedded into vector store.[/dim]")
 
 
 def _cmd_recall(project: str, query: str) -> None:
@@ -332,7 +391,7 @@ def task(
     action: str = typer.Argument(..., help="add | done | block | cancel"),
     project: str = typer.Option(".", "--project", "-p"),
     task_id: Optional[str] = typer.Option(None, "--id"),
-    title: str = typer.Option("", "--title", "-t"),
+    title: str = typer.Argument(..., help="Task title (required for add)"),
     task_type: str = typer.Option("draft", "--type"),
     priority: int = typer.Option(2, "--priority"),
     description: str = typer.Option("", "--desc", "-d"),
@@ -342,6 +401,9 @@ def task(
     from orchid.memory.state import Task, TaskStatus, save_tasks
 
     if action == "add":
+        if not title:
+            console.print("[red]--title required for add action[/red]")
+            raise typer.Exit(1)
         tid = task_id or f"T{len(session.tasks) + 1:03d}"
         t = Task(id=tid, title=title, type=task_type, priority=priority, description=description)
         session.tasks.append(t)

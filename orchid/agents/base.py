@@ -28,6 +28,19 @@ _BUILTIN_TOOLS: dict[str, ToolFn] = {
     "bash": bash,
 }
 
+_SEARCH_SCHEMAS = [
+    {
+        "name": "search",
+        "description": "Search the web for information. Use Action: search[query] or Action Input: {\"query\": \"...\"}.",
+        "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+    },
+    {
+        "name": "fetch",
+        "description": "Fetch and extract text content from a URL. Use Action: fetch[url] or Action Input: {\"url\": \"...\"}.",
+        "parameters": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]},
+    },
+]
+
 _BUILTIN_SCHEMAS = [
     {
         "name": "read_file",
@@ -67,9 +80,14 @@ _BUILTIN_SCHEMAS = [
 
 # ── ReAct action parsing ──────────────────────────────────────────────────────
 
+# Standard JSON-arg format:  Action: tool_name\nAction Input: {...}
 _ACTION_RE = re.compile(
     r"Action:\s*(\w+)\s*\nAction Input:\s*(\{.*?\})",
     re.DOTALL,
+)
+# Shorthand bracket format:  Action: search[query]  or  Action: fetch[url]
+_ACTION_BRACKET_RE = re.compile(
+    r"Action:\s*(\w+)\[([^\]]+)\]",
 )
 _FINAL_RE = re.compile(r"Final Answer:\s*(.*)", re.DOTALL)
 
@@ -137,18 +155,32 @@ class BaseAgent:
                 logger.info("[%s] Final answer at iter %d", self.__class__.__name__, iteration)
                 return answer
 
-            # Check for action
+            # Check for action — try JSON format first, then bracket shorthand
             action_m = _ACTION_RE.search(response)
-            if not action_m:
+            bracket_m = _ACTION_BRACKET_RE.search(response)
+
+            if action_m:
+                tool_name = action_m.group(1)
+                try:
+                    tool_args = json.loads(action_m.group(2))
+                except json.JSONDecodeError as e:
+                    observation = f"[parse error in Action Input: {e}]"
+                    tool_name = None  # skip dispatch
+                else:
+                    observation = None
+            elif bracket_m:
+                tool_name = bracket_m.group(1)
+                arg_value = bracket_m.group(2).strip()
+                # Map bracket arg to the right parameter name
+                _bracket_arg_map = {"search": "query", "fetch": "url"}
+                arg_key = _bracket_arg_map.get(tool_name, "input")
+                tool_args = {arg_key: arg_value}
+                observation = None
+            else:
                 # No structured action — treat whole response as final
                 return response.strip()
 
-            tool_name = action_m.group(1)
-            try:
-                tool_args = json.loads(action_m.group(2))
-            except json.JSONDecodeError as e:
-                observation = f"[parse error in Action Input: {e}]"
-            else:
+            if observation is None:
                 observation = self._dispatch(tool_name, tool_args)
 
             logger.debug("[%s] Tool %s → %s", self.__class__.__name__, tool_name, observation[:200])
