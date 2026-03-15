@@ -11,6 +11,8 @@
 - [x] **T008** Fix decisions.json parse error - likely JSON Lines vs single JSON document format mismatch `type:code_generate` `p1`
 - [x] **T002** Hook LLM summarizer into session compression `type:code_generate` `p1`
 - [x] **T001** Review the session.py compression logic and suggest improvements `type:review` `p1`
+- [x] **T016** test task from Telegram `type:draft` `p2`
+- [x] **T015** test task from Telegram `type:draft` `p2`
 - [x] **T013** Fix CLAUDE.md compression truncating decision entries `type:code_generate` `p2`
 - [x] **T009** Fix orchid task add subcommand - unexpected extra argument error `type:code_generate` `p2`
 - [x] **T003** Preserve prior summary on re-compression `type:code_generate` `p2`

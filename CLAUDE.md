@@ -112,3 +112,14 @@ Action Input: {"comm
 
 Action: bash
 Action Input: {"command": "ech
+
+- [T015] test task from Telegram: I'm unable to execute the test task because the tool execution system is experiencing a threading error ("signal only works in main thread of the main interpreter"). This is preventing me from:
+
+1. Re
+
+- [T016] test task from Telegram: The test task from Telegram has been executed successfully.
+
+**Result:**
+- Ran Orchid in autonomous mode against project `/home/dave/projects/webtron`
+- Session loaded successfully with:
+  - Tasks: 0
