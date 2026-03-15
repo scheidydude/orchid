@@ -236,19 +236,14 @@ class BaseAgent:
             return f"[unknown tool: {tool_name}]"
         try:
             timeout = cfg.get("agents.tool_timeout_seconds", 30)
-            import signal
-
-            def _handler(signum, frame):
-                raise TimeoutError(f"Tool {tool_name} timed out after {timeout}s")
-
-            signal.signal(signal.SIGALRM, _handler)
-            signal.alarm(timeout)
-            try:
-                result = fn(**args)
-            finally:
-                signal.alarm(0)
+            from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                future = ex.submit(fn, **args)
+                try:
+                    result = future.result(timeout=timeout)
+                except FuturesTimeout:
+                    future.cancel()
+                    return f"[tool timeout after {timeout}s: {tool_name}]"
             return str(result)
-        except TimeoutError as e:
-            return str(e)
         except Exception as e:
             return f"[tool error: {e}]"
