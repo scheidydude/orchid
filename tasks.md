@@ -3,6 +3,11 @@
 
 ## DONE
 
+- [x] **T023** Archive all completed tasks to tasks.md archive section now `type:code_generate` `p1`
+- [x] **T022** Investigate and fix chunking producing oversized token payloads - chunks exceeding 1024 tokens despite chunk_size=400 word setting. Likely word-based chunking not accounting for tokenization overhead. Switch to token-based chunking with hard cap at 800 tokens. `type:code_generate` `p1`
+- [x] **T017** Fix delegations counter not persisting in session status display `type:code_generate` `p1`
+- [x] **T018** Fix D0011 truncating in CLAUDE.md compression - root cause is compression threshold too aggressive for growing decisions list `type:code_generate` `p1`
+- [x] **T021** Run full test suite and fix any failing tests `type:code_generate` `p1`
 - [x] **T014** Research best practices for Python async context managers, then implement one in orchid/session.py for safe session lifecycle management `type:code_generate` `p1`
 - [x] **T011** Fix developer agent prompt to use delegate action for research-first tasks `type:code_generate` `p1`
 - [x] **T012** Fix decisions.json Extra data parse error - persists after T008 `type:code_generate` `p1`
@@ -11,6 +16,8 @@
 - [x] **T008** Fix decisions.json parse error - likely JSON Lines vs single JSON document format mismatch `type:code_generate` `p1`
 - [x] **T002** Hook LLM summarizer into session compression `type:code_generate` `p1`
 - [x] **T001** Review the session.py compression logic and suggest improvements `type:review` `p1`
+- [x] **T019** Add task archiving - completed tasks older than N days move to tasks.md archive section to keep board clean `type:code_generate` `p2`
+- [x] **T020** Add orchid telegram systemd service install script to scripts/ `type:code_generate` `p2`
 - [x] **T016** test task from Telegram `type:draft` `p2`
 - [x] **T015** test task from Telegram `type:draft` `p2`
 - [x] **T013** Fix CLAUDE.md compression truncating decision entries `type:code_generate` `p2`
