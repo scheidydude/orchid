@@ -114,7 +114,7 @@ class TelegramBot:
     # ── Helpers ────────────────────────────────────────────────────────────────
 
     @staticmethod
-    async def _reply(update: "Update", text: str, parse_mode: str = ParseMode.MARKDOWN) -> None:
+    async def _reply(update: "Update", text: str, parse_mode: str | None = None) -> None:
         if update.message:
             await update.message.reply_text(text, parse_mode=parse_mode)
 
@@ -141,7 +141,7 @@ class TelegramBot:
             "/cancel — cancel running task\n"
             "/help — this message"
         )
-        await self._reply(update, text)
+        await self._reply(update, text, parse_mode=ParseMode.MARKDOWN)
 
     async def _cmd_help(self, update: "Update", ctx: "ContextTypes.DEFAULT_TYPE") -> None:
         await self._cmd_start(update, ctx)
@@ -181,7 +181,7 @@ class TelegramBot:
                 msg = format_task_failed(tid, error)
             else:
                 msg = format_task_complete(tid, result or "")
-            await self._app.bot.send_message(chat_id=chat_id, text=msg, parse_mode=ParseMode.MARKDOWN)
+            await self._app.bot.send_message(chat_id=chat_id, text=msg)
 
         self._runner.run_task(task_id, on_done, loop)
 
@@ -208,11 +208,11 @@ class TelegramBot:
                 msg = format_task_failed(tid, error)
             else:
                 msg = format_task_complete(tid, result or "")
-            await self._app.bot.send_message(chat_id=chat_id, text=msg, parse_mode=ParseMode.MARKDOWN)
+            await self._app.bot.send_message(chat_id=chat_id, text=msg)
 
         async def on_done(done_ids: list[str], failed_ids: list[str]) -> None:
             msg = format_auto_summary(done_ids, failed_ids)
-            await self._app.bot.send_message(chat_id=chat_id, text=msg, parse_mode=ParseMode.MARKDOWN)
+            await self._app.bot.send_message(chat_id=chat_id, text=msg)
 
         self._runner.run_auto(on_task, on_done, loop)
 
@@ -230,7 +230,7 @@ class TelegramBot:
         t = Task(id=tid, title=description, type="draft", priority=2, description=description)
         session.tasks.append(t)
         save_tasks(session.tasks, self.project_path)
-        await self._reply(update, f"✅ Added `{tid}`: {description}  _(type=draft, p2)_")
+        await self._reply(update, f"✅ Added {tid}: {description}  (type=draft, p2)")
 
     async def _cmd_recall(self, update: "Update", ctx: "ContextTypes.DEFAULT_TYPE") -> None:
         from orchid.interfaces.telegram_formatter import format_recall_results
@@ -251,7 +251,7 @@ class TelegramBot:
 
         n = cfg.get("vector_memory.n_results", 5)
         results = vm.query(query, n=min(n, 3))
-        await self._reply(update, f"🔍 *Recall:* {query}\n\n" + format_recall_results(results))
+        await self._reply(update, f"🔍 Recall: {query}\n\n" + format_recall_results(results))
 
     async def _cmd_search(self, update: "Update", ctx: "ContextTypes.DEFAULT_TYPE") -> None:
         from orchid.interfaces.telegram_formatter import format_search_results
@@ -276,7 +276,7 @@ class TelegramBot:
 
         tool = WebSearchTool(vector_memory=vector_memory, project_name=Path(self.project_path).name)
         results = tool.search(query, n=3)
-        await self._reply(update, f"🌐 *Search:* {query}\n\n" + format_search_results(results))
+        await self._reply(update, f"🌐 Search: {query}\n\n" + format_search_results(results))
 
     async def _cmd_decide(self, update: "Update", ctx: "ContextTypes.DEFAULT_TYPE") -> None:
         text = update.message.text if update.message else ""
@@ -293,7 +293,7 @@ class TelegramBot:
 
         from orchid.memory.decisions import record_decision
         rec = record_decision(title, decision, rationale, project_dir=self.project_path)
-        await self._reply(update, f"📝 Recorded `{rec['id']}`: {title}")
+        await self._reply(update, f"📝 Recorded {rec['id']}: {title}")
 
     async def _cmd_cancel(self, update: "Update", ctx: "ContextTypes.DEFAULT_TYPE") -> None:
         if self._runner.cancel():

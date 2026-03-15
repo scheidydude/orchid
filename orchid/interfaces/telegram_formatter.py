@@ -1,10 +1,10 @@
-"""Telegram-safe output formatters.
+"""Telegram-safe output formatters — plain text only, no markdown.
 
 Rules:
-- No rich markup, no box-drawing characters
+- No rich markup, no box-drawing characters, no markdown syntax
 - Plain emoji for status indicators
 - Truncate to max_message_length (default 4000 chars, Telegram limit)
-- Code blocks use backtick fences (Telegram markdown)
+- parse_mode=None is assumed; callers must not set parse_mode on these outputs
 """
 
 from __future__ import annotations
@@ -42,9 +42,9 @@ def _truncate(text: str, limit: int = _MAX_LEN, suffix: str = "\n…(truncated)"
 
 
 def format_status(session: Any) -> str:
-    """Format project status for Telegram — plain text, no rich markup."""
+    """Format project status for Telegram — plain text, no markdown."""
     lines: list[str] = []
-    lines.append(f"📋 *{session.project_name}*")
+    lines.append(f"📋 {session.project_name}")
     if session.project_description:
         lines.append(session.project_description)
     lines.append("")
@@ -57,21 +57,20 @@ def format_status(session: Any) -> str:
             sv = t.status.value
             counts[sv] = counts.get(sv, 0) + 1
 
-        lines.append("*Tasks:*")
+        lines.append("Tasks:")
         for t in session.tasks:
             emoji = _STATUS_EMOJI.get(t.status.value, "❓")
             ttype = _TYPE_ABBREV.get(t.type, t.type[:4])
-            lines.append(f"{emoji} `{t.id}` {t.title}  _{ttype} p{t.priority}_")
+            lines.append(f"{emoji} {t.id}  {t.title}  ({ttype} p{t.priority})")
 
-        summary_parts = [f"{v}×{k}" for k, v in counts.items() if v]
+        summary_parts = [f"{v}x{k}" for k, v in counts.items() if v]
         lines.append("")
         lines.append("  ".join(summary_parts))
 
     if session.hot_memory:
         lines.append("")
-        lines.append("*Hot memory:*")
-        snippet = session.hot_memory[:500].strip()
-        lines.append(f"```\n{snippet}\n```")
+        lines.append("Hot memory:")
+        lines.append(session.hot_memory[:500].strip())
 
     return _truncate("\n".join(lines))
 
@@ -83,7 +82,7 @@ def format_task_list(tasks: list[Any]) -> str:
     lines: list[str] = []
     for t in tasks:
         emoji = _STATUS_EMOJI.get(t.status.value, "❓")
-        lines.append(f"{emoji} `{t.id}` {t.title}")
+        lines.append(f"{emoji} {t.id}  {t.title}")
     return _truncate("\n".join(lines))
 
 
@@ -97,12 +96,11 @@ def format_recall_results(results: list[dict[str, Any]]) -> str:
         rtype = meta.get("type", "note")
         score = 1 - r.get("distance", 1.0)
         ts = meta.get("timestamp", "")[:16].replace("T", " ")
-        header = f"*[{i}]* type={rtype}  score={score:.2f}"
+        header = f"[{i}] type={rtype}  score={score:.2f}"
         if ts:
             header += f"  {ts}"
         lines.append(header)
-        text = r.get("text", "")[:300].strip()
-        lines.append(f"```\n{text}\n```")
+        lines.append(r.get("text", "")[:300].strip())
         lines.append("")
     return _truncate("\n".join(lines))
 
@@ -111,7 +109,6 @@ def format_search_results(results: list[dict[str, Any]]) -> str:
     """Format web search results for Telegram."""
     if not results:
         return "No results."
-    # Check for error result
     if len(results) == 1 and results[0].get("title") in ("error", ""):
         return f"⚠️ Search error: {results[0].get('snippet', 'unknown error')}"
     lines: list[str] = []
@@ -119,7 +116,7 @@ def format_search_results(results: list[dict[str, Any]]) -> str:
         title = r.get("title", "(no title)")
         url = r.get("url", "")
         snippet = r.get("snippet", "")
-        lines.append(f"*[{i}] {title}*")
+        lines.append(f"[{i}] {title}")
         if url:
             lines.append(url)
         if snippet:
@@ -131,21 +128,21 @@ def format_search_results(results: list[dict[str, Any]]) -> str:
 def format_task_complete(task_id: str, result: str) -> str:
     """Format a task-complete notification."""
     preview = result[:200].strip() if result else "(no output)"
-    return _truncate(f"✅ *{task_id} done*\n\n```\n{preview}\n```")
+    return _truncate(f"✅ {task_id} done\n\n{preview}")
 
 
 def format_task_failed(task_id: str, error: str) -> str:
     """Format a task-failed notification."""
     preview = str(error)[:200].strip()
-    return _truncate(f"❌ *{task_id} failed*\n\n```\n{preview}\n```")
+    return _truncate(f"❌ {task_id} failed\n\n{preview}")
 
 
 def format_task_started(task_id: str, title: str) -> str:
-    return f"🤖 Starting *{task_id}*: {title}…"
+    return f"🤖 Starting {task_id}: {title}…"
 
 
 def format_auto_summary(done: list[str], failed: list[str]) -> str:
-    lines = ["*Auto run complete.*", ""]
+    lines = ["Auto run complete.", ""]
     if done:
         lines.append(f"✅ Done: {', '.join(done)}")
     if failed:
