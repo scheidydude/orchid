@@ -2,6 +2,8 @@
 
 AI agent orchestration framework. Install once, run against any project.
 
+“Orchid is a symbiotic ecosystem of specialized AI agents, cultivated and orchestrated to transform ideas into reliable software systems.”
+
 ```
 ~/orchid/              ← install here
 ~/projects/webtron/    ← your project (any git repo)
