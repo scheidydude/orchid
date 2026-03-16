@@ -1,6 +1,6 @@
 <!-- compressed 2026-03-16 -->
 
-# CLAUDE.md — Orchid Framework
+# CLAUDE.md — Orchid Framework (compressed)
 
 ## What It Is
 Standalone AI agent orchestration tool. Installed globally, invoked against external project dirs. Projects opt in via CLAUDE.md + tasks.md + optional .orchid.yaml.
@@ -84,12 +84,11 @@ cp .env.example .env  # ANTHROPIC_API_KEY required; llama.cpp: localhost:8080
 |----|--------|-------|
 | T007 | **INCOMPLETE** | DDG ad-result filter (y.js URLs) |
 | T008 | **INCOMPLETE** | decisions.json JSON Lines parse error |
+| T034 | **INCOMPLETE** | `orchid task done` should not require TITLE when --id provided; hit max iterations |
 | T009–T032 | Done | Incl. chunking, log parser, dep tests, Slack formatter, Web UI, CLI --help, hello.py |
+| T035 | Done | AnthropicProvider.complete(): exponential backoff+jitter on 429, max 3 retries, up to 60s wait |
 | Phase 3 M3.0–M3.4 | Done | deps/streaming/injection/notifications/routing/multi/Slack/Web UI/Provider registry |
 | Tests | 208 passing | 188 + 20 new (test_providers.py) |
 
 ## Not Built
 - SearXNG server setup (DDG fallback active)
-
-## Recent
-- **T032** Done: `orchid/hello.py` — `def hello(name: str = "World") -> str: return f"Hello, {name}!"`

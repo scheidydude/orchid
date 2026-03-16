@@ -652,7 +652,7 @@ def task(
     action: str = typer.Argument(..., help="add | done | block | cancel"),
     project: str = typer.Option(".", "--project", "-p"),
     task_id: Optional[str] = typer.Option(None, "--id"),
-    title: str = typer.Argument(..., help="Task title (required for add)"),
+    title: str = typer.Argument("", help="Task title (required for add)"),
     task_type: str = typer.Option("draft", "--type"),
     priority: int = typer.Option(2, "--priority"),
     description: str = typer.Option("", "--desc", "-d"),
@@ -663,7 +663,7 @@ def task(
 
     if action == "add":
         if not title:
-            console.print("[red]--title required for add action[/red]")
+            console.print("[red]title required for add action (use: orchid task add --title '...' --id T001)[/red]")
             raise typer.Exit(1)
         tid = task_id or f"T{len(session.tasks) + 1:03d}"
         t = Task(id=tid, title=title, type=task_type, priority=priority, description=description)

@@ -1,12 +1,10 @@
 # Tasks
 
 
-## TODO
-
-- [ ] **T033** Fix offline mode: hot memory compression should use local provider when --offline flag is set, not call Claude API `type:code_generate` `p1`
-
 ## DONE
 
+- [x] **T035** Add exponential backoff with jitter to AnthropicProvider.complete() for 429 rate limit errors — wait up to 60s between retries, max 3 retries, log warning on each retry `type:code_generate` `p1`
+- [x] **T033** Fix offline mode: hot memory compression should use local provider when --offline flag is set, not call Claude API `type:code_generate` `p1`
 - [x] **T032** Simple hello world function `type:code_generate` `p1`
 - [x] **T031** Write a haiku about distributed systems `type:draft` `p1`
 - [x] **T029** Test Web UI live task creation `type:draft` `p1`
@@ -26,6 +24,7 @@
 - [x] **T008** Fix decisions.json parse error - likely JSON Lines vs single JSON document format mismatch `type:code_generate` `p1`
 - [x] **T002** Hook LLM summarizer into session compression `type:code_generate` `p1`
 - [x] **T001** Review the session.py compression logic and suggest improvements `type:review` `p1`
+- [x] **T034** Fix orchid task done subcommand - should not require TITLE argument when --id is provided `type:code_generate` `p2`
 - [x] **T030** Test CLI --help option `type:draft` `p2`
 - [x] **T027** test task from Slack `type:draft` `p2`
 - [x] **T028** Fix Slack formatter: hot memory code blocks missing closing triple backtick in Slack messages `type:draft` `p2`
