@@ -937,5 +937,78 @@ def web(
     )
 
 
+@app.command()
+def serve(
+    watch_dir: Optional[List[str]] = typer.Option(
+        None, "--watch-dir",
+        help="Directory to watch for orchid projects (repeatable). Default: ~/LocalAI",
+    ),
+    project: Optional[List[str]] = typer.Option(
+        None, "--project", "-p",
+        help="Explicit project path (repeatable). Always registered, .orchid.yaml optional.",
+    ),
+    host: str = typer.Option("0.0.0.0", "--host", help="Bind host"),
+    port: int = typer.Option(7842, "--port", help="Bind port"),
+    log_level: str = typer.Option("info", "--log-level", "-l"),
+) -> None:
+    """Persistent multi-project server with auto-discovery.
+
+    Scans watch dirs for orchid projects, starts the web UI, and watches
+    for new/removed projects. Ideal for running as a systemd service.
+
+    Examples:
+      orchid serve --watch-dir ~/LocalAI
+      orchid serve --watch-dir ~/LocalAI --watch-dir ~/projects --port 7842
+      orchid serve --watch-dir ~/LocalAI --project ~/other/myproj
+    """
+    _setup_logging(log_level.upper())
+
+    try:
+        from orchid.interfaces.web_server import serve as _serve
+    except ImportError as exc:
+        console.print(f"[red]Failed to import web_server: {exc}[/red]")
+        raise typer.Exit(1)
+
+    from orchid import config as cfg
+
+    # Resolve watch dirs (fall back to config default)
+    resolved_watch_dirs: list[str] = []
+    if watch_dir:
+        resolved_watch_dirs = [str(_resolve_project(d)) for d in watch_dir]
+    else:
+        default_dirs = cfg.get("serve.watch_dirs", [])
+        if default_dirs:
+            resolved_watch_dirs = [str(_resolve_project(d)) for d in default_dirs]
+        else:
+            # Final fallback: ~/LocalAI
+            fallback = Path("~/LocalAI").expanduser()
+            resolved_watch_dirs = [str(fallback)]
+
+    # Explicit projects provided via --project
+    resolved_projects = [str(_resolve_project(p)) for p in (project or [])]
+
+    console.print(
+        f"[green]Starting Orchid persistent server on {host}:{port}[/green]"
+    )
+    if resolved_watch_dirs:
+        console.print("[dim]Watching for projects in:[/dim]")
+        for d in resolved_watch_dirs:
+            console.print(f"  • {d}")
+    if resolved_projects:
+        console.print("[dim]Explicit projects:[/dim]")
+        for p in resolved_projects:
+            console.print(f"  • {p}")
+    console.print(f"  UI: [cyan]http://{'localhost' if host == '0.0.0.0' else host}:{port}[/cyan]")
+    console.print("[dim]Press Ctrl+C to stop.[/dim]")
+
+    _serve(
+        project_paths=resolved_projects,
+        host=host,
+        port=port,
+        log_level=log_level,
+        watch_dirs=resolved_watch_dirs or None,
+    )
+
+
 if __name__ == "__main__":
     app()

@@ -22,3 +22,11 @@ agent_roles:
 # Override memory settings (optional)
 # memory:
 #   compression_threshold: 8000
+
+# Persistent web service configuration (orchid serve / D0033)
+# persistent:
+#   enabled: true             # include in persistent web service auto-discovery
+#   auto_run: false           # run agent loop automatically when service starts
+#   auto_run_schedule:        # optional cron schedule for auto runs
+#     - "0 2 * * *"           # 2am daily
+#   auto_run_code_model: auto # claude | local | auto

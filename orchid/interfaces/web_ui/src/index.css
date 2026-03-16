@@ -160,6 +160,16 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
   background: var(--surface2);
 }
 .project-name { font-weight: 600; font-size: 13px; }
+.project-path {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  opacity: 0.7;
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .project-counts { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
 .project-running-dot {
   display: inline-block;

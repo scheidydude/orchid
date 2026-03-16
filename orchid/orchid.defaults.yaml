@@ -166,6 +166,31 @@ multi:
   worker_health_check_interval: 30    # seconds between health checks in coordinator
   projects: []                        # persistent project list for 'orchid multi start'
 
+# Auto-discovery: scan directories for .orchid.yaml files (D0033)
+discovery:
+  enabled: false
+  watch_dirs:
+    - "${HOME}/LocalAI"
+    - "${HOME}/Documents/Development"
+  depth: 2
+  exclude:
+    - ".venv"
+    - "node_modules"
+    - ".git"
+    - "__pycache__"
+    - ".orchid"
+
+# Persistent serve: unified multi-project server (D0034)
+serve:
+  host: "0.0.0.0"
+  port: 7842
+  watch_dirs:
+    - "${HOME}/LocalAI"
+    - "${HOME}/Documents/Development"
+  projects: []                        # explicit project paths outside watch dirs
+  auto_discovery: true
+  agent_manager: true
+
 # Provider registry — 5-layer resolution chain
 # Layer 1: CLI --provider flag          (e.g. --provider developer=ollama)
 # Layer 2: per-agent-type config below  (providers.<agent_type>)

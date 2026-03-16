@@ -13,7 +13,7 @@ import { useAgentStream } from './hooks/useAgentStream.js'
 const TABS = ['Tasks', 'Stream', 'Decisions', 'Sessions', 'Recall', 'Memory']
 
 export default function App() {
-  const { projects, loading: projectsLoading, refresh: refreshProjects } = useProjects()
+  const { projects, loading: projectsLoading, refresh: refreshProjects, newProjectIds } = useProjects()
   const [activeProject, setActiveProject] = useState(null)
   const [activeTab, setActiveTab] = useState('Tasks')
   const { entries, runStatus, clear } = useAgentStream(activeProject)
@@ -42,9 +42,20 @@ export default function App() {
         <span className="logo">🌸 Orchid</span>
         {activeProjectData && (
           <>
-            <span style={{ color: 'var(--text-dim)', fontSize: 13 }}>
-              {activeProjectData.name}
-            </span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+              <span style={{ color: 'var(--text-dim)', fontSize: 13 }}>
+                {activeProjectData.name}
+              </span>
+              {activeProjectData.path && (
+                <span
+                  className="project-path"
+                  title={activeProjectData.path}
+                  style={{ fontSize: '0.75rem' }}
+                >
+                  {activeProjectData.path.replace(/^\/home\/[^/]+/, '~')}
+                </span>
+              )}
+            </div>
             {activeProjectData.running && (
               <span style={{ fontSize: 12, color: '#56d364' }}>
                 <span className="project-running-dot" />running
@@ -66,6 +77,7 @@ export default function App() {
               projects={projects}
               activeId={activeProject}
               onSelect={handleProjectSelect}
+              newProjectIds={newProjectIds}
             />
           )}
         </nav>

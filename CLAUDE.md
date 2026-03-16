@@ -23,6 +23,7 @@ orchid init <path> [--name --description --force]
 orchid decide "Title" --decision "..." --rationale "..." --project <path>
 orchid --multi --project <path-a> --project <path-b>
 orchid telegram|slack|web --project <path> [--port 7842] [--host 0.0.0.0]
+orchid serve [--watch-dir ~/LocalAI] [--project <path>] [--port 7842] [--host 0.0.0.0]
 ```
 tasks.md: `- [ ] **T003** Title \`type:code_generate\` \`p1\` \`needs:T001,T002\` \`model:claude\``
 
@@ -59,6 +60,9 @@ tasks.md: `- [ ] **T003** Title \`type:code_generate\` \`p1\` \`needs:T001,T002\
 - **D0030** ProviderBase ABC with 60s availability cache; ProviderRegistry singleton with 5-layer resolution: CLI flag → project config → ORCHID_\<AGENT\>_PROVIDER env → task_type default → agent_type hardcoded fallback.
 - **D0031** All provider backends (Anthropic, LocalLlama, Ollama, OpenAI, OpenRouter, Bedrock) share ProviderBase. boto3 lazy import for Bedrock.
 - **D0032** `--check-providers` probes all configured providers. `--offline` routes all to local. `--provider agent=provider` per-agent-type CLI override.
+- **D0033** Auto-discovery via watchdog inotify: ProjectDiscovery scans watch_dirs (depth 2) for .orchid.yaml, watches for created/deleted (debounced 2s). Excludes .venv/node_modules/.git/__pycache__. Explicit projects bypass .orchid.yaml requirement.
+- **D0034** `orchid serve` — unified persistent entry point: web UI + auto-discovery + optional agent loops. systemd service at scripts/orchid-serve.service. watch_dirs configurable via CLI or serve.watch_dirs in config.
+- **D0035** AgentManager: per-project agent loop threads with APScheduler BackgroundScheduler for cron-based auto runs. Per-project persistent config in .orchid.yaml `persistent:` section (enabled, auto_run, auto_run_schedule, auto_run_code_model).
 
 ## Key Files
 ```
@@ -70,7 +74,9 @@ orchid/memory/state.py / decisions.py / vector.py
 orchid/providers/__init__.py / base.py / registry.py / anthropic.py / local.py / ollama.py / openai.py / bedrock.py
 orchid/interfaces/cli.py / telegram_bot.py / telegram_formatter.py / slack_bot.py / slack_formatter.py
 orchid/interfaces/web_server.py / web_ui/ / multi_formatter.py / background_runner.py
-scripts/orchid-{telegram,multi,slack,web}.service.template / traefik-orchid.yml
+orchid/discovery.py / agent_manager.py
+scripts/orchid-{telegram,multi,slack,web}.service.template / orchid-serve.service / traefik-orchid.yml
+scripts/install-orchid-serve.sh
 ```
 
 ## Install
@@ -87,8 +93,15 @@ cp .env.example .env  # ANTHROPIC_API_KEY required; llama.cpp: localhost:8080
 | T034 | **INCOMPLETE** | `orchid task done` should not require TITLE when --id provided; hit max iterations |
 | T009–T032 | Done | Incl. chunking, log parser, dep tests, Slack formatter, Web UI, CLI --help, hello.py |
 | T035 | Done | AnthropicProvider.complete(): exponential backoff+jitter on 429, max 3 retries, up to 60s wait |
-| Phase 3 M3.0–M3.4 | Done | deps/streaming/injection/notifications/routing/multi/Slack/Web UI/Provider registry |
-| Tests | 208 passing | 188 + 20 new (test_providers.py) |
+| T036 | Done | discovery.py: skip inotify watch for non-existent dirs; exclude .venv/node_modules/.git from watchdog Observer |
+| Phase 3 M3.0–M3.5 | Done | deps/streaming/injection/notifications/routing/multi/Slack/Web UI/Provider registry/Auto-discovery/orchid serve/AgentManager |
+| Tests | ~230 passing | + test_discovery.py |
 
 ## Not Built
 - SearXNG server setup (DDG fallback active)
+## Recent Completions
+
+- [T037] Create scripts/deploy.sh — one-command deploy script that: 1) builds React frontend (npm run build in orchid/interfaces/web_ui/), 2) reinstalls orchid globally (uv tool install . --force), 3) restarts orchid-serve systemd service (sudo systemctl restart orchid-serve), 4) tails logs for 5 seconds to confirm clean startup. Add usage instructions as comments at top of script.: Created `orchid/scripts/deploy.sh` with the following features:
+
+1. **Builds React frontend** - Runs `npm run build` in `orchid/interfaces/web_ui/`
+2. **Reinstalls orchid globally** - Uses `uv tool in

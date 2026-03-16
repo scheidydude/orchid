@@ -1,0 +1,41 @@
+[2026-03-16T18:47:12.397032+00:00] iter=0
+  Thought: I need to fix discovery.py to handle non-existent watch directories gracefully and add exclude patterns for common directories like .venv, node_modules, and .git. Let me first read the current discovery.py file to understand its structure.
+  Action:  read_file
+  Obs:     """Project auto-discovery via filesystem scanning and watchdog monitoring.
+
+Architecture (D0033):
+- ProjectDiscovery scans watch_dirs up to configured depth
+- Uses watchdog inotify (Linux) for efficient file system events
+- Debounces .orchid.yaml created/deleted events by 2 seconds
+- Explicit projec
+
+[2026-03-16T18:48:20.312131+00:00] iter=1
+  Obs:     [parse error in Action Input: Unterminated string starting at: line 1 column 44 (char 43)]
+
+[2026-03-16T18:48:26.699482+00:00] iter=2
+  Thought: I need to fix the escaping issue. Let me read the file first to see the exact content, then write it properly with correct escaping.
+  Action:  read_file
+  Obs:     """Project auto-discovery via filesystem scanning and watchdog monitoring.
+
+Architecture (D0033):
+- ProjectDiscovery scans watch_dirs up to configured depth
+- Uses watchdog inotify (Linux) for efficient file system events
+- Debounces .orchid.yaml created/deleted events by 2 seconds
+- Explicit projec
+
+[2026-03-16T18:49:24.999274+00:00] iter=3
+  Thought: I need to update discovery.py to:
+1. Make the non-existent dir check more robust in `watch()` with better error handling
+2. Add exclude patterns to the Observer to filter out events from excluded directories like .venv, node_modules, .git
+
+Let me write the updated file.
+  Obs:     [parse error in Action Input: Unterminated string starting at: line 1 column 44 (char 43)]
+
+[2026-03-16T18:50:22.498114+00:00] iter=4
+  Thought: The file content is too long for a single write_file action. Let me use bash with a heredoc to write the file instead.
+  Obs:     [parse error in Action Input: Unterminated string starting at: line 1 column 13 (char 12)]
+
+[2026-03-16T18:51:22.340721+00:00] iter=5
+  Thought: The heredoc approach is having issues with special characters. Let me use Python to write the file instead.
+  Obs:     [parse error in Action Input: Unterminated string starting at: line 1 column 13 (char 12)]
+

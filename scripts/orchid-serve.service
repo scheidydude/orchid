@@ -1,0 +1,21 @@
+[Unit]
+Description=Orchid persistent web server and agent orchestrator
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=dave
+WorkingDirectory=/home/dave/LocalAI/orchid
+EnvironmentFile=/home/dave/LocalAI/orchid/.env
+ExecStart=/home/dave/.local/bin/orchid serve \
+    --watch-dir /home/dave/LocalAI \
+    --watch-dir /home/dave/Documents/Development \
+    --port 7842
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
