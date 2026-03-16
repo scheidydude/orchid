@@ -1,0 +1,57 @@
+# orchid-slack.service.template
+#
+# systemd unit file for running the Orchid Slack bot as a persistent service.
+# Uses Socket Mode — no public URL or ngrok required.
+#
+# Usage:
+#   1. Copy to /etc/systemd/system/orchid-slack.service
+#   2. Edit User, WorkingDirectory, EnvironmentFile, and ExecStart as needed
+#   3. systemctl daemon-reload
+#   4. systemctl enable --now orchid-slack
+#   5. journalctl -u orchid-slack -f   # to follow logs
+#
+# Prerequisites:
+#   - Slack app created at https://api.slack.com/apps
+#   - Socket Mode enabled in app settings
+#   - Bot Token (xoxb-) added to .env as SLACK_BOT_TOKEN
+#   - App-Level Token (xapp-, scope: connections:write) added as SLACK_APP_TOKEN
+#   - Slash commands registered: /orchid-status, /orchid-run, /orchid-auto,
+#     /orchid-add, /orchid-recall, /orchid-search, /orchid-inject, /orchid-help
+#   - app_mentions:read event subscription enabled
+#
+# Variables to replace:
+#   {{USER}}         — system user that runs the bot (e.g. dave)
+#   {{ORCHID_DIR}}   — path to orchid installation (e.g. /home/dave/LocalAI/orchid)
+#   {{PROJECT_DIR}}  — path to the project to work on (e.g. /home/dave/projects/myapp)
+#   {{ENV_FILE}}     — path to .env file containing SLACK_BOT_TOKEN, SLACK_APP_TOKEN etc.
+
+[Unit]
+Description=Orchid Slack Bot — {{PROJECT_DIR}}
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{USER}}
+WorkingDirectory={{ORCHID_DIR}}
+EnvironmentFile={{ENV_FILE}}
+
+ExecStart={{ORCHID_DIR}}/.venv/bin/orchid slack --project {{PROJECT_DIR}} --log-level INFO
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=orchid-slack
+
+# Resource limits
+MemoryMax=512M
+CPUQuota=50%
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths={{PROJECT_DIR}}/.orchid
+
+[Install]
+WantedBy=multi-user.target

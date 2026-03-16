@@ -132,6 +132,20 @@ streaming:
   enabled: true
   telegram_progress_interval: 3   # send progress update every N iterations
 
+slack:
+  enabled: false
+  bot_token: ""          # SLACK_BOT_TOKEN env var (xoxb-)
+  app_token: ""          # SLACK_APP_TOKEN env var (xapp-, requires Socket Mode)
+  default_channel: ""    # SLACK_DEFAULT_CHANNEL env var (#channel-name or C0XXXXXXX)
+  thread_task_updates: true   # reply in task thread rather than posting to channel
+  notify_on:
+    - session_start
+    - task_start
+    - task_complete
+    - task_failed
+    - task_blocked
+    - session_complete
+
 multi:
   enabled: false
   max_workers: 4                      # max parallel worker processes

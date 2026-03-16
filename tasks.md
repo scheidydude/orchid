@@ -19,6 +19,8 @@
 - [x] **T008** Fix decisions.json parse error - likely JSON Lines vs single JSON document format mismatch `type:code_generate` `p1`
 - [x] **T002** Hook LLM summarizer into session compression `type:code_generate` `p1`
 - [x] **T001** Review the session.py compression logic and suggest improvements `type:review` `p1`
+- [x] **T027** test task from Slack `type:draft` `p2`
+- [x] **T028** Fix Slack formatter: hot memory code blocks missing closing triple backtick in Slack messages `type:draft` `p2`
 - [x] **T019** Add task archiving - completed tasks older than N days move to tasks.md archive section to keep board clean `type:code_generate` `p2`
 - [x] **T020** Add orchid telegram systemd service install script to scripts/ `type:code_generate` `p2`
 - [x] **T016** test task from Telegram `type:draft` `p2`

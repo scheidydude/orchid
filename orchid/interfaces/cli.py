@@ -714,5 +714,82 @@ def telegram(
         console.print("[dim]Bot stopped.[/dim]")
 
 
+@app.command()
+def slack(
+    project: Optional[List[str]] = typer.Option(
+        None, "--project", "-p",
+        help="Project directory. Repeat with --multi for multi-project mode.",
+    ),
+    bot_token: Optional[str] = typer.Option(None, "--token", help="Slack bot token xoxb- (overrides env)"),
+    app_token: Optional[str] = typer.Option(None, "--app-token", help="Slack app token xapp- (overrides env)"),
+    channel: Optional[str] = typer.Option(None, "--channel", help="Default Slack channel (overrides env)"),
+    multi: bool = typer.Option(False, "--multi", help="Multi-project mode — tag all notifications with project name"),
+    log_level: str = typer.Option("INFO", "--log-level", "-l"),
+) -> None:
+    """Start the Slack bot interface for a project (Socket Mode).
+
+    Single-project:  orchid slack --project ~/myapp
+    Multi-project:   orchid slack --multi --project ~/a --project ~/b
+
+    Requires: SLACK_BOT_TOKEN (xoxb-) and SLACK_APP_TOKEN (xapp-) in .env.
+    Create your app at https://api.slack.com/apps with Socket Mode enabled.
+    """
+    _setup_logging(log_level)
+    import os
+
+    resolved_bot_token = bot_token or os.environ.get("SLACK_BOT_TOKEN", "")
+    resolved_app_token = app_token or os.environ.get("SLACK_APP_TOKEN", "")
+    resolved_channel = channel or os.environ.get("SLACK_DEFAULT_CHANNEL", "")
+
+    if not resolved_bot_token:
+        console.print(
+            "[red]No Slack bot token found.[/red]\n"
+            "Set [bold]SLACK_BOT_TOKEN[/bold] (xoxb-...) in your .env, or pass [bold]--token[/bold].\n"
+            "Create a Slack app at https://api.slack.com/apps with Socket Mode enabled."
+        )
+        raise typer.Exit(1)
+
+    if not resolved_app_token:
+        console.print(
+            "[red]No Slack app token found.[/red]\n"
+            "Set [bold]SLACK_APP_TOKEN[/bold] (xapp-...) in your .env, or pass [bold]--app-token[/bold].\n"
+            "Enable Socket Mode in your Slack app to get this token."
+        )
+        raise typer.Exit(1)
+
+    resolved_projects = [str(_resolve_project(p)) for p in (project or ["."])]
+    primary_project = resolved_projects[0]
+    extra_projects = resolved_projects[1:] if multi and len(resolved_projects) > 1 else []
+
+    try:
+        from orchid.interfaces.slack_bot import SlackBot
+    except ImportError as exc:
+        console.print(f"[red]Failed to import slack_bot: {exc}[/red]")
+        console.print("Run: [bold]uv pip install 'slack-bolt>=1.18.0'[/bold]")
+        raise typer.Exit(1)
+
+    if multi:
+        console.print("[green]Starting Slack bot (multi-project):[/green]")
+        for p in resolved_projects:
+            console.print(f"  • {p}")
+    else:
+        console.print(f"[green]Starting Slack bot for project: {primary_project}[/green]")
+
+    bot = SlackBot(
+        project_path=primary_project,
+        bot_token=resolved_bot_token,
+        app_token=resolved_app_token,
+        default_channel=resolved_channel,
+        multi_project=multi,
+        extra_projects=extra_projects or None,
+    )
+    console.print("[dim]Press Ctrl+C to stop.[/dim]")
+    try:
+        bot.start()
+    except KeyboardInterrupt:
+        bot.stop()
+        console.print("[dim]Bot stopped.[/dim]")
+
+
 if __name__ == "__main__":
     app()

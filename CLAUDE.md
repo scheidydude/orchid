@@ -22,6 +22,7 @@ orchid init <path> [--name --description --force]
 orchid decide "Title" --decision "..." --rationale "..." --project <path>
 orchid --multi --project <path-a> --project <path-b> [--code-model auto]
 orchid telegram --project <path> [--multi ...]
+orchid slack --project <path>   # tokens: SLACK_BOT_TOKEN, SLACK_APP_TOKEN
 ```
 tasks.md: `- [ ] **T003** Title \`type:code_generate\` \`p1\` \`needs:T001,T002\` \`model:claude\``
 
@@ -49,6 +50,9 @@ tasks.md: `- [ ] **T003** Title \`type:code_generate\` \`p1\` \`needs:T001,T002\
 - **D0021** Process-per-project parallelism: isolated multiprocessing.Process per project. No shared mutable state.
 - **D0022** Claude API rate limiting via multiprocessing.Semaphore. Local llama.cpp bypasses. Configurable via `multi.max_concurrent_claude_calls`.
 - **D0023** Notification routing via multiprocessing.Queue; coordinator drains and calls callback. multi_formatter tags messages with `[project]` prefix.
+- **D0024** Slack uses Socket Mode (slack-bolt + SocketModeHandler) — no public URL or ngrok required. Fits homelab/bare-metal deployment.
+- **D0025** Thread-per-task in Slack: task start posts new message, all progress replies in that thread. Reduces channel noise.
+- **D0026** BackgroundRunner is shared between Telegram and Slack bots. Both are thin interface layers — no business logic in either bot.
 
 ## Key Files
 ```
@@ -58,8 +62,9 @@ orchid/agents/base.py / developer|researcher|reviewer.py / delegator.py
 orchid/tools/models.py / session_log_parser.py
 orchid/memory/state.py / decisions.py / vector.py
 orchid/interfaces/cli.py / telegram_bot.py / telegram_formatter.py
+orchid/interfaces/slack_bot.py / slack_formatter.py
 orchid/interfaces/multi_formatter.py / background_runner.py
-scripts/orchid-telegram.service.template / orchid-multi.service.template
+scripts/orchid-telegram.service.template / orchid-multi.service.template / orchid-slack.service.template
 ```
 
 ## Install
@@ -76,8 +81,13 @@ cp .env.example .env  # ANTHROPIC_API_KEY required; llama.cpp: localhost:8080
 | T009–T026 | Done | Incl. chunking fix, log parser, dependency tests |
 | Phase 3 M3.0 | Done | deps/streaming/injection/notifications/routing |
 | Phase 3 M3.1 | Done | multi.py, multi_formatter.py, CLI --multi, Telegram --multi |
-| Tests | 147 passing | 130 original + 17 new (test_multi.py) |
+| Phase 3 M3.2 | Done | slack_bot.py, slack_formatter.py, CLI slack, Socket Mode |
+| Tests | 158+ passing | 130 original + 17 (test_multi.py) + 11 (test_slack.py) |
 
 ## Not Built
-- Slack interface (reserved, same pattern as Telegram)
 - SearXNG server setup (DDG fallback active)
+## Recent Completions
+
+- [T027] test task from Slack: 
+
+- [T028] Fix Slack formatter: hot memory code blocks missing closing triple backtick in Slack messages: 
