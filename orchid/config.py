@@ -11,7 +11,12 @@ from typing import Any
 import yaml
 from dotenv import load_dotenv
 
+# 1. Walk up from cwd (default behaviour — works when invoked from inside the repo)
 load_dotenv()
+# 2. Explicit fallback to the orchid package root so the API key is found when
+#    orchid is invoked against an external project directory (cwd won't have .env).
+#    override=False means vars already loaded in step 1 or from the shell are kept.
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env", override=False)
 
 # Orchid's own defaults live inside the package directory
 _DEFAULTS_FILE = Path(__file__).parent / "orchid.defaults.yaml"

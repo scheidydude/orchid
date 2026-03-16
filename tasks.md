@@ -3,6 +3,9 @@
 
 ## DONE
 
+- [x] **T025** Dependency test parent task `type:draft` `p1`
+- [x] **T026** Dependency test child task `type:draft` `p1`
+- [x] **T024** Write a complex regex parser for extracting structured data from session logs `type:code_generate` `p1`
 - [x] **T023** Archive all completed tasks to tasks.md archive section now `type:code_generate` `p1`
 - [x] **T022** Investigate and fix chunking producing oversized token payloads - chunks exceeding 1024 tokens despite chunk_size=400 word setting. Likely word-based chunking not accounting for tokenization overhead. Switch to token-based chunking with hard cap at 800 tokens. `type:code_generate` `p1`
 - [x] **T017** Fix delegations counter not persisting in session status display `type:code_generate` `p1`

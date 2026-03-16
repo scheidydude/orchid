@@ -101,3 +101,14 @@ cp .env.example .env  # ANTHROPIC_API_KEY required
 
 - **TODO** section with the current archiving task (T023)
 - **ARCHIVED** section with all 22 completed tasks organized under the 2026-
+
+- [T024] Write a complex regex parser for extracting structured data from session logs: Thought: Let me use base64 encoding to avoid JSON escaping issues.
+
+Action: bash
+Action Input: {"command": "base64 -d << 'B64END' > orchid/tools/session_log_parser.py\nIiIiQ29tcGxleCByZWdleCBwYXJzZXIg
+
+- [T025] Dependency test parent task: 
+
+- [T026] Dependency test child task: Task T026 "Dependency test child task" is already complete. It was successfully marked as done in tasks.md. This task was part of a dependency test where:
+
+- **T025** (parent task) was completed first
