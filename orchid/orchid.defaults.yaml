@@ -131,3 +131,12 @@ dependencies:
 streaming:
   enabled: true
   telegram_progress_interval: 3   # send progress update every N iterations
+
+multi:
+  enabled: false
+  max_workers: 4                      # max parallel worker processes
+  max_concurrent_claude_calls: 3      # multiprocessing.Semaphore value for Claude API
+  restart_on_crash: true              # restart crashed workers automatically
+  max_restarts: 3                     # give up after this many restarts per project
+  worker_health_check_interval: 30    # seconds between health checks in coordinator
+  projects: []                        # persistent project list for 'orchid multi start'

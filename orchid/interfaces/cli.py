@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import typer
 from rich.console import Console
@@ -65,7 +65,11 @@ def _resolve_project(project: str) -> Path:
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
-    project: str = typer.Option(".", "--project", "-p", help="Path to the project directory"),
+    project: Optional[List[str]] = typer.Option(
+        None, "--project", "-p",
+        help="Path to the project directory. Repeat for --multi mode.",
+    ),
+    multi: bool = typer.Option(False, "--multi", help="Run multiple projects in parallel"),
     mode: Optional[str] = typer.Option(
         None, "--mode", "-m",
         help="Run mode: auto (autonomous) | interactive (chat)",
@@ -98,7 +102,21 @@ def main(
         return
 
     _setup_logging(log_level)
-    proj = str(_resolve_project(project))
+
+    # Resolve project path(s); default to "." when none provided
+    resolved_projects = [str(_resolve_project(p)) for p in (project or ["."])]
+    proj = resolved_projects[0]
+
+    # Multi-project mode: two or more --project flags with --multi
+    if multi:
+        if len(resolved_projects) < 2:
+            console.print(
+                "[red]--multi requires at least two --project flags.[/red]\n"
+                "Example: orchid --multi --project ~/a --project ~/b"
+            )
+            raise typer.Exit(1)
+        _cmd_multi(resolved_projects, code_model=code_model)
+        return
 
     if status:
         _cmd_status(proj)
@@ -433,6 +451,39 @@ def _cmd_add_task(project: str, title: str, task_type: str, priority: int) -> No
     console.print(f"[green]Added {tid}: {title} (type={task_type}, p{priority})[/green]")
 
 
+def _cmd_multi(projects: list[str], code_model: str | None = None) -> None:
+    """Run multiple projects in parallel worker processes."""
+    from orchid.multi import MultiOrchid
+    from orchid.interfaces.multi_formatter import format_notification as fmt_multi
+
+    console.print(Panel(
+        "[bold green]Orchid — Multi-Project Mode[/bold green]\n"
+        + "\n".join(f"  • {p}" for p in projects)
+        + (f"\n  Model: {code_model}" if code_model else ""),
+        border_style="green",
+    ))
+
+    def _on_notification(notification: dict) -> None:
+        event = notification.get("event", "")
+        project = notification.get("project", "")
+        data = notification.get("data", {})
+        msg = fmt_multi(event, project, data)
+        if msg:
+            console.print(msg)
+
+    orch = MultiOrchid(
+        projects=projects,
+        code_model=code_model,
+        notification_callback=_on_notification,
+    )
+    try:
+        orch.start()
+    except KeyboardInterrupt:
+        orch.stop()
+        console.print("[dim]Multi-project run stopped.[/dim]")
+    console.print("[green]All projects complete.[/green]")
+
+
 # ── Subcommands ───────────────────────────────────────────────────────────────
 
 
@@ -545,14 +596,71 @@ def task(
         raise typer.Exit(1)
 
 
-@app.command()
-def telegram(
-    project: str = typer.Option(".", "--project", "-p", help="Path to the project directory"),
-    token: Optional[str] = typer.Option(None, "--token", help="Telegram bot token (overrides env)"),
-    multi: bool = typer.Option(False, "--multi", help="Multi-project mode (future)"),
+@app.command(name="multi")
+def multi_cmd(
+    action: str = typer.Argument("start", help="start | status | stop"),
+    project: Optional[List[str]] = typer.Option(
+        None, "--project", "-p",
+        help="Project directory (repeat for multiple projects)",
+    ),
+    code_model: Optional[str] = typer.Option(
+        None, "--code-model",
+        help="Force model for all tasks: claude | local | auto",
+    ),
+    workers: int = typer.Option(4, "--workers", "-w", help="Max parallel worker processes"),
     log_level: str = typer.Option("INFO", "--log-level", "-l"),
 ) -> None:
-    """Start the Telegram bot interface for a project."""
+    """Run multiple projects in parallel (persistent config subcommand).
+
+    Examples:
+      orchid multi start --project ~/a --project ~/b
+      orchid multi status
+    """
+    _setup_logging(log_level)
+
+    if action == "start":
+        projects = [str(_resolve_project(p)) for p in (project or [])]
+        if not projects:
+            # Fall back to projects list from orchid.defaults.yaml / .orchid.yaml
+            from orchid import config as cfg
+            projects = [str(_resolve_project(p)) for p in cfg.get("multi.projects", [])]
+        if not projects:
+            console.print(
+                "[red]No projects specified.[/red]\n"
+                "Use --project or add paths under multi.projects in .orchid.yaml"
+            )
+            raise typer.Exit(1)
+        _cmd_multi(projects, code_model=code_model)
+
+    elif action == "status":
+        console.print(
+            "[yellow]'multi status' requires a running instance.[/yellow]\n"
+            "Start one with: orchid multi start --project ~/a --project ~/b"
+        )
+
+    elif action == "stop":
+        console.print("[yellow]Use Ctrl+C to stop a running 'multi start' instance.[/yellow]")
+
+    else:
+        console.print(f"[red]Unknown action '{action}'. Use: start | status | stop[/red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def telegram(
+    project: Optional[List[str]] = typer.Option(
+        None, "--project", "-p",
+        help="Project directory. Repeat with --multi for multi-project mode.",
+    ),
+    token: Optional[str] = typer.Option(None, "--token", help="Telegram bot token (overrides env)"),
+    multi: bool = typer.Option(False, "--multi", help="Multi-project mode — tag all notifications with project name"),
+    log_level: str = typer.Option("INFO", "--log-level", "-l"),
+) -> None:
+    """Start the Telegram bot interface for a project.
+
+    Single-project:  orchid telegram --project ~/myapp
+    Multi-project:   orchid telegram --multi --project ~/a --project ~/b
+    """
     _setup_logging(log_level)
     import os
 
@@ -572,7 +680,9 @@ def telegram(
         if uid.isdigit():
             allowed_users.append(int(uid))
 
-    proj = str(_resolve_project(project))
+    resolved_projects = [str(_resolve_project(p)) for p in (project or ["."])]
+    primary_project = resolved_projects[0]
+    extra_projects = resolved_projects[1:] if multi and len(resolved_projects) > 1 else []
 
     try:
         from orchid.interfaces.telegram_bot import TelegramBot
@@ -581,8 +691,21 @@ def telegram(
         console.print("Run: [bold]uv pip install 'python-telegram-bot>=20.0'[/bold]")
         raise typer.Exit(1)
 
-    bot = TelegramBot(project_path=proj, token=resolved_token, allowed_users=allowed_users, multi_project=multi)
-    console.print(f"[green]Starting Telegram bot for project: {proj}[/green]")
+    if multi:
+        all_projects = resolved_projects
+        console.print(f"[green]Starting Telegram bot (multi-project):[/green]")
+        for p in all_projects:
+            console.print(f"  • {p}")
+    else:
+        console.print(f"[green]Starting Telegram bot for project: {primary_project}[/green]")
+
+    bot = TelegramBot(
+        project_path=primary_project,
+        token=resolved_token,
+        allowed_users=allowed_users,
+        multi_project=multi,
+        extra_projects=extra_projects or None,
+    )
     console.print("[dim]Press Ctrl+C to stop.[/dim]")
     try:
         bot.start()

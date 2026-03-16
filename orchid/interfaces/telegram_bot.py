@@ -40,6 +40,7 @@ class TelegramBot:
         token: str,
         allowed_users: list[int] | None = None,
         multi_project: bool = False,
+        extra_projects: list[str] | None = None,
     ) -> None:
         if not _TELEGRAM_AVAILABLE:
             raise ImportError(
@@ -50,6 +51,12 @@ class TelegramBot:
         self.token = token
         self.allowed_users: set[int] = set(allowed_users or [])
         self.multi_project = multi_project
+        # All projects in multi mode (including primary)
+        self._all_projects: list[str] = (
+            [self.project_path] + [str(Path(p).resolve()) for p in (extra_projects or [])]
+            if multi_project
+            else [self.project_path]
+        )
 
         from orchid.interfaces.background_runner import BackgroundRunner
         self._runner = BackgroundRunner(
@@ -59,6 +66,8 @@ class TelegramBot:
         self._app: Any = None
         # Chat IDs that initiated /auto or /run — for proactive notifications
         self._notify_chat_ids: set[int] = set()
+        # Multi-project runner (lazy-created in /auto when multi_project=True)
+        self._multi_thread: Any = None
 
     # ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -131,14 +140,29 @@ class TelegramBot:
         return s
 
     async def _on_notification(self, event: str, data: dict[str, Any]) -> None:
-        """Handle lifecycle notifications from BackgroundRunner."""
+        """Handle lifecycle notifications from BackgroundRunner (single-project)."""
         from orchid.interfaces.telegram_formatter import format_notification
         msg = format_notification(event, data)
         if msg is None:
             return
+        await self._broadcast(msg)
+
+    async def _on_multi_notification(self, notification: dict[str, Any]) -> None:
+        """Handle notifications from MultiOrchid coordinator."""
+        from orchid.interfaces.multi_formatter import format_notification as fmt_multi
+        event = notification.get("event", "")
+        project = notification.get("project", "")
+        data = notification.get("data", {})
+        msg = fmt_multi(event, project, data)
+        if msg is None:
+            return
+        await self._broadcast(msg)
+
+    async def _broadcast(self, text: str) -> None:
+        """Send text to all subscribed chat IDs."""
         for chat_id in list(self._notify_chat_ids):
             try:
-                await self._app.bot.send_message(chat_id=chat_id, text=msg)
+                await self._app.bot.send_message(chat_id=chat_id, text=text)
             except Exception as exc:
                 logger.warning("Notification send failed (chat_id=%s): %s", chat_id, exc)
 
@@ -166,9 +190,41 @@ class TelegramBot:
         await self._cmd_start(update, ctx)
 
     async def _cmd_status(self, update: "Update", ctx: "ContextTypes.DEFAULT_TYPE") -> None:
+        if self.multi_project and len(self._all_projects) > 1:
+            await self._cmd_status_multi(update)
+            return
         from orchid.interfaces.telegram_formatter import format_status
         session = self._make_session()
         await self._reply(update, format_status(session))
+
+    async def _cmd_status_multi(self, update: "Update") -> None:
+        """Show aggregate status across all configured projects."""
+        from orchid.interfaces.telegram_formatter import format_status
+        from orchid.session import Session
+
+        lines = ["📊 Multi-project status", ""]
+        for proj_path in self._all_projects:
+            try:
+                s = Session(project_dir=proj_path)
+                s.load()
+                todo = sum(1 for t in s.tasks if t.status.value == "TODO")
+                done = sum(1 for t in s.tasks if t.status.value == "DONE")
+                inprog = sum(1 for t in s.tasks if t.status.value == "IN_PROGRESS")
+                blocked = sum(1 for t in s.tasks if t.status.value == "BLOCKED")
+                name = s.project_name
+                parts = []
+                if inprog:
+                    parts.append(f"{inprog} running")
+                if todo:
+                    parts.append(f"{todo} pending")
+                if done:
+                    parts.append(f"{done} done")
+                if blocked:
+                    parts.append(f"{blocked} blocked")
+                lines.append(f"• {name}: {', '.join(parts) if parts else 'no tasks'}")
+            except Exception as exc:
+                lines.append(f"• {Path(proj_path).name}: error — {exc}")
+        await self._reply(update, "\n".join(lines))
 
     async def _cmd_run(self, update: "Update", ctx: "ContextTypes.DEFAULT_TYPE") -> None:
         from orchid.interfaces.telegram_formatter import format_task_started, format_task_complete, format_task_failed
@@ -207,6 +263,10 @@ class TelegramBot:
         self._runner.run_task(task_id, on_done, loop)
 
     async def _cmd_auto(self, update: "Update", ctx: "ContextTypes.DEFAULT_TYPE") -> None:
+        if self.multi_project and len(self._all_projects) > 1:
+            await self._cmd_auto_multi(update)
+            return
+
         from orchid.interfaces.telegram_formatter import (
             format_task_complete, format_task_failed, format_auto_summary
         )
@@ -238,6 +298,44 @@ class TelegramBot:
             await self._app.bot.send_message(chat_id=chat_id, text=msg)
 
         self._runner.run_auto(on_task, on_done, loop)
+
+    async def _cmd_auto_multi(self, update: "Update") -> None:
+        """Start a multi-project run — all projects in parallel worker processes."""
+        import asyncio
+        import threading
+        from orchid.multi import MultiOrchid
+
+        if self._multi_thread and self._multi_thread.is_alive():
+            await self._reply(update, "⚠️ Multi-project run already in progress.")
+            return
+
+        await self._reply(
+            update,
+            f"🚀 Starting multi-project run — {len(self._all_projects)} project(s)…"
+        )
+        chat_id = update.effective_chat.id
+        self._notify_chat_ids.add(chat_id)
+        loop = self._get_loop()
+
+        def _notif_cb(notification: dict) -> None:
+            asyncio.run_coroutine_threadsafe(
+                self._on_multi_notification(notification), loop
+            )
+
+        def _run() -> None:
+            orch = MultiOrchid(
+                projects=self._all_projects,
+                notification_callback=_notif_cb,
+            )
+            try:
+                orch.start()
+            except Exception as exc:
+                logger.exception("Multi-project run error: %s", exc)
+            finally:
+                self._notify_chat_ids.discard(chat_id)
+
+        self._multi_thread = threading.Thread(target=_run, daemon=True, name="orchid-multi-bot")
+        self._multi_thread.start()
 
     async def _cmd_add(self, update: "Update", ctx: "ContextTypes.DEFAULT_TYPE") -> None:
         args = ctx.args or []

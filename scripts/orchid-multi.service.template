@@ -1,0 +1,69 @@
+# orchid-multi.service.template
+#
+# systemd unit file for running Orchid in multi-project mode as a persistent service.
+# Each configured project is run in a parallel worker process.
+#
+# Usage:
+#   1. Copy to /etc/systemd/system/orchid-multi.service
+#   2. Edit User, WorkingDirectory, EnvironmentFile, and ExecStart as needed
+#   3. systemctl daemon-reload
+#   4. systemctl enable --now orchid-multi
+#   5. journalctl -u orchid-multi -f   # to follow logs
+#
+# Variables to replace:
+#   {{USER}}         — system user that runs the service (e.g. dave)
+#   {{ORCHID_DIR}}   — path to orchid installation (e.g. /home/dave/LocalAI/orchid)
+#   {{ENV_FILE}}     — path to .env file containing ANTHROPIC_API_KEY etc.
+#
+# Projects can be specified two ways:
+#
+#   Option A — CLI flags (shown below):
+#     ExecStart=... orchid multi start --project /path/a --project /path/b
+#
+#   Option B — Environment variable (comma-separated):
+#     Environment=ORCHID_PROJECTS=/path/a,/path/b,/path/c
+#     ExecStart=... orchid-multi-from-env.sh
+#     (requires a small wrapper that splits ORCHID_PROJECTS and builds --project flags)
+#
+#   Option C — orchid.defaults.yaml multi.projects list:
+#     Add paths to multi.projects in {{ORCHID_DIR}}/orchid/orchid.defaults.yaml
+#     ExecStart=... orchid multi start  # (reads from config)
+
+[Unit]
+Description=Orchid Multi-Project Orchestrator
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{USER}}
+WorkingDirectory={{ORCHID_DIR}}
+EnvironmentFile={{ENV_FILE}}
+
+# Replace --project flags with your actual project paths:
+ExecStart={{ORCHID_DIR}}/.venv/bin/orchid multi start \
+    --project /path/to/project-a \
+    --project /path/to/project-b \
+    --log-level INFO
+
+Restart=on-failure
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=orchid-multi
+
+# Resource limits — each worker process also spawns, so allow headroom
+MemoryMax=2G
+CPUQuota=200%
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+# Allow write access to all project .orchid/ directories
+# Add one ReadWritePaths= per project:
+ReadWritePaths=/path/to/project-a/.orchid
+ReadWritePaths=/path/to/project-b/.orchid
+
+[Install]
+WantedBy=multi-user.target
