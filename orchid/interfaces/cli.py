@@ -791,5 +791,54 @@ def slack(
         console.print("[dim]Bot stopped.[/dim]")
 
 
+@app.command()
+def web(
+    project: Optional[List[str]] = typer.Option(
+        None, "--project", "-p",
+        help="Project directory. Repeat for multi-project mode.",
+    ),
+    host: str = typer.Option("0.0.0.0", "--host", help="Bind host"),
+    port: int = typer.Option(7842, "--port", help="Bind port"),
+    dev: bool = typer.Option(False, "--dev", help="Dev mode: enable reload"),
+    log_level: str = typer.Option("info", "--log-level", "-l"),
+) -> None:
+    """Start the Orchid web server (FastAPI + React UI).
+
+    Single-project:  orchid web --project ~/myapp
+    Multi-project:   orchid web --project ~/a --project ~/b
+    Dev mode:        orchid web --project . --dev
+
+    UI at http://localhost:7842  (or configured host:port)
+    Traefik: routes orchid.scheidy.com → localhost:7842
+    """
+    _setup_logging(log_level.upper())
+
+    try:
+        from orchid.interfaces.web_server import serve
+    except ImportError as exc:
+        console.print(f"[red]Failed to import web_server: {exc}[/red]")
+        console.print(
+            "Run: [bold]uv pip install 'fastapi>=0.110.0' 'uvicorn[standard]>=0.27.0' 'websockets>=12.0'[/bold]"
+        )
+        raise typer.Exit(1)
+
+    resolved_projects = [str(_resolve_project(p)) for p in (project or ["."])]
+    console.print(
+        f"[green]Starting Orchid web server on {host}:{port}[/green]\n"
+        + "\n".join(f"  • {p}" for p in resolved_projects)
+        + ("\n  [dim]Dev mode enabled[/dim]" if dev else "")
+    )
+    console.print(f"  UI: [cyan]http://{'localhost' if host == '0.0.0.0' else host}:{port}[/cyan]")
+    console.print("[dim]Press Ctrl+C to stop.[/dim]")
+
+    serve(
+        project_paths=resolved_projects,
+        host=host,
+        port=port,
+        dev=dev,
+        log_level=log_level,
+    )
+
+
 if __name__ == "__main__":
     app()

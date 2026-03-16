@@ -1,0 +1,56 @@
+# orchid-web.service.template
+#
+# systemd unit file for running the Orchid web server as a persistent service.
+# Serves REST API + WebSocket + React UI at port 7842.
+#
+# Usage:
+#   1. Copy to /etc/systemd/system/orchid-web.service
+#   2. Edit User, WorkingDirectory, EnvironmentFile, and ExecStart as needed
+#   3. systemctl daemon-reload
+#   4. systemctl enable --now orchid-web
+#   5. journalctl -u orchid-web -f   # to follow logs
+#
+# Prerequisites:
+#   - orchid installed: uv pip install -e ".[dev]"
+#   - React UI built: cd orchid/interfaces/web_ui && npm run build
+#   - Traefik routing orchid.scheidy.com → localhost:7842
+#
+# Variables to replace:
+#   {{USER}}         — system user that runs the server (e.g. dave)
+#   {{ORCHID_DIR}}   — path to orchid installation (e.g. /home/dave/LocalAI/orchid)
+#   {{PROJECT_DIR}}  — path to the project to serve (e.g. /home/dave/projects/myapp)
+#   {{ENV_FILE}}     — path to .env file containing ANTHROPIC_API_KEY etc.
+#
+# Multi-project: add additional --project flags to ExecStart, e.g.:
+#   ExecStart=... orchid web --project /path/a --project /path/b
+
+[Unit]
+Description=Orchid Web Server — {{PROJECT_DIR}}
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{USER}}
+WorkingDirectory={{ORCHID_DIR}}
+EnvironmentFile={{ENV_FILE}}
+
+ExecStart={{ORCHID_DIR}}/.venv/bin/orchid web --project {{PROJECT_DIR}} --host 0.0.0.0 --port 7842 --log-level info
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=orchid-web
+
+# Resource limits
+MemoryMax=1G
+CPUQuota=80%
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths={{PROJECT_DIR}}/.orchid
+
+[Install]
+WantedBy=multi-user.target

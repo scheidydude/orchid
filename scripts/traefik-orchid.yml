@@ -1,0 +1,39 @@
+# traefik-orchid.yml
+#
+# Traefik file-provider configuration for routing orchid.scheidy.com
+# to the Orchid web server running on localhost:7842.
+#
+# Usage (bare-metal Traefik binary with file provider):
+#   1. Copy to your Traefik dynamic config directory
+#      (e.g., /etc/traefik/dynamic/orchid.yml)
+#   2. Ensure Traefik's static config has:
+#        providers:
+#          file:
+#            directory: /etc/traefik/dynamic
+#            watch: true
+#   3. Ensure a certResolver named "cloudflare" is configured in
+#      Traefik's static config (ACME / Let's Encrypt via Cloudflare DNS)
+#   4. systemctl reload traefik   (or Traefik hot-reloads with watch: true)
+#
+# Prerequisites:
+#   - orchid web --project <path> running on localhost:7842
+#     (or use the orchid-web.service systemd unit)
+#   - Cloudflare DNS pointing orchid.scheidy.com to this server
+#   - Traefik with ACME Cloudflare DNS challenge configured
+
+http:
+  routers:
+    orchid:
+      rule: "Host(`orchid.scheidy.com`)"
+      service: orchid
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: cloudflare
+
+  services:
+    orchid:
+      loadBalancer:
+        servers:
+          - url: "http://localhost:7842"
+        passHostHeader: true

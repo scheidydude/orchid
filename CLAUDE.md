@@ -23,6 +23,7 @@ orchid decide "Title" --decision "..." --rationale "..." --project <path>
 orchid --multi --project <path-a> --project <path-b> [--code-model auto]
 orchid telegram --project <path> [--multi ...]
 orchid slack --project <path>   # tokens: SLACK_BOT_TOKEN, SLACK_APP_TOKEN
+orchid web --project <path> [--port 7842] [--host 0.0.0.0] [--dev]
 ```
 tasks.md: `- [ ] **T003** Title \`type:code_generate\` \`p1\` \`needs:T001,T002\` \`model:claude\``
 
@@ -53,6 +54,9 @@ tasks.md: `- [ ] **T003** Title \`type:code_generate\` \`p1\` \`needs:T001,T002\
 - **D0024** Slack uses Socket Mode (slack-bolt + SocketModeHandler) — no public URL or ngrok required. Fits homelab/bare-metal deployment.
 - **D0025** Thread-per-task in Slack: task start posts new message, all progress replies in that thread. Reduces channel noise.
 - **D0026** BackgroundRunner is shared between Telegram and Slack bots. Both are thin interface layers — no business logic in either bot.
+- **D0027** Web UI: FastAPI (REST + WebSocket) + React (Vite) served together at port 7842. Single process in production.
+- **D0028** React frontend built with Vite to web_ui/dist/, served by FastAPI StaticFiles. Dev mode uses Vite proxy to :7842.
+- **D0029** Traefik bare-metal file provider routes orchid.scheidy.com → localhost:7842 with TLS via cloudflare certResolver.
 
 ## Key Files
 ```
@@ -63,8 +67,11 @@ orchid/tools/models.py / session_log_parser.py
 orchid/memory/state.py / decisions.py / vector.py
 orchid/interfaces/cli.py / telegram_bot.py / telegram_formatter.py
 orchid/interfaces/slack_bot.py / slack_formatter.py
+orchid/interfaces/web_server.py / web_ui/ (React + Vite frontend)
 orchid/interfaces/multi_formatter.py / background_runner.py
-scripts/orchid-telegram.service.template / orchid-multi.service.template / orchid-slack.service.template
+scripts/orchid-telegram.service.template / orchid-multi.service.template
+scripts/orchid-slack.service.template / orchid-web.service.template
+scripts/traefik-orchid.yml
 ```
 
 ## Install
@@ -82,7 +89,8 @@ cp .env.example .env  # ANTHROPIC_API_KEY required; llama.cpp: localhost:8080
 | Phase 3 M3.0 | Done | deps/streaming/injection/notifications/routing |
 | Phase 3 M3.1 | Done | multi.py, multi_formatter.py, CLI --multi, Telegram --multi |
 | Phase 3 M3.2 | Done | slack_bot.py, slack_formatter.py, CLI slack, Socket Mode |
-| Tests | 158+ passing | 130 original + 17 (test_multi.py) + 11 (test_slack.py) |
+| Phase 3 M3.3 | Done | web_server.py, React UI, CLI web, Traefik config |
+| Tests | 188 passing | 170 + 18 new (test_web.py) |
 
 ## Not Built
 - SearXNG server setup (DDG fallback active)
@@ -91,3 +99,11 @@ cp .env.example .env  # ANTHROPIC_API_KEY required; llama.cpp: localhost:8080
 - [T027] test task from Slack: 
 
 - [T028] Fix Slack formatter: hot memory code blocks missing closing triple backtick in Slack messages: 
+
+- [T029] Test Web UI live task creation: 
+
+- [T030] Test CLI --help option: The CLI --help option works correctly. It displays comprehensive usage information including:
+
+**Main Options:**
+- `--project/-p`: Path to project directory (repeatable for multi-project mode)
+- `--mo

@@ -1,0 +1,115 @@
+import { useState, useEffect, useCallback } from 'react'
+import TaskRow from './TaskRow.jsx'
+import AddTaskModal from './AddTaskModal.jsx'
+
+const STATUS_ORDER = ['TODO', 'IN_PROGRESS', 'BLOCKED', 'DONE', 'CANCELLED']
+
+export default function TaskBoard({ projectId, runStatus }) {
+  const [tasks, setTasks] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [showAdd, setShowAdd] = useState(false)
+  const [filter, setFilter] = useState('active')
+
+  const fetchTasks = useCallback(async () => {
+    if (!projectId) return
+    try {
+      const res = await fetch(`/api/projects/${projectId}/tasks`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      setTasks(await res.json())
+      setError(null)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [projectId])
+
+  useEffect(() => { fetchTasks() }, [fetchTasks])
+
+  // Refresh when a run completes
+  useEffect(() => {
+    if (!runStatus.running) fetchTasks()
+  }, [runStatus.running, fetchTasks])
+
+  const handleStatusChange = async (taskId, newStatus) => {
+    try {
+      const res = await fetch(`/api/projects/${projectId}/tasks/${taskId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const updated = await res.json()
+      setTasks(prev => prev.map(t => t.id === taskId ? updated : t))
+    } catch (err) {
+      alert(`Failed: ${err.message}`)
+    }
+  }
+
+  const filtered = tasks.filter(t => {
+    if (filter === 'active') return ['TODO', 'IN_PROGRESS', 'BLOCKED'].includes(t.status)
+    if (filter === 'done') return t.status === 'DONE'
+    return true
+  }).sort((a, b) => {
+    const oa = STATUS_ORDER.indexOf(a.status)
+    const ob = STATUS_ORDER.indexOf(b.status)
+    if (oa !== ob) return oa - ob
+    return a.priority - b.priority
+  })
+
+  if (loading) return <div className="loading">Loading tasks…</div>
+  if (error) return <div className="error-msg">Error: {error}</div>
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {['active', 'done', 'all'].map(f => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              style={{
+                padding: '4px 10px',
+                fontSize: 12,
+                background: filter === f ? 'var(--accent)' : undefined,
+                borderColor: filter === f ? 'var(--accent)' : undefined,
+                color: filter === f ? '#fff' : undefined,
+              }}
+            >
+              {f}
+            </button>
+          ))}
+        </div>
+        <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>{filtered.length} tasks</span>
+        <button
+          className="primary"
+          onClick={() => setShowAdd(true)}
+          style={{ marginLeft: 'auto', padding: '4px 12px', fontSize: 12 }}
+        >
+          + Add Task
+        </button>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="empty-state">
+          {filter === 'active' ? 'No active tasks. Add a task to get started.' : 'No tasks.'}
+        </div>
+      ) : (
+        <div className="task-board" style={{ flex: 1, overflowY: 'auto' }}>
+          {filtered.map(t => (
+            <TaskRow key={t.id} task={t} onStatusChange={handleStatusChange} />
+          ))}
+        </div>
+      )}
+
+      {showAdd && (
+        <AddTaskModal
+          projectId={projectId}
+          onClose={() => setShowAdd(false)}
+          onCreated={(task) => { setTasks(prev => [...prev, task]); setFilter('active') }}
+        />
+      )}
+    </div>
+  )
+}

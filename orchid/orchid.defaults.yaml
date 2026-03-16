@@ -146,6 +146,15 @@ slack:
     - task_blocked
     - session_complete
 
+web:
+  enabled: false
+  host: "0.0.0.0"
+  port: 7842
+  dev_mode: false
+  cors_origins:
+    - "http://localhost:5173"
+    - "https://orchid.scheidy.com"
+
 multi:
   enabled: false
   max_workers: 4                      # max parallel worker processes

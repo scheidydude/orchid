@@ -3,6 +3,7 @@
 
 ## DONE
 
+- [x] **T029** Test Web UI live task creation `type:draft` `p1`
 - [x] **T025** Dependency test parent task `type:draft` `p1`
 - [x] **T026** Dependency test child task `type:draft` `p1`
 - [x] **T024** Write a complex regex parser for extracting structured data from session logs `type:code_generate` `p1`
@@ -19,6 +20,7 @@
 - [x] **T008** Fix decisions.json parse error - likely JSON Lines vs single JSON document format mismatch `type:code_generate` `p1`
 - [x] **T002** Hook LLM summarizer into session compression `type:code_generate` `p1`
 - [x] **T001** Review the session.py compression logic and suggest improvements `type:review` `p1`
+- [x] **T030** Test CLI --help option `type:draft` `p2`
 - [x] **T027** test task from Slack `type:draft` `p2`
 - [x] **T028** Fix Slack formatter: hot memory code blocks missing closing triple backtick in Slack messages `type:draft` `p2`
 - [x] **T019** Add task archiving - completed tasks older than N days move to tasks.md archive section to keep board clean `type:code_generate` `p2`
