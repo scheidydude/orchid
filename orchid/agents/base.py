@@ -116,6 +116,7 @@ class BaseAgent:
     """
 
     model_key: str = "local"
+    agent_type: str = "base"
 
     def __init__(
         self,

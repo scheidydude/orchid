@@ -275,4 +275,13 @@ def format_notification(event: str, data: dict[str, Any]) -> str | None:
             msg += f"  _({len(failed)} failed: {', '.join(failed)})_"
         return msg
 
+    if event == "provider_unavailable":
+        provider = data.get("provider", "unknown")
+        missing = data.get("missing", "")
+        fix = data.get("fix", "")
+        msg = f"🔌 Provider *{provider}* unavailable — {missing}"
+        if fix:
+            msg += f"\n_Fix: {fix}_"
+        return _trunc(msg, _MAX_MSG)
+
     return None

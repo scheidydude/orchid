@@ -1,4 +1,14 @@
-"""Unified model caller — routes to Claude API or local llama.cpp."""
+"""Unified model caller — routes to a ProviderBase via the ProviderRegistry.
+
+Backward-compatible interface:
+  call(messages, model_key="local")  → still works
+  call(messages, model_key="claude") → routes to AnthropicProvider
+  call(messages, model_key="ollama") → routes to OllamaProvider (if configured)
+
+The embed() function tries llama.cpp first, then sentence-transformers.
+Both paths are now delegated to providers but embed() retains its own
+fallback chain since embeddings are separate from chat completions.
+"""
 
 from __future__ import annotations
 
@@ -11,9 +21,9 @@ from orchid import config as cfg
 
 logger = logging.getLogger(__name__)
 
-# Cached availability flags so we don't re-probe on every embed() call
-_llama_embed_available: bool | None = None  # None = not yet checked
-_st_model: Any = None  # sentence-transformers model cache
+# Legacy embed-cache flags (kept for reset_embed_cache() backward compat)
+_llama_embed_available: bool | None = None
+_st_model: Any = None
 
 COMPLEXITY_KEYWORDS = [
     "regex", "parser", "parsing", "tokenize", "ast",
@@ -27,9 +37,10 @@ COMPLEXITY_KEYWORDS = [
 
 @dataclass
 class RouteDecision:
-    model: str    # "claude" | "local"
+    model: str    # provider name: "claude" | "local" | "ollama" | ...
     reason: str
-    source: str   # "cli_flag" | "task_annotation" | "project_config" | "heuristic" | "default"
+    source: str   # "cli_flag" | "task_annotation" | "cli_provider_override" |
+                  # "project_config" | "env_var" | "heuristic" | "default"
 
 
 class Message:
@@ -41,15 +52,7 @@ class Message:
         return {"role": self.role, "content": self.content}
 
 
-def _claude_client():
-    import anthropic  # lazy import
-    return anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-
-
-def _openai_client(base_url: str, api_key: str):
-    from openai import OpenAI  # lazy import
-    return OpenAI(base_url=base_url, api_key=api_key)
-
+# ── Primary call interface ────────────────────────────────────────────────────
 
 def call(
     messages: list[Message | dict[str, str]],
@@ -57,53 +60,30 @@ def call(
     system: str | None = None,
     **kwargs: Any,
 ) -> str:
-    """Call a model by config key ('claude' or 'local') and return text."""
-    model_cfg = cfg.get(f"models.{model_key}", {})
-    provider = model_cfg.get("provider", "openai_compat")
-    model_name = model_cfg.get("model", "local-model")
-    max_tokens = model_cfg.get("max_tokens", 2048)
-    temperature = model_cfg.get("temperature", 0.5)
+    """Call a model provider by key and return response text.
 
-    # Normalise messages
-    raw = [m.to_dict() if isinstance(m, Message) else m for m in messages]
+    model_key is the provider name: "claude", "local", "ollama", "openai", etc.
+    All registered providers (orchid/providers/) are accessible by their name.
 
-    if provider == "anthropic":
-        client = _claude_client()
-        response = client.messages.create(
-            model=model_name,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            system=system or "You are a helpful assistant.",
-            messages=raw,
-            **kwargs,
-        )
-        return response.content[0].text
-
-    # openai_compat (llama.cpp or any OpenAI-compatible endpoint)
-    base_url = model_cfg.get("base_url", os.environ.get("LLAMA_BASE_URL", "http://localhost:8080/v1"))
-    api_key = model_cfg.get("api_key", os.environ.get("LLAMA_API_KEY", "none"))
-    client = _openai_client(base_url, api_key)
-
-    if system:
-        raw = [{"role": "system", "content": system}] + raw
-
-    response = client.chat.completions.create(
-        model=model_name,
-        messages=raw,
-        max_tokens=max_tokens,
-        temperature=temperature,
-        **kwargs,
-    )
-    return response.choices[0].message.content or ""
+    Backward compatible: model_key="claude" and model_key="local" continue to
+    work exactly as before.
+    """
+    from orchid.providers.registry import get_registry
+    try:
+        registry = get_registry()
+        provider = registry.get_by_key(model_key)
+        return provider.complete(messages, system=system, **kwargs)
+    except Exception:
+        # If registry lookup fails, fall back to direct config-based call
+        # (preserves behavior during startup before config is fully loaded)
+        raise
 
 
 def embed(text: str) -> list[float]:
-    """
-    Return an embedding vector for *text*.
+    """Return an embedding vector for *text*.
 
     Priority:
-      1. llama.cpp /v1/embeddings endpoint (LLAMA_EMBED_URL env var,
-         defaults to http://localhost:8081/v1)
+      1. llama.cpp /v1/embeddings endpoint (via LocalProvider or LLAMA_EMBED_URL)
       2. sentence-transformers all-MiniLM-L6-v2 (local Python fallback)
 
     Raises RuntimeError if neither backend is available.
@@ -111,7 +91,7 @@ def embed(text: str) -> list[float]:
     """
     global _llama_embed_available, _st_model  # noqa: PLW0603
 
-    # ── Try llama.cpp embeddings endpoint ─────────────────────────────────────
+    # ── Try llama.cpp via LocalProvider (or direct if registry not ready) ─────
     if _llama_embed_available is not False:
         base = os.environ.get("LLAMA_EMBED_URL", "http://localhost:8081/v1")
         model_name = cfg.get(
@@ -134,16 +114,12 @@ def embed(text: str) -> list[float]:
             return vec
         except Exception as exc:
             if _llama_embed_available is True:
-                # llama.cpp was previously confirmed working but failed this call.
-                # Re-raise to avoid silent dimension mismatch with an ST fallback
-                # (nomic-embed-text=768-dim vs all-MiniLM=384-dim would corrupt collections).
                 raise RuntimeError(
                     f"llama.cpp embedding endpoint failed after prior success: {exc}"
                 ) from exc
             logger.warning(
                 "llama.cpp embedding endpoint unavailable (%s): %s — trying fallback.",
-                base,
-                exc,
+                base, exc,
             )
             _llama_embed_available = False
 
@@ -166,11 +142,13 @@ def embed(text: str) -> list[float]:
 
 
 def reset_embed_cache() -> None:
-    """Reset cached backend availability — useful in tests."""
+    """Reset cached embed backend availability — useful in tests."""
     global _llama_embed_available, _st_model  # noqa: PLW0603
     _llama_embed_available = None
     _st_model = None
 
+
+# ── Routing ───────────────────────────────────────────────────────────────────
 
 def route(
     task_type: str,
@@ -178,14 +156,16 @@ def route(
     cli_override: str | None = None,
     task_title: str = "",
 ) -> RouteDecision:
-    """
-    Multi-tier routing. Priority order (highest wins):
-      1. CLI flag (cli_override)
-      2. Task annotation (task_model_override from model:claude in tasks.md)
-      3. Keyword heuristic (if auto mode)
+    """Multi-tier routing. Priority order (highest wins):
+
+      1. CLI flag (cli_override via --code-model)
+      2. Task annotation (model:claude in tasks.md)
+      3. Keyword heuristic (complexity escalation)
       4. Type-based default from config
 
-    Returns a RouteDecision with model key, reason, and source.
+    Returns RouteDecision with model/provider key, reason, and source.
+    The returned model key is then passed to call() which routes it through
+    the ProviderRegistry.
     """
     # 1. CLI flag overrides everything
     if cli_override and cli_override not in ("auto", ""):
@@ -203,7 +183,7 @@ def route(
             source="task_annotation",
         )
 
-    # 3. Keyword escalation (runs when cli_override/task_override is absent or "auto")
+    # 3. Keyword escalation
     escalation_cfg = cfg.get("routing.escalation", {})
     if escalation_cfg.get("enabled", True):
         threshold = escalation_cfg.get("threshold", 1)

@@ -109,6 +109,18 @@ def main(
         None, "--code-model",
         help="Force model for all tasks: claude | local | auto",
     ),
+    provider: Optional[List[str]] = typer.Option(
+        None, "--provider",
+        help="Per-agent-type provider override: agent=provider (e.g. developer=ollama). Repeatable.",
+    ),
+    offline: bool = typer.Option(
+        False, "--offline",
+        help="Offline mode: route all agents to the local provider.",
+    ),
+    check_providers: bool = typer.Option(
+        False, "--check-providers",
+        help="Probe all configured providers and print their availability status.",
+    ),
     tail: bool = typer.Option(False, "--tail", help="Tail the most recent live agent log"),
     inject: Optional[str] = typer.Option(
         None, "--inject", help="Inject context into the running agent via inject.queue",
@@ -123,6 +135,10 @@ def main(
     # Resolve project path(s); default to "." when none provided
     resolved_projects = [str(_resolve_project(p)) for p in (project or ["."])]
     proj = resolved_projects[0]
+
+    if check_providers:
+        _cmd_check_providers(proj=proj)
+        return
 
     # Multi-project mode: two or more --project flags with --multi
     if multi:
@@ -159,8 +175,22 @@ def main(
         _cmd_inject(proj, inject)
         return
 
+    # Parse --provider agent=provider pairs
+    provider_overrides: dict[str, str] = {}
+    for p in (provider or []):
+        if "=" in p:
+            agent_name, provider_name = p.split("=", 1)
+            provider_overrides[agent_name.strip()] = provider_name.strip()
+        else:
+            console.print(f"[yellow]Ignoring malformed --provider value: {p!r} (expected agent=provider)[/yellow]")
+
     if mode == "auto":
-        _cmd_auto(proj, max_tasks, code_model=code_model)
+        _cmd_auto(
+            proj, max_tasks,
+            code_model=code_model,
+            provider_overrides=provider_overrides,
+            offline=offline,
+        )
     elif mode == "interactive":
         _cmd_interactive(proj)
     else:
@@ -171,18 +201,31 @@ def main(
 # ── Mode implementations ──────────────────────────────────────────────────────
 
 
-def _cmd_auto(project: str, max_tasks: int, code_model: str | None = None) -> None:
+def _cmd_auto(
+    project: str,
+    max_tasks: int,
+    code_model: str | None = None,
+    provider_overrides: dict[str, str] | None = None,
+    offline: bool = False,
+) -> None:
     """Autonomous mode — run all pending tasks."""
     session = _make_session(project)
     pending = [t for t in session.tasks if t.status.value == "TODO"]
 
-    model_note = f"  Model override: {code_model}" if code_model else ""
+    model_note = ""
+    if offline:
+        model_note = "  [yellow]Offline mode — all agents using local provider[/yellow]"
+    elif provider_overrides:
+        model_note = "  Providers: " + ", ".join(f"{a}={p}" for a, p in provider_overrides.items())
+    elif code_model:
+        model_note = f"  Model override: {code_model}"
+
     console.print(Panel(
         f"[bold green]Orchid — Autonomous Mode[/bold green]\n"
         f"Project: [cyan]{session.project_name}[/cyan]"
         + (f"\n{session.project_description}" if session.project_description else "")
         + f"\nTasks pending: {len(pending)}"
-        + model_note,
+        + (f"\n{model_note}" if model_note else ""),
         border_style="green",
     ))
 
@@ -191,7 +234,12 @@ def _cmd_auto(project: str, max_tasks: int, code_model: str | None = None) -> No
         raise typer.Exit()
 
     from orchid.orchestrator import Orchestrator
-    orch = Orchestrator(session, cli_model_override=code_model)
+    orch = Orchestrator(
+        session,
+        cli_model_override=code_model,
+        cli_provider_overrides=provider_overrides,
+        offline_mode=offline,
+    )
     try:
         orch.run_loop(max_tasks=max_tasks)
     finally:
@@ -454,6 +502,38 @@ def _cmd_inject(project: str, text: str) -> None:
         f.write(text + "\n")
     console.print(f"[green]Injected into queue: {text[:100]}[/green]")
     console.print(f"[dim]Agent will pick this up on next ReAct iteration.[/dim]")
+
+
+def _cmd_check_providers(proj: str | None = None) -> None:
+    """Probe all configured providers and print their status."""
+    from orchid.providers.registry import get_registry, reset_registry
+
+    if proj:
+        from orchid import config as cfg
+        cfg.configure_for_project(_resolve_project(proj))
+        reset_registry()
+
+    registry = get_registry()
+    statuses = registry.all_status()
+
+    table = Table(title="Provider Status", show_lines=True)
+    table.add_column("Name", style="cyan", no_wrap=True)
+    table.add_column("Type", style="dim")
+    table.add_column("Status", style="bold")
+    table.add_column("Detail")
+
+    for entry in statuses:
+        avail = entry["available"]
+        status_str = "[green]available[/green]" if avail else "[red]unavailable[/red]"
+        detail = ""
+        if not avail:
+            detail = entry.get("missing", "")
+            fix = entry.get("fix", "")
+            if fix:
+                detail += f"\n  [dim]Fix: {fix}[/dim]"
+        table.add_row(entry["name"], entry["type"], status_str, detail)
+
+    console.print(table)
 
 
 def _cmd_add_task(project: str, title: str, task_type: str, priority: int) -> None:

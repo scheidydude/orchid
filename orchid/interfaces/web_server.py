@@ -319,6 +319,12 @@ def create_app(project_paths: list[str]) -> Any:
 
     # ── REST endpoints ────────────────────────────────────────────────────────
 
+    @app.get("/api/providers")
+    async def get_providers():
+        from orchid.providers.registry import get_registry
+        registry = get_registry()
+        return registry.all_status()
+
     @app.get("/api/projects")
     async def get_projects():
         result = []

@@ -228,4 +228,13 @@ def format_notification(event: str, data: dict[str, Any]) -> str | None:
     if event == "session_idle":
         return "💤 No tasks to run — queue empty"
 
+    if event == "provider_unavailable":
+        provider = data.get("provider", "unknown")
+        missing = data.get("missing", "")
+        fix = data.get("fix", "")
+        msg = f"🔌 Provider '{provider}' unavailable — {missing}"
+        if fix:
+            msg += f"\nFix: {fix}"
+        return _truncate(msg)
+
     return None

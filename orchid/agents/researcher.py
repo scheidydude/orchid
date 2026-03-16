@@ -9,6 +9,7 @@ class ResearcherAgent(BaseAgent):
     """Searches the web, reads pages, and synthesizes information."""
 
     model_key = "local"
+    agent_type = "researcher"
 
     def __init__(self, *args, vector_memory=None, project_name: str = "", **kwargs):
         super().__init__(*args, **kwargs)

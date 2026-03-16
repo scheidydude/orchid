@@ -123,6 +123,7 @@ telegram:
     - task_failed
     - task_blocked
     - session_complete
+    - provider_unavailable
 
 dependencies:
   enabled: true
@@ -145,6 +146,7 @@ slack:
     - task_failed
     - task_blocked
     - session_complete
+    - provider_unavailable
 
 web:
   enabled: false
@@ -163,3 +165,61 @@ multi:
   max_restarts: 3                     # give up after this many restarts per project
   worker_health_check_interval: 30    # seconds between health checks in coordinator
   projects: []                        # persistent project list for 'orchid multi start'
+
+# Provider registry — 5-layer resolution chain
+# Layer 1: CLI --provider flag          (e.g. --provider developer=ollama)
+# Layer 2: per-agent-type config below  (providers.<agent_type>)
+# Layer 3: ORCHID_<AGENT_TYPE>_PROVIDER env var
+# Layer 4: per-task-type config         (providers.task_types.<task_type>)
+# Layer 5: hardcoded fallback           (orchestrator/reviewer→claude, rest→local)
+providers:
+  # Per-agent-type overrides (uncomment to activate)
+  # orchestrator: claude
+  # reviewer: claude
+  # developer: local
+  # researcher: local
+
+  # Per-task-type overrides (uncomment to activate)
+  task_types: {}
+
+  # Named provider instances (add new providers here)
+  # All built-in providers (claude, local) are always registered automatically.
+  configured:
+    claude:
+      type: anthropic
+      model: "${ANTHROPIC_MODEL:-claude-sonnet-4-6}"
+      max_tokens: 8192
+      temperature: 0.3
+
+    local:
+      type: local
+      base_url: "${LLAMA_BASE_URL:-http://localhost:8080/v1}"
+      api_key: "${LLAMA_API_KEY:-none}"
+      model: "${LLAMA_MODEL:-qwen3.5-35b-a3b-q6}"
+      embed_url: "${LLAMA_EMBED_URL:-http://localhost:8081/v1}"
+      max_tokens: 4096
+      temperature: 0.5
+
+    # Uncomment to enable Ollama:
+    # ollama:
+    #   type: ollama
+    #   base_url: "${OLLAMA_BASE_URL:-http://localhost:11434}"
+    #   model: "${OLLAMA_MODEL:-qwen2.5-coder:32b}"
+
+    # Uncomment to enable OpenAI:
+    # openai:
+    #   type: openai
+    #   model: "${OPENAI_MODEL:-gpt-4o}"
+    #   max_tokens: 4096
+    #   temperature: 0.5
+
+    # Uncomment to enable OpenRouter:
+    # openrouter:
+    #   type: openrouter
+    #   model: "${OPENROUTER_MODEL:-anthropic/claude-sonnet-4-6}"
+
+    # Uncomment to enable AWS Bedrock (requires boto3: uv pip install boto3):
+    # bedrock:
+    #   type: bedrock
+    #   model: "${BEDROCK_MODEL:-anthropic.claude-sonnet-4-6-v1:0}"
+    #   region: "${AWS_REGION:-us-east-1}"

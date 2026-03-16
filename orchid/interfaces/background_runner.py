@@ -121,6 +121,7 @@ class BackgroundRunner:
         notify_on = cfg.get("telegram.notify_on", [
             "session_start", "task_start", "task_complete",
             "task_failed", "task_blocked", "session_complete",
+            "provider_unavailable",
         ])
         if event not in notify_on:
             return
@@ -188,10 +189,13 @@ class BackgroundRunner:
                 "pending": pending_count,
             })
 
-            # Wire progress notifications through orch.stream_callback
+            # Wire progress + provider_unavailable notifications through orch.stream_callback
             def _progress_notify(data: dict[str, Any]) -> None:
-                if data.get("event") == "task_progress":
+                event = data.get("event", "")
+                if event == "task_progress":
                     self._notify(loop, "task_progress", data)
+                elif event == "provider_unavailable":
+                    self._notify(loop, "provider_unavailable", data)
 
             orch.stream_callback = _progress_notify
 

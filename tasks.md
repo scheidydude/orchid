@@ -1,8 +1,14 @@
 # Tasks
 
 
+## TODO
+
+- [ ] **T033** Fix offline mode: hot memory compression should use local provider when --offline flag is set, not call Claude API `type:code_generate` `p1`
+
 ## DONE
 
+- [x] **T032** Simple hello world function `type:code_generate` `p1`
+- [x] **T031** Write a haiku about distributed systems `type:draft` `p1`
 - [x] **T029** Test Web UI live task creation `type:draft` `p1`
 - [x] **T025** Dependency test parent task `type:draft` `p1`
 - [x] **T026** Dependency test child task `type:draft` `p1`

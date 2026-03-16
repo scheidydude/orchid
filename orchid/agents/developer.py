@@ -9,6 +9,7 @@ class DeveloperAgent(BaseAgent):
     """Writes, edits, and debugs code."""
 
     model_key = "local"
+    agent_type = "developer"
 
     def system_prompt(self) -> str:
         base = super().system_prompt()

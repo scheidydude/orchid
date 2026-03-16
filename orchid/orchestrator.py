@@ -42,10 +42,22 @@ class Orchestrator:
     6. Saves and closes the session
     """
 
-    def __init__(self, session: Session, cli_model_override: str | None = None):
+    def __init__(
+        self,
+        session: Session,
+        cli_model_override: str | None = None,
+        cli_provider_overrides: dict[str, str] | None = None,
+        offline_mode: bool = False,
+    ):
         self.session = session
         self.registry = _get_registry()
         self.cli_model_override = cli_model_override
+        self.cli_provider_overrides: dict[str, str] = cli_provider_overrides or {}
+        self.offline_mode = offline_mode
+        # Apply offline mode to provider registry
+        if offline_mode:
+            from orchid.providers.registry import get_registry as get_provider_registry
+            get_provider_registry().set_offline(True)
         # Optional stream callback — set by BackgroundRunner for progress notifications
         self.stream_callback: Callable[[dict[str, Any]], None] | None = None
         # Delegation support — shared delegator across all tasks in this run
@@ -78,13 +90,26 @@ class Orchestrator:
     # ── Task execution ─────────────────────────────────────────────────────────
 
     def _execute_task(self, task: Task) -> dict[str, Any]:
+        from orchid.providers.base import ProviderUnavailableError
+
+        # Resolve agent type for per-agent-type provider overrides
+        agent_cls = self._resolve_agent(task)
+        agent_type = getattr(agent_cls, "agent_type", "base")
+
+        # Check per-agent-type CLI override first
+        per_agent_override = self.cli_provider_overrides.get(agent_type)
+
         # Resolve routing before execution and log the decision
         decision = route(
             task_type=task.type,
             task_model_override=task.model_override,
-            cli_override=self.cli_model_override,
+            cli_override=per_agent_override or self.cli_model_override,
             task_title=task.title,
         )
+        # Offline mode forces local regardless of routing
+        if self.offline_mode:
+            decision = decision.__class__(model="local", reason="offline mode", source="cli_flag")
+
         logger.info(
             "Routing %s → %s (reason: %s, source: %s)",
             task.id, decision.model, decision.reason, decision.source,
@@ -109,7 +134,6 @@ class Orchestrator:
                 plan = task.description or task.title
 
             # Dispatch to agent
-            agent_cls = self._resolve_agent(task)
             injection_queue = self.session.project_dir / ".orchid" / "inject.queue"
             agent = agent_cls(
                 session_context=self.session.context_block(),
@@ -132,6 +156,20 @@ class Orchestrator:
             # Append result summary to hot memory
             self._update_hot_memory(task, result_text)
             return {"task_id": task.id, "status": "done", "result": result_text}
+
+        except ProviderUnavailableError as e:
+            logger.error("Provider unavailable for task %s: %s — %s", task.id, e.missing, e.suggestion)
+            self.session.update_task_status(task.id, TaskStatus.BLOCKED)
+            error_msg = f"Provider '{e.provider_name}' unavailable: {e.missing}"
+            self.session.log_event("task_error", {"task_id": task.id, "error": error_msg, "fix": e.suggestion})
+            if self.stream_callback:
+                self.stream_callback({
+                    "event": "provider_unavailable",
+                    "provider": e.provider_name,
+                    "missing": e.missing,
+                    "fix": e.suggestion,
+                })
+            return {"task_id": task.id, "status": "error", "error": error_msg}
 
         except Exception as e:
             logger.exception("Task %s failed: %s", task.id, e)
