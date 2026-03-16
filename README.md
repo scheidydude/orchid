@@ -1,8 +1,11 @@
 # Orchid
-
-AI agent orchestration framework. Install once, run against any project.
+[![Orchid][orchid.image]](https://github.com/scheidydude/orchid)
 
 "Orchid is a symbiotic ecosystem of specialized AI agents, cultivated and orchestrated to transform ideas into reliable software systems."
+
+## Description
+
+AI agent orchestration framework. Install once, run against any project.
 
 ```
 ~/orchid/              ← install here
@@ -117,6 +120,7 @@ orchid slack --project PATH                       Slack bot interface
 ```
 
 ## Web UI
+![react-screenshot]
 
 Orchid ships a React-based web interface for managing projects, tasks, agent
 runs, vector memory recall, and session history.
@@ -317,3 +321,7 @@ The project uses these languages and formats:
   Other
   - Markdown — README.md, CLAUDE.md, tasks.md, templates
   - systemd unit  — orchid-serve.service and service templates
+
+[orchid.image]: images/orchid-logo.png
+[orchid-repo-url]: https://github.com/scheidydude/orchid
+[react-screenshot]: images/react-screenshot.png
