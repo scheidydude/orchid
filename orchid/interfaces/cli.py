@@ -13,6 +13,7 @@ Subcommands for less frequent operations:
 
 from __future__ import annotations
 
+import importlib.metadata
 import logging
 import shutil
 
@@ -28,6 +29,16 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.table import Table
+
+def _version_callback(value: bool) -> None:
+    if value:
+        try:
+            version = importlib.metadata.version("orchid")
+        except importlib.metadata.PackageNotFoundError:
+            version = "unknown (package not installed)"
+        console.print(f"orchid {version}")
+        raise typer.Exit()
+
 
 app = typer.Typer(
     name="orchid",
@@ -65,6 +76,12 @@ def _resolve_project(project: str) -> Path:
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
+    version: Optional[bool] = typer.Option(
+        None, "--version", "-V",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show version and exit.",
+    ),
     project: Optional[List[str]] = typer.Option(
         None, "--project", "-p",
         help="Path to the project directory. Repeat for --multi mode.",
