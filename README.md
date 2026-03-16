@@ -295,3 +295,25 @@ Override per-project with `model_preference: claude` in `.orchid.yaml`.
 pytest             # 227 tests, no API calls required
 ruff check orchid/
 ```
+
+## Languages and Formats
+The project uses these languages and formats:
+
+  Languages
+  - Python — entire backend: orchestrator, agents, providers, CLI, web server, 
+  tests
+  - JavaScript / JSX — React frontend components and hooks
+  - Bash — install scripts and service helpers
+  - CSS — web UI dark theme (index.css)
+  - HTML — Vite's index.html entry point
+
+  Configuration and data formats
+  - YAML — orchid.defaults.yaml, .orchid.yaml project configs, Traefik 
+  routing
+  - TOML — pyproject.toml (package metadata, build config, tool settings)
+  - JSON — package.json, lock files, test fixtures
+  - JSONL — append-only session logs and decisions (one JSON object per line)
+
+  Other
+  - Markdown — README.md, CLAUDE.md, tasks.md, templates
+  - systemd unit  — orchid-serve.service and service templates
