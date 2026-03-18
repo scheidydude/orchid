@@ -481,7 +481,31 @@ def create_app(
         s.load()
         return s
 
-    def _task_dict(t: Any) -> dict[str, Any]:
+    def _load_task_failures(project_path: str) -> dict[str, str]:
+        """Return {task_id: reason} for task_failed events in the most recent session log."""
+        import json as _json
+        log_dir = Path(project_path) / ".orchid" / "session_logs"
+        if not log_dir.exists():
+            return {}
+        logs = sorted(log_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if not logs:
+            return {}
+        failures: dict[str, str] = {}
+        try:
+            for line in logs[0].read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                rec = _json.loads(line)
+                if rec.get("type") == "task_failed":
+                    tid = rec.get("task_id", "")
+                    reason = rec.get("reason", "failed")
+                    if tid:
+                        failures[tid] = reason
+        except Exception:
+            pass
+        return failures
+
+    def _task_dict(t: Any, last_error: str | None = None) -> dict[str, Any]:
         return {
             "id": t.id,
             "title": t.title,
@@ -491,6 +515,7 @@ def create_app(
             "description": t.description,
             "depends_on": t.depends_on,
             "model_override": t.model_override,
+            "last_error": last_error,
         }
 
     # ── REST endpoints ────────────────────────────────────────────────────────
@@ -557,13 +582,14 @@ def create_app(
     async def get_project_status(project_id: str):
         path = _get_project(project_id)
         s = _load_session(path)
+        failures = _load_task_failures(path)
         runner = _runners.get(project_id)
         return {
             "id": project_id,
             "name": s.project_name,
             "path": path,
             "description": s.project_description,
-            "tasks": [_task_dict(t) for t in s.tasks],
+            "tasks": [_task_dict(t, failures.get(t.id)) for t in s.tasks],
             "decisions": s.decisions[-10:],
             "hot_memory": s.hot_memory,
             "running": runner.is_running() if runner else False,
@@ -577,7 +603,8 @@ def create_app(
     async def get_tasks(project_id: str):
         path = _get_project(project_id)
         s = _load_session(path)
-        return [_task_dict(t) for t in s.tasks]
+        failures = _load_task_failures(path)
+        return [_task_dict(t, failures.get(t.id)) for t in s.tasks]
 
     @app.post("/api/projects/{project_id}/tasks", status_code=201)
     async def create_task(project_id: str, body: CreateTaskBody):

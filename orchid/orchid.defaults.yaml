@@ -77,7 +77,7 @@ memory:
   compression_threshold: 6000   # compress when hot memory exceeds this
 
 agents:
-  max_react_iterations: 15
+  max_react_iterations: 25
   tool_timeout_seconds: 30
   bash_timeout_seconds: 60
 

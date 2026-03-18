@@ -300,6 +300,30 @@ def _count_last_session_delegations(project: str) -> int:
     return count
 
 
+def _load_last_failures(proj_path) -> dict[str, str]:
+    """Return {task_id: reason} from task_failed events in the most recent session log."""
+    import json as _json
+    log_dir = proj_path / ".orchid" / "session_logs"
+    if not log_dir.exists():
+        return {}
+    logs = sorted(log_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not logs:
+        return {}
+    failures: dict[str, str] = {}
+    try:
+        for line in logs[0].read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            rec = _json.loads(line)
+            if rec.get("type") == "task_failed":
+                tid = rec.get("task_id", "")
+                if tid:
+                    failures[tid] = rec.get("reason", "failed")
+    except Exception:
+        pass
+    return failures
+
+
 def _cmd_status(project: str) -> None:
     """Print task board and hot memory."""
     from rich.markup import escape
@@ -322,6 +346,8 @@ def _cmd_status(project: str) -> None:
     table.add_column("P", justify="center")
     table.add_column("Deps", style="dim")
 
+    failures = _load_last_failures(proj_path)
+
     completed_ids = {t.id for t in session.tasks if t.status.value == "DONE"}
     for t in session.tasks:
         color = status_color.get(t.status.value, "white")
@@ -331,9 +357,30 @@ def _cmd_status(project: str) -> None:
             deps_str = ",".join(t.depends_on)
             if waiting:
                 deps_str = f"⏳ {','.join(waiting)}"
-        table.add_row(t.id, f"[{color}]{t.status.value}[/{color}]", t.title, t.type, str(t.priority), deps_str)
+        warn = " ⚠" if t.id in failures else ""
+        table.add_row(
+            t.id,
+            f"[{color}]{t.status.value}{warn}[/{color}]",
+            escape(t.title),
+            t.type,
+            str(t.priority),
+            deps_str,
+        )
 
     console.print(table)
+
+    # Warn about tasks that failed in the last run
+    if failures:
+        from rich.text import Text
+        lines = []
+        for tid, reason in failures.items():
+            short = reason[:120].replace("\n", " ")
+            lines.append(f"[cyan]{tid}[/cyan]  {escape(short)}")
+        console.print(Panel(
+            "\n".join(lines),
+            title="[bold red]⚠ Failed in last run[/bold red]",
+            border_style="red",
+        ))
 
     delegation_count = _count_last_session_delegations(str(proj_path))
     summary_parts = [
@@ -341,6 +388,8 @@ def _cmd_status(project: str) -> None:
         f"decisions={len(session.decisions)}",
         f"delegations={delegation_count}",
     ]
+    if failures:
+        summary_parts.append(f"[red]failed={len(failures)}[/red]")
     console.print(f"[dim]{' · '.join(summary_parts)}[/dim]")
 
     if session.hot_memory:

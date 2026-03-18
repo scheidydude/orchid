@@ -149,17 +149,37 @@ class Orchestrator:
             agent.delegator = self._delegator
             result_text = agent.run(plan)
 
-            self.session.update_task_status(task.id, TaskStatus.DONE)
-            delegation_count = len(self.session.delegations)
-            self.session.log_event("task_done", {
-                "task_id": task.id,
-                "result": result_text[:500],
-                "delegations": delegation_count,
-            })
+            # Detect failure sentinels returned by the agent run loop
+            _FAILURE_PREFIXES = (
+                "[max iterations reached",
+                "[parse error",
+                "[tool error",
+                "[path error",
+                "[delegation refused",
+                "[unknown tool",
+            )
+            is_failure = result_text.startswith(_FAILURE_PREFIXES)
 
-            # Append result summary to hot memory
-            self._update_hot_memory(task, result_text)
-            return {"task_id": task.id, "status": "done", "result": result_text}
+            delegation_count = len(self.session.delegations)
+            if is_failure:
+                logger.warning("Task %s failed: %s", task.id, result_text[:200])
+                self.session.update_task_status(task.id, TaskStatus.BLOCKED)
+                self.session.log_event("task_failed", {
+                    "task_id": task.id,
+                    "reason": result_text[:500],
+                    "delegations": delegation_count,
+                })
+                self._update_hot_memory(task, f"FAILED: {result_text}")
+                return {"task_id": task.id, "status": "failed", "error": result_text}
+            else:
+                self.session.update_task_status(task.id, TaskStatus.DONE)
+                self.session.log_event("task_done", {
+                    "task_id": task.id,
+                    "result": result_text[:500],
+                    "delegations": delegation_count,
+                })
+                self._update_hot_memory(task, result_text)
+                return {"task_id": task.id, "status": "done", "result": result_text}
 
         except ProviderUnavailableError as e:
             logger.error("Provider unavailable for task %s: %s — %s", task.id, e.missing, e.suggestion)
