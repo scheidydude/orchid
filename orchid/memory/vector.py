@@ -58,6 +58,7 @@ class VectorMemory:
         self._collection: Any = None
         self._available = False
         self._warned = False
+        self._unavailability_reason: str | None = None
 
         self._init()
 
@@ -86,8 +87,10 @@ class VectorMemory:
                 self._collection.count(),
             )
         except ImportError:
+            self._unavailability_reason = "import_error"
             logger.warning("chromadb not installed — vector memory disabled.")
         except Exception as exc:
+            self._unavailability_reason = "runtime_error"
             logger.warning("VectorMemory init failed: %s — vector ops disabled.", exc)
 
     def _warn_once(self) -> None:
@@ -234,3 +237,8 @@ class VectorMemory:
     @property
     def available(self) -> bool:
         return self._available
+
+    @property
+    def unavailability_reason(self) -> str | None:
+        """'import_error', 'runtime_error', or None if available."""
+        return self._unavailability_reason

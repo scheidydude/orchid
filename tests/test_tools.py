@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from orchid.errors import ToolError
 from orchid.tools.filesystem import read_file, write_file, list_dir, append_file
 from orchid.tools.shell import bash
 
@@ -39,5 +40,5 @@ def test_bash_exit_code():
 
 
 def test_bash_blocked():
-    with pytest.raises(RuntimeError, match="Blocked"):
+    with pytest.raises(ToolError, match="Blocked"):
         bash("rm -rf /")

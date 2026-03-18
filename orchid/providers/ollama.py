@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
 from orchid.providers.base import ProviderBase
+
+logger = logging.getLogger(__name__)
 
 
 class OllamaProvider(ProviderBase):
@@ -38,6 +41,7 @@ class OllamaProvider(ProviderBase):
             return False
         except Exception as exc:
             self._missing_detail = f"{self.base_url} unreachable: {exc}"
+            logger.debug("OllamaProvider unavailable: %s", self._missing_detail)
             return False
 
     def fix_suggestion(self) -> str:

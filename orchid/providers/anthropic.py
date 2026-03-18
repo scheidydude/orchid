@@ -5,6 +5,9 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from tenacity import retry, stop_after_attempt, wait_exponential_jitter
+
+from orchid.errors import ProviderError
 from orchid.providers.base import ProviderBase
 
 
@@ -47,12 +50,35 @@ class AnthropicProvider(ProviderBase):
 
         raw = self._normalise_messages(messages)
         client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-        response = client.messages.create(
-            model=kwargs.pop("model", self.model),
-            max_tokens=kwargs.pop("max_tokens", self.max_tokens),
-            temperature=kwargs.pop("temperature", self.temperature),
-            system=system or "You are a helpful assistant.",
-            messages=raw,
-            **kwargs,
+
+        model = kwargs.pop("model", self.model)
+        max_tokens = kwargs.pop("max_tokens", self.max_tokens)
+        temperature = kwargs.pop("temperature", self.temperature)
+
+        @retry(
+            retry=lambda e: isinstance(e, anthropic.RateLimitError),
+            stop=stop_after_attempt(3),
+            wait=wait_exponential_jitter(initial=1, max=60),
+            reraise=True,
         )
-        return response.content[0].text
+        def _call() -> str:
+            response = client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                system=system or "You are a helpful assistant.",
+                messages=raw,
+                **kwargs,
+            )
+            if not response.content:
+                raise ProviderError("Empty response content from Claude API")
+            return response.content[0].text
+
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        try:
+            return _call()
+        except Exception as exc:
+            if api_key and api_key in str(exc):
+                sanitized = str(exc).replace(api_key, "***")
+                raise type(exc)(sanitized) from None
+            raise

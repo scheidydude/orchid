@@ -72,6 +72,7 @@ def test_worker_main_runs_project(tmp_path):
 
     queue = _SyncQueue()
     semaphore = multiprocessing.Semaphore(3)
+    local_semaphore = multiprocessing.Semaphore(1)
     stop_event = multiprocessing.Event()
 
     with (
@@ -80,7 +81,7 @@ def test_worker_main_runs_project(tmp_path):
         patch("orchid.orchestrator.Orchestrator", return_value=mock_orch),
     ):
         from orchid.multi import worker_main
-        worker_main(str(tmp_path), queue, semaphore, stop_event, code_model=None)
+        worker_main(str(tmp_path), queue, semaphore, local_semaphore, stop_event, code_model=None)
 
     events = queue.drain()
     event_types = [e["event"] for e in events]
@@ -108,6 +109,7 @@ def test_stop_event_halts_worker(tmp_path):
 
     queue = _SyncQueue()
     semaphore = multiprocessing.Semaphore(3)
+    local_semaphore = multiprocessing.Semaphore(1)
     stop_event = multiprocessing.Event()
     stop_event.set()  # pre-set stop
 
@@ -117,7 +119,7 @@ def test_stop_event_halts_worker(tmp_path):
         patch("orchid.orchestrator.Orchestrator", return_value=mock_orch),
     ):
         from orchid.multi import worker_main
-        worker_main(str(tmp_path), queue, semaphore, stop_event, code_model=None)
+        worker_main(str(tmp_path), queue, semaphore, local_semaphore, stop_event, code_model=None)
 
     # next_task should not have been called (stop_event was set before any task loop)
     mock_session.next_task.assert_not_called()
@@ -140,6 +142,7 @@ def test_notification_queue_receives_events(tmp_path):
 
     queue = _SyncQueue()
     semaphore = multiprocessing.Semaphore(3)
+    local_semaphore = multiprocessing.Semaphore(1)
     stop_event = multiprocessing.Event()
 
     with (
@@ -148,7 +151,7 @@ def test_notification_queue_receives_events(tmp_path):
         patch("orchid.orchestrator.Orchestrator", return_value=mock_orch),
     ):
         from orchid.multi import worker_main
-        worker_main(str(tmp_path), queue, semaphore, stop_event, code_model=None)
+        worker_main(str(tmp_path), queue, semaphore, local_semaphore, stop_event, code_model=None)
 
     items = queue.drain()
     assert len(items) > 0
@@ -161,43 +164,56 @@ def test_notification_queue_receives_events(tmp_path):
 
 
 def test_api_semaphore_limits_concurrent_calls():
-    """_install_semaphore_wrapper wraps Claude calls with semaphore acquire/release."""
+    """_install_semaphore_wrapper gates Claude calls via api_semaphore and local calls via local_semaphore."""
     import orchid.tools.models as _models
 
     original_call = _models.call
-    semaphore = multiprocessing.Semaphore(2)
-    acquired_calls: list[str] = []
+    api_semaphore = multiprocessing.Semaphore(2)
+    local_semaphore = multiprocessing.Semaphore(1)
+    api_calls: list[str] = []
+    local_calls: list[str] = []
 
-    real_semaphore_acquire = semaphore.acquire
-    real_semaphore_release = semaphore.release
+    real_api_acquire = api_semaphore.acquire
+    real_api_release = api_semaphore.release
+    real_local_acquire = local_semaphore.acquire
+    real_local_release = local_semaphore.release
 
-    def _track_acquire():
-        acquired_calls.append("acquire")
-        return real_semaphore_acquire()
+    def _track_api_acquire():
+        api_calls.append("acquire")
+        return real_api_acquire()
 
-    def _track_release():
-        acquired_calls.append("release")
-        return real_semaphore_release()
+    def _track_api_release():
+        api_calls.append("release")
+        return real_api_release()
+
+    def _track_local_acquire():
+        local_calls.append("acquire")
+        return real_local_acquire()
+
+    def _track_local_release():
+        local_calls.append("release")
+        return real_local_release()
 
     try:
-        semaphore.acquire = _track_acquire  # type: ignore[method-assign]
-        semaphore.release = _track_release  # type: ignore[method-assign]
+        api_semaphore.acquire = _track_api_acquire  # type: ignore[method-assign]
+        api_semaphore.release = _track_api_release  # type: ignore[method-assign]
+        local_semaphore.acquire = _track_local_acquire  # type: ignore[method-assign]
+        local_semaphore.release = _track_local_release  # type: ignore[method-assign]
 
         from orchid.multi import _install_semaphore_wrapper
 
-        with patch.object(_models, "call", return_value="result") as mock_call_fn:
-            _install_semaphore_wrapper(semaphore)
+        with patch.object(_models, "call", return_value="result"):
+            _install_semaphore_wrapper(api_semaphore, local_semaphore)
 
-            # Claude call should acquire/release
+            # Claude call should acquire/release api_semaphore, not local
             _models.call([], model_key="claude")
-            assert "acquire" in acquired_calls
-            assert "release" in acquired_calls
+            assert api_calls == ["acquire", "release"]
+            assert local_calls == []
 
-            prev_len = len(acquired_calls)
-
-            # Local call should NOT acquire
+            # Local call should acquire/release local_semaphore, not api
             _models.call([], model_key="local")
-            assert len(acquired_calls) == prev_len  # no new acquire/release
+            assert api_calls == ["acquire", "release"]  # unchanged
+            assert local_calls == ["acquire", "release"]
     finally:
         _models.call = original_call
 

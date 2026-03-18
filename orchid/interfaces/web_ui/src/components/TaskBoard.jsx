@@ -74,21 +74,28 @@ export default function TaskBoard({ projectId, runStatus }) {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
         <div style={{ display: 'flex', gap: 4 }}>
-          {['active', 'done', 'all'].map(f => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              style={{
-                padding: '4px 10px',
-                fontSize: 12,
-                background: filter === f ? 'var(--accent)' : undefined,
-                borderColor: filter === f ? 'var(--accent)' : undefined,
-                color: filter === f ? '#fff' : undefined,
-              }}
-            >
-              {f}
-            </button>
-          ))}
+          {['active', 'done', 'all'].map(f => {
+            const count = tasks.filter(t => {
+              if (f === 'active') return ['TODO', 'IN_PROGRESS', 'BLOCKED'].includes(t.status)
+              if (f === 'done') return t.status === 'DONE'
+              return true
+            }).length
+            return (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                style={{
+                  padding: '4px 10px',
+                  fontSize: 12,
+                  background: filter === f ? 'var(--accent)' : undefined,
+                  borderColor: filter === f ? 'var(--accent)' : undefined,
+                  color: filter === f ? '#fff' : undefined,
+                }}
+              >
+                {f} ({count})
+              </button>
+            )
+          })}
         </div>
         <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>{filtered.length} tasks</span>
         <button

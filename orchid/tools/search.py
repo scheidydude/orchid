@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import Any
 
 from orchid import config as cfg
@@ -17,6 +18,7 @@ SearchResult = dict[str, str]  # {title, url, snippet, source}
 # ── Backend availability cache ────────────────────────────────────────────────
 
 _active_backend: "_Backend | None | str" = "unprobed"  # sentinel
+_active_backend_ts: float = 0.0
 
 
 # ── Backend base ──────────────────────────────────────────────────────────────
@@ -164,9 +166,10 @@ class DuckDuckGoBackend(_Backend):
 # ── Backend selection ─────────────────────────────────────────────────────────
 
 def _detect_backend() -> _Backend | None:
-    global _active_backend  # noqa: PLW0603
+    global _active_backend, _active_backend_ts  # noqa: PLW0603
 
-    if _active_backend != "unprobed":
+    ttl = cfg.get("web_search.backend_cache_ttl", 300)
+    if _active_backend != "unprobed" and (time.time() - _active_backend_ts) < ttl:
         return _active_backend  # type: ignore[return-value]
 
     mode = cfg.get("web_search.backend", "auto")
@@ -192,17 +195,20 @@ def _detect_backend() -> _Backend | None:
         if backend.available():
             logger.info("Web search backend: %s", backend.name)
             _active_backend = backend
+            _active_backend_ts = time.time()
             return backend
 
     logger.warning("No web search backend available.")
     _active_backend = None
+    _active_backend_ts = time.time()
     return None
 
 
 def reset_backend_cache() -> None:
     """Reset cached backend — useful in tests."""
-    global _active_backend  # noqa: PLW0603
+    global _active_backend, _active_backend_ts  # noqa: PLW0603
     _active_backend = "unprobed"
+    _active_backend_ts = 0.0
 
 
 # ── Page fetcher ──────────────────────────────────────────────────────────────

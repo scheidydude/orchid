@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 from orchid import config as cfg
+from orchid.errors import ToolError
 
 
-# Commands that are never allowed regardless of config
-_BLOCKED = frozenset([
-    "rm -rf /", "mkfs", "dd if=", ":(){:|:&};:",  # fork bomb pattern
-    "shutdown", "reboot", "halt", "poweroff",
-])
+# Commands that are never allowed regardless of config.
+# Regex patterns are matched against the full command string (case-sensitive).
+_BLOCKED_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"rm\s+-[rRfF]*[rR][fF]*\s+/"),   # rm -rf /, rm -Rf /home, etc.
+    re.compile(r"\bmkfs\b"),                        # filesystem format
+    re.compile(r"\bdd\s+if="),                      # raw disk write
+    re.compile(r":\s*\(\s*\)\s*\{"),               # fork bomb :(){
+    re.compile(r"\b(shutdown|reboot|halt|poweroff)\b"),  # power commands
+    re.compile(r">\s*/dev/sd[a-z]"),               # direct block device write
+]
 
 
 def bash(command: str, timeout: int | None = None) -> str:
@@ -20,9 +27,9 @@ def bash(command: str, timeout: int | None = None) -> str:
     Raises RuntimeError if the command is blocked.
     Non-zero exit codes are reported in the output, not raised.
     """
-    for blocked in _BLOCKED:
-        if blocked in command:
-            raise RuntimeError(f"Blocked command pattern: {blocked!r}")
+    for pattern in _BLOCKED_PATTERNS:
+        if pattern.search(command):
+            raise ToolError(f"Blocked command pattern: {pattern.pattern!r}")
 
     timeout = timeout or cfg.get("agents.bash_timeout_seconds", 60)
 

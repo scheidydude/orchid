@@ -28,6 +28,7 @@ def worker_main(
     project_path: str,
     notification_queue: "multiprocessing.Queue[dict[str, Any]]",
     api_semaphore: "multiprocessing.Semaphore",
+    local_semaphore: "multiprocessing.Semaphore",
     stop_event: "multiprocessing.Event",
     code_model: str | None,
 ) -> None:
@@ -42,6 +43,7 @@ def worker_main(
       {"event": str, "project": str, "data": dict}
 
     Claude API calls are rate-limited via api_semaphore.
+    Local LLM calls are rate-limited via local_semaphore.
     """
     import logging as _log_mod
 
@@ -60,7 +62,7 @@ def worker_main(
             log.warning("Notification enqueue failed (%s): %s", event, exc)
 
     try:
-        _install_semaphore_wrapper(api_semaphore)
+        _install_semaphore_wrapper(api_semaphore, local_semaphore)
 
         from orchid.session import Session
         from orchid.orchestrator import Orchestrator
@@ -117,24 +119,26 @@ def worker_main(
         raise
 
 
-def _install_semaphore_wrapper(semaphore: "multiprocessing.Semaphore") -> None:
+def _install_semaphore_wrapper(
+    api_semaphore: "multiprocessing.Semaphore",
+    local_semaphore: "multiprocessing.Semaphore",
+) -> None:
     """Monkey-patch orchid.tools.models.call in the worker process.
 
-    Wraps Claude API calls with semaphore acquire/release.
-    Local model calls pass through without acquiring the semaphore.
+    Wraps Claude API calls with api_semaphore and local LLM calls with
+    local_semaphore to prevent OOM on the inference server under multi-project load.
     """
     import orchid.tools.models as _models
 
     _original = _models.call
 
     def _wrapped(messages: Any, model_key: str = "local", system: str | None = None) -> str:
-        if model_key == "claude":
-            semaphore.acquire()
-            try:
-                return _original(messages, model_key=model_key, system=system)
-            finally:
-                semaphore.release()
-        return _original(messages, model_key=model_key, system=system)
+        sem = api_semaphore if model_key == "claude" else local_semaphore
+        sem.acquire()
+        try:
+            return _original(messages, model_key=model_key, system=system)
+        finally:
+            sem.release()
 
     _models.call = _wrapped
 
@@ -164,7 +168,9 @@ class MultiOrchid:
         self.notification_callback = notification_callback
 
         max_claude = cfg.get("multi.max_concurrent_claude_calls", 3)
+        max_local = cfg.get("multi.max_concurrent_local_calls", 1)
         self._api_semaphore: multiprocessing.Semaphore = multiprocessing.Semaphore(max_claude)
+        self._local_semaphore: multiprocessing.Semaphore = multiprocessing.Semaphore(max_local)
         self._notification_queue: multiprocessing.Queue = multiprocessing.Queue()
         self._stop_event: multiprocessing.Event = multiprocessing.Event()
 
@@ -220,6 +226,7 @@ class MultiOrchid:
                 project_path,
                 self._notification_queue,
                 self._api_semaphore,
+                self._local_semaphore,
                 self._stop_event,
                 self.code_model,
             ),

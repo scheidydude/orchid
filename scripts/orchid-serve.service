@@ -16,6 +16,8 @@ Restart=on-failure
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
+PrivateTmp=true
+NoNewPrivileges=true
 
 [Install]
 WantedBy=multi-user.target

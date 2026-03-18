@@ -178,9 +178,10 @@ def next_task(tasks: list[Task]) -> Task | None:
 
     if cfg.get("dependencies.enabled", True) and cfg.get("dependencies.cycle_detection", True):
         todo_tasks = [t for t in tasks if t.status == TaskStatus.TODO]
-        cycles = detect_dependency_cycles(todo_tasks)
-        if cycles:
-            logger.warning("Circular dependencies detected: %s", cycles)
+        if any(t.depends_on for t in todo_tasks):
+            cycles = detect_dependency_cycles(todo_tasks)
+            if cycles:
+                logger.warning("Circular dependencies detected: %s", cycles)
 
     candidates = [
         t for t in tasks

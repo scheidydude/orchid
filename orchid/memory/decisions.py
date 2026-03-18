@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from orchid import config as cfg
+
+logger = logging.getLogger(__name__)
 
 
 def _decisions_path(project_dir: str | Path = ".") -> Path:
@@ -26,7 +29,11 @@ def load_decisions(project_dir: str | Path = ".") -> list[dict[str, Any]]:
             try:
                 records.append(json.loads(line))
             except json.JSONDecodeError:
-                pass
+                logger.warning(
+                    "decisions.py: skipping malformed JSON on line %d: %.100s",
+                    len(records) + 1,
+                    line,
+                )
     return records
 
 

@@ -50,6 +50,7 @@ class LocalProvider(ProviderBase):
             return False
         except Exception as exc:
             self._missing_detail = f"{self.base_url} unreachable: {exc}"
+            logger.debug("LocalProvider unavailable: %s", self._missing_detail)
             return False
 
     def fix_suggestion(self) -> str:
