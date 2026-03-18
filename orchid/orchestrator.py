@@ -117,6 +117,9 @@ class Orchestrator:
 
         logger.info("Executing task %s: %s [type=%s model=%s]", task.id, task.title, task.type, decision.model)
         self.session.update_task_status(task.id, TaskStatus.IN_PROGRESS)
+        # Persist IN_PROGRESS immediately so web UI shows correct status during execution
+        from orchid.memory.state import save_tasks
+        save_tasks(self.session.tasks, self.session.project_dir)
         self.session.log_event("task_start", {
             "task_id": task.id,
             "title": task.title,
@@ -127,7 +130,7 @@ class Orchestrator:
 
         try:
             # Optionally plan/decompose complex tasks via Claude first
-            if task.type in cfg.get("routing.claude_tasks", []):
+            if not self.offline_mode and task.type in cfg.get("routing.claude_tasks", []):
                 plan = self._plan_task(task)
                 logger.info("Plan for %s:\n%s", task.id, plan[:500])
             else:
@@ -139,6 +142,7 @@ class Orchestrator:
                 session_context=self.session.context_block(),
                 stream_callback=self._make_stream_callback(task.id),
                 injection_queue_path=injection_queue,
+                project_dir=self.session.project_dir,
             )
             # Override model_key based on routing decision
             agent.model_key = decision.model

@@ -1,0 +1,88 @@
+[2026-03-17T19:56:17.612635+00:00] iter=0
+  Thought: I need to implement XDG standard config location for Orchid. Let me start by reading the current .env file and related files to understand the structure, then make the necessary changes.
+  Action:  final_answer
+  Obs:     Thought: I need to implement XDG standard config location for Orchid. Let me start by reading the current .env file and related files to understand the structure, then make the necessary changes.
+
+Act
+
+[2026-03-17T19:56:27.085128+00:00] iter=0
+  Thought: I need to add a --model flag to the --add-task CLI command. Let me first find the CLI code to understand the current implementation.
+  Action:  bash
+  Obs:     [stderr]
+find: ‘/home/dave/orchid’: No such file or directory
+
+[2026-03-17T19:56:31.102227+00:00] iter=1
+  Thought: The path ~/orchid doesn't exist directly. Let me find where the orchid package is installed by checking the Python path or looking for the CLI entry point.
+  Action:  bash
+  Obs:     /home/dave/LocalAI/orchid/orchid/__init__.py
+
+[2026-03-17T19:56:35.423565+00:00] iter=2
+  Thought: Found the orchid package at /home/dave/LocalAI/orchid/orchid/. Now let me search for the CLI code that handles the --add-task command.
+  Action:  bash
+  Obs:     /home/dave/LocalAI/orchid/orchid/interfaces/cli.py:  orchid --project <path> --add-task "Build the login page"
+/home/dave/LocalAI/orchid/orchid/interfaces/cli.py:# ── Main callback — handles --mode, --status, --add-task ─────────────────────
+/home/dave/LocalAI/orchid/orchid/interfaces/cli.py:    add
+
+[2026-03-17T19:56:39.729767+00:00] iter=3
+  Thought: Found the CLI code. Let me read the cli.py file to see the full implementation of the --add-task command and understand how to add the --model flag.
+  Action:  read_file
+  Obs:     """CLI entry point.
+
+Top-level flags handle the common case:
+  orchid --project <path> --mode auto
+  orchid --project <path> --mode interactive
+  orchid --project <path> --status
+  orchid --project <path> --add-task "Build the login page"
+
+Subcommands for less frequent operations:
+  orchid init [PAT
+
+[2026-03-17T19:57:01.869377+00:00] iter=4
+  Thought: I need to add a --model flag to the --add-task CLI command. Looking at the code, I can see that:
+1. The `--add-task` option is defined in the `main()` callback
+2. The `_cmd_add_task()` function handles adding tasks
+3. I need to add a `--model` option and pass it to `_cmd_add_task()`
+4. The Task clas
+  Action:  read_file
+  Obs:     """State management: tasks.md task board + CLAUDE.md hot memory."""
+
+from __future__ import annotations
+
+import logging
+import re
+from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path
+from typing import Optional
+
+from orchid import config as cfg
+
+logger = logging.ge
+
+[2026-03-17T19:59:05.097995+00:00] iter=5
+  Thought: I can see that the Task class already has a `model_override` attribute. Now I need to:
+1. Add a `--model` option to the CLI's `main()` callback
+2. Pass it to `_cmd_add_task()`
+3. Update `_cmd_add_task()` to accept and use the model parameter
+  Obs:     [parse error in Action Input: Unterminated string starting at: line 1 column 75 (char 74)]
+
+[2026-03-17T19:59:18.632728+00:00] iter=6
+  Thought: The file is too long. Let me use bash to find the exact line numbers I need to modify, then make targeted changes.
+  Action:  bash
+  Obs:     95:    add_task: Optional[str] = typer.Option(
+99:    task_type: str = typer.Option("draft", "--type", help="Task type for --add-task"),
+100:    priority: int = typer.Option(2, "--priority", help="Priority for --add-task (1=high)"),
+539:def _cmd_add_task(project: str, title: str, task_type: str, pri
+
+[2026-03-17T19:59:34.094324+00:00] iter=7
+  Thought: I need to add a --model flag to the CLI. I'll use sed to make targeted changes to the file:
+1. Add the model option after priority on line 100
+2. Update the add_task help text
+3. Update the _cmd_add_task call to pass model
+4. Update the _cmd_add_task function signature and implementation
+  Action:  bash
+
+[2026-03-17T19:59:59.918726+00:00] iter=8
+  Thought: The sed command didn't work for multi-line replacement. Let me try a different approach - I'll use Python to make the changes to the file.
+  Obs:     [parse error in Action Input: Unterminated string starting at: line 1 column 13 (char 12)]
+

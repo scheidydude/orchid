@@ -222,7 +222,7 @@ providers:
       api_key: "${LLAMA_API_KEY:-none}"
       model: "${LLAMA_MODEL:-qwen3.5-35b-a3b-q6}"
       embed_url: "${LLAMA_EMBED_URL:-http://localhost:8081/v1}"
-      max_tokens: 4096
+      max_tokens: 8192
       temperature: 0.5
 
     # Uncomment to enable Ollama:

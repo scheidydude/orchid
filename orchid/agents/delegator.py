@@ -88,15 +88,18 @@ class AgentDelegator:
         sub_context = self._build_sub_context(task, context, depth)
         max_iter = cfg.get("delegation.max_sub_iterations", 5)
 
+        project_dir = self.session.project_dir if self.session else None
+
         # Researcher requires extra kwargs for web search tooling
         if agent_type.lower().strip() == "researcher":
             agent = agent_cls(
                 session_context=sub_context,
                 vector_memory=self._vector,
                 project_name=self.project_name,
+                project_dir=project_dir,
             )
         else:
-            agent = agent_cls(session_context=sub_context)
+            agent = agent_cls(session_context=sub_context, project_dir=project_dir)
 
         # Wire delegation into sub-agent so it can further delegate (at depth+1)
         sub_delegator = AgentDelegator(

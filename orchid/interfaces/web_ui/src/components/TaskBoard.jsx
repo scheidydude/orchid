@@ -2,7 +2,9 @@ import { useState, useEffect, useCallback } from 'react'
 import TaskRow from './TaskRow.jsx'
 import AddTaskModal from './AddTaskModal.jsx'
 
-const STATUS_ORDER = ['TODO', 'IN_PROGRESS', 'BLOCKED', 'DONE', 'CANCELLED']
+const STATUS_ORDER = ['IN_PROGRESS', 'BLOCKED', 'TODO', 'DONE', 'CANCELLED']
+
+const taskNum = (id) => parseInt((id || '').replace(/\D/g, ''), 10) || 0
 
 export default function TaskBoard({ projectId, runStatus }) {
   const [tasks, setTasks] = useState([])
@@ -27,7 +29,13 @@ export default function TaskBoard({ projectId, runStatus }) {
 
   useEffect(() => { fetchTasks() }, [fetchTasks])
 
-  // Refresh when a run completes
+  // Poll every 10s to pick up changes from CLI runs
+  useEffect(() => {
+    const id = setInterval(fetchTasks, 10000)
+    return () => clearInterval(id)
+  }, [fetchTasks])
+
+  // Also refresh immediately when a run completes
   useEffect(() => {
     if (!runStatus.running) fetchTasks()
   }, [runStatus.running, fetchTasks])
@@ -55,7 +63,8 @@ export default function TaskBoard({ projectId, runStatus }) {
     const oa = STATUS_ORDER.indexOf(a.status)
     const ob = STATUS_ORDER.indexOf(b.status)
     if (oa !== ob) return oa - ob
-    return a.priority - b.priority
+    if (a.priority !== b.priority) return a.priority - b.priority
+    return taskNum(a.id) - taskNum(b.id)
   })
 
   if (loading) return <div className="loading">Loading tasks…</div>
