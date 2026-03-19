@@ -20,6 +20,7 @@ ToolFn = Callable[..., str]
 # ── Built-in tools ────────────────────────────────────────────────────────────
 from orchid.tools.filesystem import read_file, write_file, list_dir, append_file
 from orchid.tools.shell import bash
+from orchid.tools.consistency import check_imports_summary
 
 
 _BUILTIN_TOOLS: dict[str, ToolFn] = {
@@ -28,6 +29,7 @@ _BUILTIN_TOOLS: dict[str, ToolFn] = {
     "append_file": append_file,
     "list_dir": list_dir,
     "bash": bash,
+    "check_imports": check_imports_summary,
 }
 
 
@@ -78,13 +80,50 @@ def _make_project_tools(project_dir: Path) -> dict[str, ToolFn]:
             return target
         return list_dir(str(target))
 
+    def _check_imports(path: str = ".") -> str:
+        target = _resolve(path)
+        if isinstance(target, str):
+            return target
+        return check_imports_summary(str(target))
+
+    def _get_task_files(task_id: str) -> str:
+        return _get_task_files_for_project(task_id, project_dir)
+
     return {
         "read_file": _rr_file,
         "write_file": _rw_file,
         "append_file": _ra_file,
         "list_dir": _rl_dir,
         "bash": bash,
+        "check_imports": _check_imports,
+        "get_task_files": _get_task_files,
     }
+
+def _get_task_files_for_project(task_id: str, project_dir: Path) -> str:
+    """Read session logs and return files created/modified by a task."""
+    import json as _json
+    log_dir = project_dir / ".orchid" / "session_logs"
+    if not log_dir.exists():
+        return f"No session logs found in {log_dir}"
+    for log_file in sorted(log_dir.glob("*.jsonl"), reverse=True):
+        try:
+            for line in log_file.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                record = _json.loads(line)
+                if record.get("type") == "task_manifest" and record.get("task_id") == task_id:
+                    created = record.get("files_created", [])
+                    modified = record.get("files_modified", [])
+                    parts = [f"Files for {task_id}:"]
+                    if created:
+                        parts.append(f"  created: {', '.join(created)}")
+                    if modified:
+                        parts.append(f"  modified: {', '.join(modified)}")
+                    return "\n".join(parts) if len(parts) > 1 else f"No files recorded for {task_id}"
+        except Exception:
+            continue
+    return f"No file manifest found for task {task_id}"
+
 
 _SEARCH_SCHEMAS = [
     {
@@ -143,6 +182,16 @@ _BUILTIN_SCHEMAS = [
         "description": "Execute a shell command and return its output.",
         "parameters": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]},
     },
+    {
+        "name": "check_imports",
+        "description": "Scan project files for broken relative imports. Use Action: check_imports[path] where path is the project directory (default '.').",
+        "parameters": {"type": "object", "properties": {"path": {"type": "string", "default": "."}}, "required": []},
+    },
+    {
+        "name": "get_task_files",
+        "description": "Return files created/modified by a task. Use Action: get_task_files[TASK_ID].",
+        "parameters": {"type": "object", "properties": {"task_id": {"type": "string"}}, "required": ["task_id"]},
+    },
 ]
 
 
@@ -189,6 +238,8 @@ _TOOL_ARG_MAP: dict[str, str] = {
     "bash": "command",
     "search": "query",
     "fetch": "url",
+    "check_imports": "path",
+    "get_task_files": "task_id",
 }
 
 

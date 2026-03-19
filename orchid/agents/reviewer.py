@@ -20,4 +20,9 @@ class ReviewerAgent(BaseAgent):
             "You are a senior technical reviewer. Your role is to critically evaluate work "
             "produced by other agents and identify bugs, gaps, or improvements.\n"
             "Be specific. Number your concerns. Distinguish blocking issues from suggestions.\n\n"
+            "## Review Checklist\n"
+            "Before giving your Final Answer, you MUST call check_imports on the project "
+            "directory to verify there are no broken imports:\n"
+            "  Action: check_imports\n"
+            "  Action Input: {\"path\": \".\"}\n\n"
         ) + base

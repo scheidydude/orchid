@@ -1,6 +1,6 @@
-<!-- compressed 2026-03-17 -->
+<!-- compressed 2026-03-18 -->
 
-# CLAUDE.md — Orchid Framework
+# CLAUDE.md — Orchid Framework (compressed)
 
 ## What It Is
 Standalone AI agent orchestration tool. Installed globally, invoked against external project dirs. Projects opt in via CLAUDE.md + tasks.md + optional .orchid.yaml.
@@ -16,7 +16,6 @@ Standalone AI agent orchestration tool. Installed globally, invoked against exte
 ## Key CLI
 ```bash
 orchid --project <path> --mode auto|interactive [--code-model claude|local|auto] [--provider developer=ollama] [--offline]
-orchid --check-providers
 orchid --project <path> --status|--recall "q"|--search "q"|--add-task "t" [--model claude|local|auto]
 orchid --project <path> --tail | --inject "text"
 orchid init <path> [--name --description --force]
@@ -24,6 +23,7 @@ orchid decide "Title" --decision "..." --rationale "..." --project <path>
 orchid --multi --project <path-a> --project <path-b>
 orchid telegram|slack|web --project <path> [--port 7842]
 orchid serve [--watch-dir ~/LocalAI] [--project <path>] [--port 7842]
+orchid --check-providers
 ```
 tasks.md: `- [ ] **T003** Title \`type:code_generate\` \`p1\` \`needs:T001,T002\` \`model:claude\``
 
@@ -42,15 +42,15 @@ tasks.md: `- [ ] **T003** Title \`type:code_generate\` \`p1\` \`needs:T001,T002\
 - **D0012** Agent delegation via ReAct action `delegate[agent_type | task]`. Depth-limited to `delegation.max_depth` (default 3). Sub-agents: `max_sub_iterations=5`.
 - **D0013** Sub-context: task + top-3 vector recall + 1000-char parent context slice. Never full parent ReAct trace.
 - **D0014** Telegram: TelegramBot + BackgroundRunner + telegram_formatter. No business logic in bot.
-- **D0015** User whitelist: TELEGRAM_ALLOWED_USERS (comma-separated). Unset = warn + accept all.
+- **D0015** User whitelist: TELEGRAM_ALLOWED_USERS. Unset = warn + accept all.
 - **D0016** Multi-tier model routing: CLI flag → task `model:` → keyword heuristic → type default. Returns RouteDecision(model, reason, source).
 - **D0017** Task dependencies via `needs:T001,T002`. Cycle detection warns+skips. Controlled by `dependencies.enabled`.
 - **D0018** Live streaming log: `.live.log` → renamed `.log` on close. `--tail` tails it.
 - **D0019** Mid-run injection via `.orchid/inject.queue`. Agent reads+clears each ReAct iteration.
 - **D0020** Proactive Telegram notifications at session_start/task_start/task_complete/task_failed/session_complete. Configurable via `telegram.notify_on`.
 - **D0021** Process-per-project parallelism. No shared mutable state.
-- **D0022** Claude API rate limiting via multiprocessing.Semaphore. Local llama.cpp bypasses. Configurable via `multi.max_concurrent_claude_calls`.
-- **D0023** Notification routing via multiprocessing.Queue; multi_formatter tags messages with `[project]` prefix.
+- **D0022** Claude API rate limiting via multiprocessing.Semaphore. Local bypasses. Configurable via `multi.max_concurrent_claude_calls`.
+- **D0023** Notification routing via multiprocessing.Queue; multi_formatter tags `[project]` prefix.
 - **D0024** Slack uses Socket Mode (slack-bolt) — no public URL required.
 - **D0025** Thread-per-task in Slack.
 - **D0026** BackgroundRunner shared between Telegram and Slack.
@@ -63,7 +63,7 @@ tasks.md: `- [ ] **T003** Title \`type:code_generate\` \`p1\` \`needs:T001,T002\
 - **D0033** Auto-discovery via watchdog inotify: scans watch_dirs (depth 2) for .orchid.yaml, debounced 2s. Excludes .venv/node_modules/.git/__pycache__.
 - **D0034** `orchid serve` — unified persistent entry point: web UI + auto-discovery + optional agent loops. systemd service at scripts/orchid-serve.service.
 - **D0035** AgentManager: per-project agent loop threads with APScheduler for cron-based auto runs. Per-project persistent config in .orchid.yaml `persistent:` section.
-- **D0036** Machine-level config at ~/.config/orchid/.env (XDG). load_dotenv() search order: cwd → ~/.config/orchid/.env → ~/LocalAI/orchid/.env (legacy). orchid-serve.service EnvironmentFile points to ~/.config/orchid/.env.
+- **D0036** Machine-level config at ~/.config/orchid/.env (XDG). load_dotenv() search order: cwd → ~/.config/orchid/.env → ~/LocalAI/orchid/.env (legacy).
 
 ## Task Status
 | ID | Status | Notes |
@@ -77,16 +77,27 @@ tasks.md: `- [ ] **T003** Title \`type:code_generate\` \`p1\` \`needs:T001,T002\
 | T037 | Done | scripts/deploy.sh: builds React, reinstalls via uv tool, restarts orchid-serve |
 | T038 | Done | POST /api/projects/{id}/run passes absolute filesystem path to BackgroundRunner |
 | T039 | Done | --model flag added to --add-task CLI |
-| T040 | Done | XDG config location ~/.config/orchid/.env; scripts/setup-config.sh (chmod 600) |
-| Phase 3 M3.0–M3.5 | Done | All milestones complete |
+| T040 | Done | XDG config ~/.config/orchid/.env; scripts/setup-config.sh (chmod 600) |
+| T041 | Done | Post-write verification in tools/filesystem.py: .py→py_compile, .js→node syntax check |
+| T042 | Done | tools/consistency.py: check_imports() scans .js/.py for broken imports; ReAct action added; reviewer auto-calls at session end |
+| T043 | Done | auto_review config in orchid.defaults.yaml: auto_review.enabled=false, auto_review.after_n_tasks=3 |
+| T044 | Done | project_context() tool: reads package.json/pyproject.toml, extracts module system/framework/language/test framework; injected at task start |
+| T045 | Done | File manifest on task completion: files_created/files_modified appended to session log; get_task_files(task_id) tool added |
 | Tests | ~230 passing | + test_discovery.py |
 
 ## Not Built
 - SearXNG server setup (DDG fallback active)
 
+## Tool Call Format (EXACT)
+```
+Action: read_file
+Action Input: {"path": "src/server.js"}
+```
+One action per ReAct step. Formats: read_file / list_dir / bash / write_file / check_imports / get_task_files / delegate.
+
 ## Install
 ```bash
 uv venv && uv pip install -e ".[dev]"
-cp .env.example .env  # ANTHROPIC_API_KEY required; llama.cpp: localhost:8080
-# Or: cp .env ~/.config/orchid/.env && chmod 600 ~/.config/orchid/.env
+# ANTHROPIC_API_KEY required; llama.cpp: localhost:8080
+cp .env ~/.config/orchid/.env && chmod 600 ~/.config/orchid/.env
 ```

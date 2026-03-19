@@ -180,6 +180,11 @@ discovery:
     - "__pycache__"
     - ".orchid"
 
+# Auto-review: after N code_generate tasks, insert a review task (T043)
+auto_review:
+  enabled: false
+  after_n_tasks: 3
+
 # Persistent serve: unified multi-project server (D0034)
 serve:
   host: "0.0.0.0"

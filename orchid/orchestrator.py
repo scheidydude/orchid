@@ -80,12 +80,28 @@ class Orchestrator:
 
     def run_loop(self, max_tasks: int = 100) -> None:
         """Run tasks until none remain or max_tasks reached."""
+        auto_review_enabled = cfg.get("auto_review.enabled", False)
+        auto_review_after = cfg.get("auto_review.after_n_tasks", 3)
+        code_gen_since_review = 0
+
         for i in range(max_tasks):
-            result = self.run_once()
-            if result is None:
+            task = self.session.next_task()
+            if task is None:
                 logger.info("All tasks complete after %d iterations.", i)
                 break
+            result = self._execute_task(task)
             self.session.save()
+
+            # T043: auto-insert review task after N completed code_generate tasks
+            if (
+                auto_review_enabled
+                and result.get("status") == "done"
+                and task.type == "code_generate"
+            ):
+                code_gen_since_review += 1
+                if code_gen_since_review >= auto_review_after:
+                    self._insert_auto_review_task()
+                    code_gen_since_review = 0
 
     # ── Task execution ─────────────────────────────────────────────────────────
 
@@ -136,10 +152,22 @@ class Orchestrator:
             else:
                 plan = task.description or task.title
 
+            # T044: inject project context (language, module system, framework)
+            session_context = self.session.context_block()
+            try:
+                from orchid.tools.project_context import ProjectContextTool
+                ctx_block = ProjectContextTool(str(self.session.project_dir)).project_context()
+                session_context = session_context + "\n\n" + ctx_block
+            except Exception as _pce:
+                logger.debug("project_context detection failed: %s", _pce)
+
+            # T045: wrap write_file to track files written during this task
+            files_written: list[str] = []
+
             # Dispatch to agent
             injection_queue = self.session.project_dir / ".orchid" / "inject.queue"
             agent = agent_cls(
-                session_context=self.session.context_block(),
+                session_context=session_context,
                 stream_callback=self._make_stream_callback(task.id),
                 injection_queue_path=injection_queue,
                 project_dir=self.session.project_dir,
@@ -147,6 +175,17 @@ class Orchestrator:
             # Override model_key based on routing decision
             agent.model_key = decision.model
             agent.delegator = self._delegator
+
+            # Wrap write_file to record paths (T045)
+            _orig_write = agent.tools.get("write_file")
+            if _orig_write:
+                def _tracking_write(path: str, content: str) -> str:
+                    result = _orig_write(path=path, content=content)
+                    if not result.startswith("["):
+                        files_written.append(path)
+                    return result
+                agent.tools["write_file"] = _tracking_write
+
             result_text = agent.run(plan)
 
             # Detect failure sentinels returned by the agent run loop
@@ -178,6 +217,13 @@ class Orchestrator:
                     "result": result_text[:500],
                     "delegations": delegation_count,
                 })
+                # T045: log file manifest
+                if files_written:
+                    self.session.log_event("task_manifest", {
+                        "task_id": task.id,
+                        "files_created": files_written,
+                        "files_modified": [],
+                    })
                 self._update_hot_memory(task, result_text)
                 return {"task_id": task.id, "status": "done", "result": result_text}
 
@@ -254,6 +300,23 @@ class Orchestrator:
         }
         agent_name = type_map.get(task.type, "base")
         return registry.get(agent_name, registry["base"])
+
+    def _insert_auto_review_task(self) -> None:
+        """Insert an auto-review task after N code_generate completions (T043)."""
+        from datetime import datetime, timezone
+        ts = datetime.now(timezone.utc).strftime("%H%M%S")
+        review_task = Task(
+            id=f"AUTOREV_{ts}",
+            title="Auto-review: check imports and syntax verification",
+            type="review",
+            priority=1,
+            description=(
+                "Run check_imports on the project directory to verify all relative imports "
+                "resolve correctly. Report any broken imports or syntax errors."
+            ),
+        )
+        self.session.tasks.append(review_task)
+        logger.info("Auto-review task inserted: %s", review_task.id)
 
     def _update_hot_memory(self, task: Task, result: str) -> None:
         summary_line = f"\n- [{task.id}] {task.title}: {result[:200].strip()}\n"
