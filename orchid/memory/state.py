@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -34,10 +35,13 @@ class Task:
     tags: list[str] = field(default_factory=list)
     depends_on: list[str] = field(default_factory=list)   # task IDs this task waits for
     model_override: Optional[str] = None                  # claude | local | auto
+    rollup_sources: list[str] = field(default_factory=list)  # task IDs to gather results from (rollup type)
+    output_file: Optional[str] = None                        # output filename for rollup synthesis
 
     def is_runnable(self, completed_ids: set[str]) -> bool:
-        """True when all declared dependencies are done."""
-        return all(dep in completed_ids for dep in self.depends_on)
+        """True when all declared dependencies are done (includes rollup_sources)."""
+        all_deps = set(self.depends_on) | set(self.rollup_sources)
+        return all(dep in completed_ids for dep in all_deps)
 
     def to_md_line(self) -> str:
         tag_str = " ".join(f"#{t}" for t in self.tags)
@@ -54,6 +58,10 @@ class Task:
             parts.append(f"`needs:{','.join(self.depends_on)}`")
         if self.model_override:
             parts.append(f"`model:{self.model_override}`")
+        if self.rollup_sources:
+            parts.append(f"`rollup:{','.join(self.rollup_sources)}`")
+        if self.output_file:
+            parts.append(f"`output:{self.output_file}`")
         if tag_str:
             parts.append(tag_str)
         return " ".join(parts)
@@ -112,6 +120,17 @@ def load_tasks(project_dir: str | Path = ".") -> list[Task]:
         model_m = re.search(r"`model:([^`]+)`", rest)
         model_override = model_m.group(1).strip() if model_m else None
 
+        # Parse rollup:T001,T002 annotation
+        rollup_m = re.search(r"`rollup:([^`]+)`", rest)
+        rollup_sources = (
+            [d.strip() for d in rollup_m.group(1).split(",") if d.strip()]
+            if rollup_m else []
+        )
+
+        # Parse output:FILENAME.md annotation
+        output_m = re.search(r"`output:([^`]+)`", rest)
+        output_file = output_m.group(1).strip() if output_m else None
+
         tasks.append(Task(
             id=m.group("id").strip(),
             title=m.group("title").strip(),
@@ -122,6 +141,8 @@ def load_tasks(project_dir: str | Path = ".") -> list[Task]:
             tags=tags,
             depends_on=depends_on,
             model_override=model_override,
+            rollup_sources=rollup_sources,
+            output_file=output_file,
         ))
     return tasks
 
@@ -190,6 +211,69 @@ def next_task(tasks: list[Task]) -> Task | None:
     if not candidates:
         return None
     return min(candidates, key=lambda t: t.priority)
+
+
+# ── Task result store ─────────────────────────────────────────────────────────
+
+
+class TaskResultStore:
+    """Persistent store for completed task results (.orchid/task_results.json).
+
+    Stored as JSON Lines — one entry per completed task.  Used by rollup tasks
+    to gather results without re-parsing session logs.
+    """
+
+    def __init__(self, project_dir: str | Path) -> None:
+        self._path = Path(project_dir) / ".orchid" / "task_results.json"
+
+    def append(self, task_id: str, title: str, task_type: str, result: str) -> None:
+        """Append a completed task result to the store."""
+        from datetime import datetime, timezone
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "task_id": task_id,
+            "title": title,
+            "type": task_type,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "result": result,
+        }
+        with self._path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+
+    def _read_all(self) -> list[dict]:
+        if not self._path.exists():
+            return []
+        entries = []
+        for line in self._path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                logger.warning("Skipping malformed line in task_results.json")
+        return entries
+
+    def get(self, task_id: str) -> dict | None:
+        """Return the most recent stored result for task_id, or None."""
+        for entry in reversed(self._read_all()):
+            if entry.get("task_id") == task_id:
+                return entry
+        return None
+
+    def get_many(self, task_ids: list[str]) -> list[dict]:
+        """Return the most recent result for each task_id, preserving order."""
+        all_entries = self._read_all()
+        latest: dict[str, dict] = {}
+        for entry in all_entries:
+            tid = entry.get("task_id", "")
+            if tid in task_ids:
+                latest[tid] = entry
+        return [latest[tid] for tid in task_ids if tid in latest]
+
+    def get_all(self) -> list[dict]:
+        """Return all stored results."""
+        return self._read_all()
 
 
 # ── CLAUDE.md hot memory ──────────────────────────────────────────────────────

@@ -26,6 +26,7 @@ routing:
     - plan
     - critique
     - synthesize
+    - rollup
   # Task types routed to local model
   local_tasks:
     - draft
@@ -179,6 +180,12 @@ discovery:
     - ".git"
     - "__pycache__"
     - ".orchid"
+
+# Rollup task type — synthesizes results from multiple completed tasks (D0037)
+rollup:
+  always_use_claude: true   # rollup synthesis always uses Claude API
+  max_sources: 20           # max tasks to include in one rollup
+  default_output: "ROLLUP-{task_id}.md"
 
 # Auto-review: after N code_generate tasks, insert a review task (T043)
 auto_review:

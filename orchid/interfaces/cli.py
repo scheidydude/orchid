@@ -125,6 +125,10 @@ def main(
     inject: Optional[str] = typer.Option(
         None, "--inject", help="Inject context into the running agent via inject.queue",
     ),
+    get_result: Optional[str] = typer.Option(
+        None, "--get-result", metavar="TASK_ID",
+        help="Print stored result for a task ID (e.g. T090). Useful for debugging rollup inputs.",
+    ),
     log_level: str = typer.Option("INFO", "--log-level", "-l"),
 ) -> None:
     if ctx.invoked_subcommand:
@@ -173,6 +177,10 @@ def main(
 
     if inject is not None:
         _cmd_inject(proj, inject)
+        return
+
+    if get_result is not None:
+        _cmd_get_result(proj, get_result)
         return
 
     # Parse --provider agent=provider pairs
@@ -595,6 +603,26 @@ def _cmd_add_task(project: str, title: str, task_type: str, priority: int) -> No
     session.tasks.append(t)
     save_tasks(session.tasks, project)
     console.print(f"[green]Added {tid}: {title} (type={task_type}, p{priority})[/green]")
+
+
+def _cmd_get_result(project: str, task_id: str) -> None:
+    """Print the stored result for a specific task ID."""
+    from orchid.memory.state import TaskResultStore
+    from rich.markup import escape
+
+    proj_path = _resolve_project(project)
+    store = TaskResultStore(proj_path)
+    entry = store.get(task_id)
+    if entry is None:
+        console.print(f"[yellow]No stored result for {task_id}[/yellow]")
+        raise typer.Exit(1)
+    console.print(Panel(
+        f"[bold]{escape(entry['title'])}[/bold]\n"
+        f"[dim]type={entry['type']}  completed={entry['completed_at'][:19]}[/dim]\n\n"
+        + escape(entry["result"]),
+        title=f"[cyan]{task_id}[/cyan]",
+        border_style="cyan",
+    ))
 
 
 def _cmd_multi(projects: list[str], code_model: str | None = None) -> None:

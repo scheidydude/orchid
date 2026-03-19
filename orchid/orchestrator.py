@@ -6,7 +6,7 @@ import logging
 from typing import Any, Callable
 
 from orchid import config as cfg
-from orchid.memory.state import Task, TaskStatus
+from orchid.memory.state import Task, TaskStatus, TaskResultStore
 from orchid.session import Session
 from orchid.tools.models import call, route, Message
 
@@ -145,6 +145,10 @@ class Orchestrator:
         })
 
         try:
+            # Rollup tasks are synthesised by the orchestrator directly — no agent dispatch
+            if task.type == "rollup":
+                return self._execute_rollup_task(task)
+
             # Optionally plan/decompose complex tasks via Claude first
             if not self.offline_mode and task.type in cfg.get("routing.claude_tasks", []):
                 plan = self._plan_task(task)
@@ -224,6 +228,10 @@ class Orchestrator:
                         "files_created": files_written,
                         "files_modified": [],
                     })
+                # Store result for future rollup tasks
+                TaskResultStore(self.session.project_dir).append(
+                    task.id, task.title, task.type, result_text
+                )
                 self._update_hot_memory(task, result_text)
                 return {"task_id": task.id, "status": "done", "result": result_text}
 
@@ -297,9 +305,94 @@ class Orchestrator:
             "summarize": "researcher",
             "review": "reviewer",
             "critique": "reviewer",
+            "rollup": "base",  # orchestrator handles rollup directly, base is fallback
         }
         agent_name = type_map.get(task.type, "base")
         return registry.get(agent_name, registry["base"])
+
+    def _execute_rollup_task(self, task: Task) -> dict[str, Any]:
+        """Synthesise results from multiple completed tasks into a summary document."""
+        from orchid.memory.state import save_tasks
+
+        max_sources = cfg.get("rollup.max_sources", 20)
+        sources = task.rollup_sources[:max_sources]
+
+        if not sources:
+            msg = f"Rollup {task.id} has no rollup_sources — add `rollup:T001,T002` annotation"
+            logger.warning(msg)
+            self.session.update_task_status(task.id, TaskStatus.BLOCKED)
+            save_tasks(self.session.tasks, self.session.project_dir)
+            self.session.log_event("task_failed", {"task_id": task.id, "reason": msg})
+            return {"task_id": task.id, "status": "failed", "error": msg}
+
+        # Check all sources are DONE
+        completed_ids = {t.id for t in self.session.tasks if t.status == TaskStatus.DONE}
+        incomplete = [s for s in sources if s not in completed_ids]
+        if incomplete:
+            msg = f"Rollup {task.id} blocked — waiting for {', '.join(incomplete)}"
+            logger.info(msg)
+            self.session.update_task_status(task.id, TaskStatus.BLOCKED)
+            save_tasks(self.session.tasks, self.session.project_dir)
+            self.session.log_event("task_failed", {"task_id": task.id, "reason": msg})
+            return {"task_id": task.id, "status": "blocked", "error": msg}
+
+        # Gather stored results
+        store = TaskResultStore(self.session.project_dir)
+        results = store.get_many(sources)
+
+        results_text = ""
+        for entry in results:
+            tid = entry.get("task_id", "?")
+            title = entry.get("title", "")
+            result = entry.get("result", "(no result)")
+            results_text += f"\n[{tid}] {title}:\n{result}\n"
+
+        stored_ids = {e.get("task_id") for e in results}
+        missing_results = [s for s in sources if s not in stored_ids]
+        if missing_results:
+            results_text += f"\n[Note: no stored results found for: {', '.join(missing_results)}]\n"
+
+        prompt = (
+            "You are synthesizing results from multiple review/analysis tasks.\n"
+            "Produce a clear, concise summary document covering:\n"
+            "- Overall status (passing/failing)\n"
+            "- Critical issues found\n"
+            "- Items verified as passing\n"
+            "- Recommended next steps\n\n"
+            f"Task results:\n{results_text}"
+        )
+
+        logger.info("Running rollup synthesis for %s with %d source tasks", task.id, len(sources))
+        synthesis = call(
+            messages=[Message("user", prompt)],
+            model_key="claude",
+            system="You are a technical synthesis assistant. Produce clear, structured summaries.",
+        )
+
+        # Determine output file path
+        default_template = cfg.get("rollup.default_output", "ROLLUP-{task_id}.md")
+        output_filename = task.output_file or default_template.replace("{task_id}", task.id)
+        output_path = self.session.project_dir / output_filename
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(synthesis, encoding="utf-8")
+
+        result_msg = f"Rollup written to {output_filename}"
+        self.session.update_task_status(task.id, TaskStatus.DONE)
+        save_tasks(self.session.tasks, self.session.project_dir)
+        self.session.log_event("task_done", {
+            "task_id": task.id,
+            "result": result_msg,
+            "output_file": output_filename,
+        })
+        store.append(task.id, task.title, task.type, result_msg)
+        self._update_hot_memory(task, result_msg)
+
+        return {
+            "task_id": task.id,
+            "status": "done",
+            "result": result_msg,
+            "output_file": output_filename,
+        }
 
     def _insert_auto_review_task(self) -> None:
         """Insert an auto-review task after N code_generate completions (T043)."""

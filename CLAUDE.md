@@ -26,6 +26,7 @@ orchid serve [--watch-dir ~/LocalAI] [--project <path>] [--port 7842]
 orchid --check-providers
 ```
 tasks.md: `- [ ] **T003** Title \`type:code_generate\` \`p1\` \`needs:T001,T002\` \`model:claude\``
+tasks.md rollup: `- [ ] **T099** Final review \`type:rollup\` \`p1\` \`rollup:T090,T091,T092\` \`output:REVIEW-STATUS.md\``
 
 ## Architecture Decisions
 - **D0001** File-based state (tasks.md, CLAUDE.md, decisions.json, session_logs). No DB.
@@ -64,6 +65,8 @@ tasks.md: `- [ ] **T003** Title \`type:code_generate\` \`p1\` \`needs:T001,T002\
 - **D0034** `orchid serve` — unified persistent entry point: web UI + auto-discovery + optional agent loops. systemd service at scripts/orchid-serve.service.
 - **D0035** AgentManager: per-project agent loop threads with APScheduler for cron-based auto runs. Per-project persistent config in .orchid.yaml `persistent:` section.
 - **D0036** Machine-level config at ~/.config/orchid/.env (XDG). load_dotenv() search order: cwd → ~/.config/orchid/.env → ~/LocalAI/orchid/.env (legacy).
+- **D0037** Rollup task type: `type:rollup` `rollup:T001,T002` `output:FILE.md` — orchestrator gathers stored results from TaskResultStore, synthesises via Claude, writes output file. Always uses Claude.
+- **D0038** TaskResultStore: JSON Lines at `.orchid/task_results.json`. Appended on every task completion. Used by rollup synthesis. CLI: `--get-result T001`.
 
 ## Task Status
 | ID | Status | Notes |
@@ -83,7 +86,8 @@ tasks.md: `- [ ] **T003** Title \`type:code_generate\` \`p1\` \`needs:T001,T002\
 | T043 | Done | auto_review config in orchid.defaults.yaml: auto_review.enabled=false, auto_review.after_n_tasks=3 |
 | T044 | Done | project_context() tool: reads package.json/pyproject.toml, extracts module system/framework/language/test framework; injected at task start |
 | T045 | Done | File manifest on task completion: files_created/files_modified appended to session log; get_task_files(task_id) tool added |
-| Tests | ~230 passing | + test_discovery.py |
+| T046 | Done | Rollup task type: TaskResultStore, orchestrator synthesis, --get-result CLI flag; 25 tests |
+| Tests | 253 passing | + test_rollup.py (25 tests) |
 
 ## Not Built
 - SearXNG server setup (DDG fallback active)
