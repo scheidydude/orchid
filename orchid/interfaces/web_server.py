@@ -520,6 +520,10 @@ def create_app(
 
     # ── REST endpoints ────────────────────────────────────────────────────────
 
+    @app.get("/health", include_in_schema=False)
+    async def health():
+        return {"status": "ok", "projects": len(_projects)}
+
     @app.get("/api/providers")
     async def get_providers():
         from orchid.providers.registry import get_registry

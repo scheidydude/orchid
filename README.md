@@ -16,13 +16,13 @@ AI agent orchestration framework. Install once, run against any project.
 ## Install
 
 ```bash
-git clone git@github.com:dave/orchid.git ~/orchid
-cd ~/orchid
-uv venv && source .venv/bin/activate
-uv pip install -e .
+git clone git@github.com:scheidydude/orchid.git ~/LocalAI/orchid
+cd ~/LocalAI/orchid
+uv tool install .
 
-cp .env.example .env
-# Edit .env: set ANTHROPIC_API_KEY
+# Config goes in ~/.config/orchid/.env (XDG standard, chmod 600)
+bash scripts/setup-config.sh
+# Then edit ~/.config/orchid/.env and set ANTHROPIC_API_KEY
 # llama.cpp is expected at http://localhost:8080/v1 (set LLAMA_BASE_URL to override)
 ```
 
@@ -95,7 +95,7 @@ context_files:             # extra files loaded into every agent prompt
 - [ ] **T003** Review T001 `type:review` `p2` `agent:reviewer`
 ```
 
-Task types: `code_generate` `draft` `review` `summarize` `search` `plan` `critique`
+Task types: `code_generate` `draft` `review` `summarize` `search` `plan` `critique` `rollup`
 Priorities: `p1` high · `p2` normal · `p3` low
 
 ## CLI reference
@@ -145,6 +145,8 @@ orchid web --project ~/projects/webtron --project ~/projects/blog
 ```
 
 Open **http://localhost:7842** in your browser.
+
+Health check: `GET /health` → `{"status": "ok", "projects": N}` — used by Traefik and systemd to confirm the server is up.
 
 ### Features
 
@@ -296,7 +298,7 @@ Override per-project with `model_preference: claude` in `.orchid.yaml`.
 ## Development
 
 ```bash
-pytest             # 227 tests, no API calls required
+pytest             # 253 tests, no API calls required
 ruff check orchid/
 ```
 
@@ -321,6 +323,10 @@ The project uses these languages and formats:
   Other
   - Markdown — README.md, CLAUDE.md, tasks.md, templates
   - systemd unit  — orchid-serve.service and service templates
+
+## Documentation
+
+See [docs/getting-started.md](docs/getting-started.md) for a full walkthrough with examples.
 
 [orchid.image]: images/orchid-logo.png
 [orchid-repo-url]: https://github.com/scheidydude/orchid
