@@ -117,7 +117,7 @@ def test_delegation_result_embedded(tmp_path):
 
         # Build a fake agent class that accepts the researcher kwargs
         class FakeAgent:
-            def __init__(self, session_context="", vector_memory=None, project_name=""):
+            def __init__(self, session_context="", vector_memory=None, project_name="", project_dir=None):
                 self.delegator = None
                 self.delegation_depth = 0
                 self.max_iterations = 5
