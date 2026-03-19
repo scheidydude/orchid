@@ -16,9 +16,12 @@ logger = logging.getLogger(__name__)
 SearchResult = dict[str, str]  # {title, url, snippet, source}
 
 # ── Backend availability cache ────────────────────────────────────────────────
+# Full ordered chain of available backends, rebuilt when TTL expires.
+# Storing the chain (not just the first) enables per-query fallback: if the
+# primary backend fails during a search call, WebSearchTool tries the next.
 
-_active_backend: "_Backend | None | str" = "unprobed"  # sentinel
-_active_backend_ts: float = 0.0
+_backend_chain: "list[_Backend]" = []
+_backend_chain_ts: float = 0.0
 
 
 # ── Backend base ──────────────────────────────────────────────────────────────
@@ -43,6 +46,13 @@ class SearXNGBackend(_Backend):
 
     def available(self) -> bool:
         import httpx  # noqa: PLC0415
+        try:
+            # Prefer /healthz (SearXNG ≥ 2023.x); fall back to / for older installs
+            r = httpx.get(f"{self.base_url}/healthz", timeout=3.0)
+            if r.status_code == 200:
+                return True
+        except Exception:
+            pass
         try:
             r = httpx.get(f"{self.base_url}/", timeout=3.0)
             return r.status_code < 500
@@ -165,50 +175,54 @@ class DuckDuckGoBackend(_Backend):
 
 # ── Backend selection ─────────────────────────────────────────────────────────
 
-def _detect_backend() -> _Backend | None:
-    global _active_backend, _active_backend_ts  # noqa: PLW0603
-
-    ttl = cfg.get("web_search.backend_cache_ttl", 300)
-    if _active_backend != "unprobed" and (time.time() - _active_backend_ts) < ttl:
-        return _active_backend  # type: ignore[return-value]
-
+def _build_candidates() -> list[_Backend]:
+    """Return the ordered list of backends to probe, based on config/mode."""
     mode = cfg.get("web_search.backend", "auto")
+    searxng_url = cfg.get(
+        "web_search.searxng_url",
+        os.environ.get("SEARXNG_URL", "https://searxng.scheidy.com"),
+    )
+    brave_key = os.environ.get("BRAVE_API_KEY", "")
 
     if mode == "searxng":
-        candidates: list[_Backend] = [
-            SearXNGBackend(cfg.get("web_search.searxng_url", os.environ.get("SEARXNG_URL", "http://localhost:8888")))
-        ]
-    elif mode == "brave":
-        candidates = [BraveBackend(os.environ.get("BRAVE_API_KEY", ""))]
-    elif mode == "duckduckgo":
-        candidates = [DuckDuckGoBackend()]
-    else:  # auto
-        searxng_url = os.environ.get("SEARXNG_URL", cfg.get("web_search.searxng_url", "http://localhost:8888"))
-        brave_key = os.environ.get("BRAVE_API_KEY", "")
-        candidates = [
-            SearXNGBackend(searxng_url),
-            BraveBackend(brave_key),
-            DuckDuckGoBackend(),
-        ]
+        return [SearXNGBackend(searxng_url)]
+    if mode == "brave":
+        return [BraveBackend(brave_key)]
+    if mode == "duckduckgo":
+        return [DuckDuckGoBackend()]
+    # auto: SearXNG → Brave → DuckDuckGo
+    return [SearXNGBackend(searxng_url), BraveBackend(brave_key), DuckDuckGoBackend()]
 
-    for backend in candidates:
-        if backend.available():
-            logger.info("Web search backend: %s", backend.name)
-            _active_backend = backend
-            _active_backend_ts = time.time()
-            return backend
 
-    logger.warning("No web search backend available.")
-    _active_backend = None
-    _active_backend_ts = time.time()
-    return None
+def _get_backend_chain() -> list[_Backend]:
+    """Return (and cache) the ordered list of currently-available backends."""
+    global _backend_chain, _backend_chain_ts  # noqa: PLW0603
+
+    ttl = cfg.get("web_search.backend_cache_ttl", 300)
+    if _backend_chain and (time.time() - _backend_chain_ts) < ttl:
+        return _backend_chain
+
+    chain = [b for b in _build_candidates() if b.available()]
+    if chain:
+        logger.info("Web search chain: %s", [b.name for b in chain])
+    else:
+        logger.warning("No web search backend available.")
+    _backend_chain = chain
+    _backend_chain_ts = time.time()
+    return chain
+
+
+def _detect_backend() -> _Backend | None:
+    """Return the highest-priority available backend (backward-compat helper)."""
+    chain = _get_backend_chain()
+    return chain[0] if chain else None
 
 
 def reset_backend_cache() -> None:
-    """Reset cached backend — useful in tests."""
-    global _active_backend, _active_backend_ts  # noqa: PLW0603
-    _active_backend = "unprobed"
-    _active_backend_ts = 0.0
+    """Reset cached backend chain — forces re-probe on next search. Useful in tests."""
+    global _backend_chain, _backend_chain_ts  # noqa: PLW0603
+    _backend_chain = []
+    _backend_chain_ts = 0.0
 
 
 # ── Page fetcher ──────────────────────────────────────────────────────────────
@@ -270,25 +284,34 @@ class WebSearchTool:
         self._project_name = project_name
 
     def search(self, query: str, n: int | None = None) -> list[SearchResult]:
-        """Search the web. Returns list of {title, url, snippet, source}."""
+        """Search the web. Returns list of {title, url, snippet, source}.
+
+        Tries each backend in priority order (SearXNG → Brave → DDG).
+        If a backend raises during the search call it is skipped and the
+        next one is tried, so a SearXNG outage is transparent to callers.
+        """
         if not cfg.get("web_search.enabled", True):
             return [{"title": "", "url": "", "snippet": "Web search disabled in config.", "source": ""}]
 
         n_results = n or cfg.get("web_search.max_results", 5)
-        backend = _detect_backend()
-        if backend is None:
+        chain = _get_backend_chain()
+        if not chain:
             return [{"title": "error", "url": "", "snippet": "No web search backend available.", "source": ""}]
 
-        try:
-            results = backend.search(query, n_results)
-        except Exception as exc:
-            logger.warning("Search failed (%s): %s", backend.name, exc)
-            return [{"title": "error", "url": "", "snippet": f"Search error: {exc}", "source": backend.name}]
+        last_exc: Exception | None = None
+        for backend in chain:
+            try:
+                results = backend.search(query, n_results)
+                if cfg.get("web_search.embed_results", True) and self._vector and self._vector.available:
+                    self._embed_results(query, results)
+                return results
+            except Exception as exc:
+                logger.warning("Search backend %s failed: %s — trying next", backend.name, exc)
+                last_exc = exc
+                # Invalidate chain so next search re-probes availability
+                reset_backend_cache()
 
-        if cfg.get("web_search.embed_results", True) and self._vector and self._vector.available:
-            self._embed_results(query, results)
-
-        return results
+        return [{"title": "error", "url": "", "snippet": f"All search backends failed: {last_exc}", "source": ""}]
 
     def fetch_page(self, url: str) -> str:
         """Fetch and extract main content from a URL."""

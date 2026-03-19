@@ -92,6 +92,52 @@ def test_search_returns_error_when_no_backend(monkeypatch):
     _reset()
 
 
+def test_search_falls_back_to_ddg_when_searxng_fails_mid_query(monkeypatch):
+    """If SearXNG is available but raises during search(), DDG should be tried."""
+    _reset()
+    monkeypatch.delenv("BRAVE_API_KEY", raising=False)
+
+    fake_results = [{"title": "DDG result", "url": "http://example.com", "snippet": "from ddg", "source": "duckduckgo"}]
+
+    with patch("orchid.tools.search.SearXNGBackend.available", return_value=True), \
+         patch("orchid.tools.search.SearXNGBackend.search", side_effect=ConnectionError("timeout")), \
+         patch("orchid.tools.search.DuckDuckGoBackend.available", return_value=True), \
+         patch("orchid.tools.search.DuckDuckGoBackend.search", return_value=fake_results):
+        from orchid.tools.search import WebSearchTool
+        tool = WebSearchTool()
+        results = tool.search("test query")
+
+    assert len(results) == 1
+    assert results[0]["source"] == "duckduckgo"
+    _reset()
+
+
+def test_search_returns_error_when_all_backends_fail(monkeypatch):
+    """If every backend raises during search(), return an error dict."""
+    _reset()
+    monkeypatch.delenv("BRAVE_API_KEY", raising=False)
+
+    with patch("orchid.tools.search.SearXNGBackend.available", return_value=True), \
+         patch("orchid.tools.search.SearXNGBackend.search", side_effect=ConnectionError("timeout")), \
+         patch("orchid.tools.search.DuckDuckGoBackend.available", return_value=True), \
+         patch("orchid.tools.search.DuckDuckGoBackend.search", side_effect=RuntimeError("ddg down")):
+        from orchid.tools.search import WebSearchTool
+        tool = WebSearchTool()
+        results = tool.search("test query")
+
+    assert len(results) == 1
+    assert "All search backends failed" in results[0]["snippet"]
+    _reset()
+
+
+def test_searxng_default_url_is_scheidy():
+    """Default SearXNG URL should be searxng.scheidy.com, not localhost."""
+    from orchid.tools.search import _build_candidates
+    candidates = _build_candidates()
+    searxng = next(c for c in candidates if c.name == "searxng")
+    assert "scheidy.com" in searxng.base_url or "SEARXNG_URL" in str(searxng.base_url)
+
+
 # ── DuckDuckGo live test ──────────────────────────────────────────────────────
 
 @pytest.mark.network
