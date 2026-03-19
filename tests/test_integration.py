@@ -3,9 +3,12 @@
 These tests exercise the full path:
     Session.load() → Orchestrator.run_loop() → TaskResultStore
 
-No real LLM calls are made — the provider is mocked at the call() boundary,
-which is the narrowest possible seam. Everything else (Session, Orchestrator,
-agent dispatch, task routing, TaskResultStore) is real code.
+No real LLM calls are made — call() is mocked at the use-site in both
+orchestrator.py and agents/base.py (both do `from orchid.tools.models import call`,
+so patching orchid.tools.models.call would only intercept calls made after
+module import, which is unreliable once modules are cached in the full suite).
+Everything else (Session, Orchestrator, agent dispatch, routing, TaskResultStore)
+is real code.
 """
 
 from __future__ import annotations
@@ -58,8 +61,9 @@ def _run(project: Path, max_tasks: int = 10) -> None:
     session = Session(project_dir=project)
     session.load()
 
-    with patch("orchid.tools.models.call", return_value=_FINAL_ANSWER), \
-         patch("orchid.tools.models.route", return_value=_LOCAL_ROUTE):
+    with patch("orchid.orchestrator.call", return_value=_FINAL_ANSWER), \
+         patch("orchid.agents.base.call", return_value=_FINAL_ANSWER), \
+         patch("orchid.orchestrator.route", return_value=_LOCAL_ROUTE):
         orch = Orchestrator(session)
         orch.run_loop(max_tasks=max_tasks)
 
@@ -152,8 +156,9 @@ def test_run_loop_no_tasks_is_noop(tmp_path: Path) -> None:
     session = Session(project_dir=tmp_path)
     session.load()
 
-    with patch("orchid.tools.models.call", return_value=_FINAL_ANSWER), \
-         patch("orchid.tools.models.route", return_value=_LOCAL_ROUTE):
+    with patch("orchid.orchestrator.call", return_value=_FINAL_ANSWER), \
+         patch("orchid.agents.base.call", return_value=_FINAL_ANSWER), \
+         patch("orchid.orchestrator.route", return_value=_LOCAL_ROUTE):
         orch = Orchestrator(session)
         orch.run_loop(max_tasks=10)  # should return immediately
 
@@ -171,8 +176,9 @@ def test_session_save_persists_done_status(project: Path) -> None:
     session = Session(project_dir=project)
     session.load()
 
-    with patch("orchid.tools.models.call", return_value=_FINAL_ANSWER), \
-         patch("orchid.tools.models.route", return_value=_LOCAL_ROUTE):
+    with patch("orchid.orchestrator.call", return_value=_FINAL_ANSWER), \
+         patch("orchid.agents.base.call", return_value=_FINAL_ANSWER), \
+         patch("orchid.orchestrator.route", return_value=_LOCAL_ROUTE):
         Orchestrator(session).run_loop(max_tasks=5)
 
     # Verify in-memory state before save
