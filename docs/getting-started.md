@@ -120,13 +120,28 @@ orchid --project ~/projects/myapp --add-task "Create product model" --type code_
 
 | Field | Values | Description |
 |-------|--------|-------------|
-| `type:` | `code_generate` `draft` `review` `summarize` `search` `plan` `critique` | What kind of work |
+| `type:` | `code_generate` `draft` `review` `summarize` `search` `plan` `critique` `rollup` | What kind of work |
 | `p1` / `p2` / `p3` | high / normal / low | Priority |
 | `agent:` | `developer` `researcher` `reviewer` `base` | Which agent to use |
 | `needs:T001,T002` | task IDs | Dependencies (won't run until those are done) |
-| `model:claude` | `claude` `local` | Force a specific model for this task |
+| `model:claude` | `claude` `local` `auto` | Force a specific model for this task |
 
 All fields except the task title are optional.
+
+### Routing simple vs. complex tasks
+
+By default, `code_generate` and `draft` tasks go to your local model (llama.cpp/Ollama), and `review`/`plan`/`critique` go to Claude. To send a specific task to a more capable model, add `model:claude`:
+
+```markdown
+- [ ] **T010** Add CRUD endpoints `type:code_generate` `p2`
+- [ ] **T011** Implement OAuth2 + JWT with refresh token rotation `type:code_generate` `p1` `model:claude`
+```
+
+Use `model:local` to force local even for task types that normally use Claude:
+
+```markdown
+- [ ] **T012** Quick offline review `type:review` `p2` `model:local`
+```
 
 ---
 
