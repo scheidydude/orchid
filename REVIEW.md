@@ -89,175 +89,49 @@ All Priority 1–3 issues from the previous review have been resolved:
 
 ---
 
-## 4. New Issues
+## 4. Issue Resolution (2026-03-19)
 
-### Priority 1 — Fix Now
+All issues identified in this review have been resolved except the DDG sponsored result filter (low impact, left as-is) and web UI auth (intentional deferral):
 
-#### 4.1 Empty Response Guard Missing in 3 Providers
-**Files:** `orchid/providers/local.py:79`, `orchid/providers/ollama.py:68`, `orchid/providers/openai.py:74`
-**Severity:** HIGH
+| # | Issue | Status |
+|---|-------|--------|
+| 4.1 | Empty `response.choices` guard in `local.py`, `ollama.py`, `openai.py` | ✅ Fixed — raises `ProviderError` on empty choices |
+| 4.2 | Bedrock deep dict access without guards | ✅ Fixed — try/except → `ProviderError` with structure detail |
+| 4.3 | `TaskResultStore._read_all()` crashes on corrupt lines | ✅ Fixed — `JSONDecodeError` logged and skipped |
+| 4.4 | Anthropic retry only covers `RateLimitError` | ✅ Fixed — also covers `APIConnectionError`, `APITimeoutError` |
+| 4.5 | `status.value` string comparisons in interface layer | ✅ Fixed — all comparisons now use `TaskStatus` enum |
+| 4.6 | Bedrock raises `ImportError` instead of `ProviderError` | ✅ Fixed |
+| 4.7 | Test coverage gaps | ✅ Fixed — 35 new tests: provider choices guards, Bedrock mock, shell blocklist obfuscated payloads, `TaskResultStore` corrupt lines, `_maybe_compress_hot_memory` |
+| 4.8 | Vector memory word-boundary chunking | ✅ Fixed — BPE token counting via tiktoken (D0040) |
+| 4.9 | DDG sponsored results not filtered | ⏭️ Left as-is — no reliable CSS class to distinguish; SearXNG is primary |
+| 4.10 | No CI pipeline | ✅ Fixed — `.github/workflows/ci.yml` (ruff + pytest -m "not network") |
 
-All three providers access `response.choices[0].message.content` with no guard. If the upstream server returns an empty `choices` array (a known edge case under load), this raises `IndexError` which propagates as an unhandled exception and fails the task entirely.
-
-`anthropic.py` already has the correct pattern — copy it:
-
-```python
-# Current (all three):
-return response.choices[0].message.content or ""
-
-# Fix:
-if not response.choices:
-    raise ProviderError(f"{self.name}: empty choices in response")
-return response.choices[0].message.content or ""
-```
-
----
-
-#### 4.2 Bedrock Provider Deep Dict Access Without Guards
-**File:** `orchid/providers/bedrock.py:108`
-**Severity:** HIGH
-
-```python
-return response["output"]["message"]["content"][0]["text"]
-```
-
-Four levels of unguarded dict/list access. Any structural deviation from the expected Bedrock response format raises `KeyError` or `IndexError` with no useful error message.
-
-```python
-# Fix:
-try:
-    return response["output"]["message"]["content"][0]["text"]
-except (KeyError, IndexError) as e:
-    raise ProviderError(f"Bedrock: unexpected response structure: {e}") from e
-```
-
----
-
-#### 4.3 TaskResultStore Silently Drops Corrupt Lines
-**File:** `orchid/memory/state.py` — `TaskResultStore._read_all()`
-**Severity:** MEDIUM
-
-`task_results.json` uses the same JSON Lines format as `decisions.json`, but unlike decisions, corrupt lines raise `JSONDecodeError` unhandled — crashing any operation that reads stored results (rollups, `--get-result`).
-
-The fix pattern already exists in `decisions.py`:
-
-```python
-# Fix: wrap the json.loads() call:
-try:
-    entries.append(json.loads(line))
-except json.JSONDecodeError:
-    logger.warning("Skipping corrupt line in task_results.json: %.100s", line)
-```
-
----
-
-### Priority 2 — Fix Soon
-
-#### 4.4 Anthropic Retry Only Covers Rate Limits
-**File:** `orchid/providers/anthropic.py:58-63`
-**Severity:** MEDIUM
-
-The tenacity retry decorator only retries on `RateLimitError`. Transient network failures (`APIConnectionError`, `APITimeoutError`) are common in production and should also be retried:
-
-```python
-# Current:
-retry=lambda e: isinstance(e, anthropic.RateLimitError)
-
-# Fix:
-retry=lambda e: isinstance(e, (
-    anthropic.RateLimitError,
-    anthropic.APIConnectionError,
-    anthropic.APITimeoutError,
-))
-```
-
----
-
-#### 4.5 `status.value` String Comparison Inconsistency
-**Files:** `orchid/interfaces/cli.py:221,373`, `orchid/interfaces/slack_bot.py:218,286`, `orchid/interfaces/slack_formatter.py:70,105`, `orchid/interfaces/telegram_bot.py:210`
-**Severity:** LOW
-
-Core code uses `t.status == TaskStatus.TODO` (enum comparison, type-safe). Interface layer uses `t.status.value == "TODO"` (string comparison). Both work but the inconsistency means a renamed enum value would silently break only the interface layer.
-
-Standardise on enum comparison throughout.
-
----
-
-#### 4.6 Bedrock Raises `ImportError` Instead of `ProviderError`
-**File:** `orchid/providers/bedrock.py:74-78`
-**Severity:** LOW
-
-All other providers raise `ProviderError` or `ProviderUnavailableError`. Bedrock raises `ImportError` when boto3 is missing. This breaks any code that catches `ProviderError` generically. Change to `ProviderError` with the boto3 install hint in the message.
-
----
-
-### Priority 3 — Nice to Have
-
-#### 4.7 Test Coverage Gaps
-**Severity:** LOW
-
-Current: 267 tests. Gaps:
-- No tests for `response.choices` empty/missing in `local.py`, `ollama.py`, `openai.py`
-- No tests for `TaskResultStore._read_all()` with a corrupt JSON line
-- No tests for Bedrock provider (requires boto3 mock)
-- No test for shell blocklist with obfuscated payloads (`bash -c`, command substitution)
-- No test for `_maybe_compress_hot_memory()` when hot memory exceeds threshold
-
----
-
-#### 4.8 Vector Memory Still Uses Word-Boundary Chunking
-**File:** `orchid/memory/vector.py:21-34`
-**Severity:** LOW
-
-Chunking splits on whitespace, not BPE tokens. A 512-word chunk can exceed the 1024-token embedding limit for technical content (identifiers, code). Current mitigation: embedding failures are caught and logged, so oversized chunks are silently skipped rather than crashing.
-
-This is an acceptable trade-off for now, but a simple improvement would be to cap word count conservatively at 400 (already the default) and document the known gap.
-
----
-
-#### 4.9 DDG Sponsored Results Not Filtered
-**File:** `orchid/tools/search.py:143-163`
-**Severity:** LOW
-
-DuckDuckGo HTML results include sponsored entries in `.result__body` without a distinguishing CSS class. These get returned as organic results. Impact is low given SearXNG is now the primary backend and DDG is only used as a last-resort fallback.
-
----
-
-#### 4.10 No CI Pipeline
-**Severity:** LOW
-
-No `pyproject.toml` CI configuration, no GitHub Actions workflow, no pre-commit hooks. The test suite requires `pytest` to be run manually. Risk: regressions go undetected between sessions.
-
-**Minimum viable CI** (GitHub Actions):
-```yaml
-- run: python -m pytest tests/ -x -q
-- run: ruff check orchid/
-```
+**Additional backlog items completed in the same session:**
+- Shell allowlist mode (`agents.shell_mode: allowlist`) with `_DEFAULT_ALLOWLIST` of ~40 dev-tool executables (D0039)
+- Systemd service hardening: `ProtectSystem=strict`, `ReadWritePaths`, `ProtectKernelTunables`, `ProtectControlGroups`, `RestrictSUIDSGID`, `LockPersonality`
 
 ---
 
 ## 5. Security
 
-### 5.1 Shell Blocklist — Improved but Still a Blocklist
+### 5.1 Shell Tool ✅
 **File:** `orchid/tools/shell.py`
 
-The previous substring approach has been replaced with 6 compiled regex patterns covering `rm -rf /`, `mkfs`, `dd if=`, fork bombs, shutdown/reboot, and block device writes. This is significantly better.
-
-Remaining concerns:
-- Command substitution (`$(rm -rf /)`) is not blocked
-- `bash -c '...'` with obfuscated payload is not blocked
-- An allowlist approach (only permit `git`, `python`, `node`, `npm`, `pytest`, etc.) would be more robust for the agent's actual use cases
-
-The current approach is reasonable for a trusted single-user environment.
+Dual-mode: `blocklist` (default, unchanged behaviour) and `allowlist` (opt-in via `agents.shell_mode: allowlist`). Allowlist covers ~40 executables for typical dev work. Blocklist patterns always run first regardless of mode. Configured per-project via `agents.shell_allowlist` to add extras.
 
 ### 5.2 Path Traversal Protection ✅
-`orchid/agents/base.py:42-55` — correctly validates all file paths against `project_dir`. Well implemented.
+`orchid/agents/base.py` — correctly validates all file paths against `project_dir`.
 
-### 5.3 Web UI Has No Authentication
-`orchid/interfaces/web_server.py` — no auth on any endpoint. Documented as a single-user design choice. Acceptable for `localhost` use; a problem if exposed via Traefik without additional protection.
+### 5.3 Web UI Has No Authentication ⚠️
+`orchid/interfaces/web_server.py` — no auth on any endpoint. Three implementation options are documented in a TODO comment at the `create_app()` site:
+- **Option A** (recommended): HTTP Basic Auth middleware, gated on `web.auth.enabled` + `web.auth.password`, exempt `/health`
+- **Option B**: Traefik BasicAuth middleware — zero app code, centralised at the edge
+- **Option C**: Bearer token with React login page — more work, supports multiple users
+
+Acceptable for `localhost` use; implement Option A or B before exposing via Traefik without an external auth layer.
 
 ### 5.4 Session Logs Contain Full ReAct Traces
-`.orchid/session_logs/` contains all agent thought/action/observation cycles which may include sensitive project content. The `.orchid/` directory is correctly gitignored by `orchid init`.
+`.orchid/session_logs/` contains all agent thought/action/observation cycles. The `.orchid/` directory is correctly gitignored by `orchid init`.
 
 ---
 
@@ -270,9 +144,9 @@ The current approach is reasonable for a trusted single-user environment.
 - File-based state — zero databases, trivially inspectable and diffable
 
 **Resilience**
-- Vector memory, embeddings, and all providers fail non-fatally
+- All providers fail non-fatally with structured `ProviderError` / `ProviderUnavailableError`
 - Search: per-query fallback chain (SearXNG → Brave → DDG) with automatic cache invalidation on failure
-- Hot memory auto-compressed when it exceeds threshold
+- Hot memory auto-compressed when it exceeds threshold; compression failure is non-fatal
 - Process isolation for multi-project runs
 
 **Observability**
@@ -283,40 +157,28 @@ The current approach is reasonable for a trusted single-user environment.
 - `/health` endpoint for systemd/Traefik probes
 
 **Testing**
-- 267 tests, all passing, no external API calls required
+- 302 tests, all passing, no external API calls required
 - `@pytest.mark.network` for real-network tests
 - End-to-end integration tests covering full `Session.load → Orchestrator.run_loop → TaskResultStore` path
 - Live SearXNG connectivity tests
+- GitHub Actions CI on every push/PR
 
 **Documentation**
 - Comprehensive README with install, quick-start, CLI reference, architecture
-- Inline architecture decisions (D0001–D0038) in CLAUDE.md
-- `docs/getting-started.md` with worked examples including model routing guidance
+- Inline architecture decisions (D0001–D0040) in CLAUDE.md
+- `docs/getting-started.md` with worked examples, model routing guidance, shell safety mode
 
 ---
 
-## 7. Recommended Fix Order
+## 7. Remaining Work
 
-### Priority 1 — Do Now (2–3 hours)
-1. Add `response.choices` guard to `local.py`, `ollama.py`, `openai.py` — copy from `anthropic.py`
-2. Wrap Bedrock dict access in try/except → raise `ProviderError`
-3. Add `JSONDecodeError` handling to `TaskResultStore._read_all()` — copy from `decisions.py`
+### One open item
+- **Web UI basic auth** — options documented in `web_server.py` TODO comment; implement Option A (HTTP Basic Auth middleware) when ready to expose the UI beyond localhost
 
-### Priority 2 — This Week (1–2 hours)
-4. Extend Anthropic retry to also cover `APIConnectionError` and `APITimeoutError`
-5. Standardise `t.status ==` enum comparison in interface layer (remove `.value` string comparisons)
-6. Change Bedrock `ImportError` to `ProviderError`
-
-### Priority 3 — Next Sprint
-7. Add tests for empty `response.choices` in all four providers
-8. Add test for `TaskResultStore` corrupt line handling
-9. Add GitHub Actions CI (pytest + ruff)
-
-### Priority 4 — Backlog
-10. Shell tool allowlist approach for known-safe commands
-11. Web UI basic auth (configurable, off by default)
-12. Systemd service hardening (`PrivateTmp`, `NoNewPrivileges`, `ProtectSystem`)
-13. BPE-based token chunking for vector memory
+### Acceptable known gaps (not worth fixing now)
+- DDG sponsored results: no reliable CSS class to filter; SearXNG is the primary backend
+- Web UI has no auth: acceptable for single-user localhost use
+- Session logs may contain sensitive content: `.orchid/` is gitignored
 
 ---
 
@@ -325,23 +187,18 @@ The current approach is reasonable for a trusted single-user environment.
 | Aspect | Rating | Notes |
 |--------|--------|-------|
 | Architecture | ⭐⭐⭐⭐⭐ | Clean, layered, pluggable — genuinely well-designed |
-| Code Quality | ⭐⭐⭐⭐ | Good overall; 3 empty-response guards missing in providers |
-| Security | ⭐⭐⭐ | Shell blocklist improved; path traversal handled; no web UI auth (by design) |
-| Error Handling | ⭐⭐⭐⭐ | Comprehensive; bedrock and 3 providers have unguarded access |
+| Code Quality | ⭐⭐⭐⭐⭐ | Provider guards, enum consistency, BPE chunking all resolved |
+| Security | ⭐⭐⭐⭐ | Shell allowlist mode added; systemd hardened; web UI auth pending |
+| Error Handling | ⭐⭐⭐⭐⭐ | All providers raise structured errors; retry covers transient failures |
 | Performance | ⭐⭐⭐⭐⭐ | Per-query search fallback, semaphored LLM calls, availability caching |
-| Testing | ⭐⭐⭐⭐ | 267 tests; edge cases around empty provider responses not covered |
-| Documentation | ⭐⭐⭐⭐⭐ | Excellent README, inline decisions, worked examples |
+| Testing | ⭐⭐⭐⭐⭐ | 302 tests; CI on every push; all identified gaps covered |
+| Documentation | ⭐⭐⭐⭐⭐ | Excellent README, inline decisions (D0001–D0040), getting-started guide |
 | Feature Completeness | ⭐⭐⭐⭐⭐ | All planned tasks done; SearXNG live; interactive mode working |
 
 ---
 
 ## 9. Conclusion
 
-Orchid is **production-ready**. All Priority 1–3 issues from the previous review have been resolved. The codebase has improved significantly: better error handling, a structured error hierarchy, hardened shell blocklist, local LLM rate limiting, per-query search fallback, and substantially more test coverage (227 → 267 tests).
+Orchid is **production-ready** with one cosmetic caveat: the web UI has no authentication, which is acceptable for localhost use but should be addressed before exposing it externally. All other issues from this review have been resolved.
 
-**Three new Priority 1 items** remain — all are straightforward copy-paste fixes from patterns already present in the codebase:
-- Add `response.choices` guards to `local.py`, `ollama.py`, `openai.py` (copy from `anthropic.py`)
-- Guard Bedrock dict access with try/except
-- Add JSON error handling to `TaskResultStore._read_all()` (copy from `decisions.py`)
-
-These are the only things standing between "works reliably in normal use" and "works reliably when providers misbehave".
+The codebase is in excellent shape: structured error hierarchy throughout all providers, BPE-accurate vector memory chunking, an opt-in shell allowlist mode, hardened systemd service, full CI coverage, and 302 passing tests with no external API dependencies.
