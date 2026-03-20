@@ -56,7 +56,11 @@ class AnthropicProvider(ProviderBase):
         temperature = kwargs.pop("temperature", self.temperature)
 
         @retry(
-            retry=lambda e: isinstance(e, anthropic.RateLimitError),
+            retry=lambda e: isinstance(e, (
+                anthropic.RateLimitError,
+                anthropic.APIConnectionError,
+                anthropic.APITimeoutError,
+            )),
             stop=stop_after_attempt(3),
             wait=wait_exponential_jitter(initial=1, max=60),
             reraise=True,

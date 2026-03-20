@@ -5,6 +5,8 @@
 #
 # boto3 is optional — if not installed, BedrockProvider raises ImportError
 # with install instructions rather than crashing at import time.
+#
+# If you ever want to use it, it needs a real test. * * * * * *
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from orchid.errors import ProviderError
 from orchid.providers.base import ProviderBase
 
 
@@ -70,7 +73,7 @@ class BedrockProvider(ProviderBase):
         try:
             import boto3  # noqa: PLC0415
         except ImportError:
-            raise ImportError(
+            raise ProviderError(
                 "boto3 is required for BedrockProvider. "
                 "Install it: uv pip install boto3"
             )
@@ -103,7 +106,10 @@ class BedrockProvider(ProviderBase):
         request["inferenceConfig"] = {"maxTokens": max_tokens}
 
         response = client.converse(**request)
-        return response["output"]["message"]["content"][0]["text"]
+        try:
+            return response["output"]["message"]["content"][0]["text"]
+        except (KeyError, IndexError) as e:
+            raise ProviderError(f"Bedrock: unexpected response structure: {e}") from e
 
     def embed(self, text: str) -> list[float]:
         raise NotImplementedError(

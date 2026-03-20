@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from orchid.errors import ProviderError
 from orchid.providers.base import ProviderBase
 
 
@@ -71,6 +72,8 @@ class OpenAIProvider(ProviderBase):
             temperature=kwargs.pop("temperature", self.temperature),
             **kwargs,
         )
+        if not response.choices:
+            raise ProviderError(f"{self.name}: empty choices in response")
         return response.choices[0].message.content or ""
 
     def embed(self, text: str) -> list[float]:
