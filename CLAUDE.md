@@ -64,6 +64,8 @@ Rollup: `- [ ] **T099** Title \`type:rollup\` \`p1\` \`rollup:T090,T091\` \`outp
 - **D0033** Auto-discovery via watchdog inotify: scans watch_dirs (depth 2) for .orchid.yaml, debounced 2s. Excludes .venv/node_modules/.git/__pycache__.
 - **D0034** `orchid serve` — unified persistent entry point: web UI + auto-discovery + optional agent loops. systemd: scripts/orchid-serve.service.
 - **D0035** AgentManager: per-project agent loop threads with APScheduler for cron-based auto runs. Per-project persistent config in .orchid.yaml `persistent:` section.
+- **D0039** Shell tool dual-mode: `agents.shell_mode: blocklist` (default) keeps existing behaviour; `allowlist` mode restricts bash to ~40 known-safe executables (git, python, node, uv, pytest, ruff, make, etc.) plus project additions via `agents.shell_allowlist`. Blocklist patterns always run first regardless of mode.
+- **D0040** Vector memory chunking uses tiktoken `cl100k_base` BPE token counting (transitive dep via chromadb) to bound chunk size precisely; falls back to `len//3` char estimate if tiktoken is absent. `chunk_size` config key is now a token limit, not a word count.
 - **D0036** Machine-level config at ~/.config/orchid/.env (XDG). load_dotenv() order: cwd → ~/.config/orchid/.env → ~/LocalAI/orchid/.env (legacy).
 - **D0037** Rollup task: `type:rollup` `rollup:T001,T002` `output:FILE.md` — gathers TaskResultStore results, synthesises via Claude, writes output. Always uses Claude.
 - **D0038** TaskResultStore: JSON Lines at `.orchid/task_results.json`. Appended on task completion. CLI: `--get-result T001`.
@@ -83,7 +85,7 @@ One action per ReAct step. Actions: read_file / list_dir / bash / write_file / c
 | T034 | Done | `orchid task done` no longer requires TITLE when --id provided |
 | T047 | Done | Dead stub `orchid/cli.py` deleted; real CLI at `orchid/interfaces/cli.py` unaffected |
 | T009–T032 | Done | chunking, log parser, dep tests, Slack formatter, Web UI, CLI --help |
-| T035 | Done | AnthropicProvider: exponential backoff+jitter on 429, max 3 retries, up to 60s |
+| T035 | Done | AnthropicProvider: exponential backoff+jitter on 429/APIConnectionError/APITimeoutError, max 3 retries, up to 60s |
 | T036 | Done | discovery.py: skip inotify for non-existent dirs; exclude .venv/node_modules/.git |
 | T037 | Done | scripts/deploy.sh: builds React, reinstalls via uv tool, restarts orchid-serve |
 | T038 | Done | POST /api/projects/{id}/run passes absolute filesystem path to BackgroundRunner |
@@ -97,11 +99,11 @@ One action per ReAct step. Actions: read_file / list_dir / bash / write_file / c
 | T046 | Done | Rollup task type: TaskResultStore, orchestrator synthesis, --get-result CLI; 25 tests |
 | T048 | Done | 253 tests passing, 0 failed, 2.18s |
 | T049 | Done | Rollup written to HEALTH-REPORT.md |
+| T050 | Done | Provider empty-choices guards (local/ollama/openai/bedrock); Bedrock ProviderError; Anthropic retry extended |
+| T051 | Done | Shell allowlist mode (D0039); systemd ProtectSystem=strict hardening; BPE chunking (D0040) |
+| T052 | Done | GitHub Actions CI (.github/workflows/ci.yml); 302 tests passing |
 
-**Tests: 253 passing**
-
-## Not Built
-- SearXNG server setup (DDG fallback active)
+**Tests: 302 passing**
 
 ## Install
 ```bash

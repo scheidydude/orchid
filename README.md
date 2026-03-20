@@ -267,7 +267,7 @@ memory/
 tools/
   models.py          unified call() for Claude API + llama.cpp
   filesystem.py      read_file, write_file, list_dir, append_file
-  shell.py           bash execution with blocklist + timeout
+  shell.py           bash execution with blocklist + optional allowlist + timeout
 
 interfaces/
   cli.py             Typer CLI entry point
@@ -279,7 +279,7 @@ interfaces/
 
 providers/
   registry.py        5-layer provider resolution chain
-  anthropic.py       Claude API (with exponential backoff on 429)
+  anthropic.py       Claude API (exponential backoff on 429, connection errors, timeouts)
   local.py           llama.cpp OpenAI-compat endpoint
   ollama.py          Ollama
   openai.py          OpenAI / OpenRouter
@@ -298,9 +298,11 @@ Override per-project with `model_preference: claude` in `.orchid.yaml`.
 ## Development
 
 ```bash
-pytest             # 253 tests, no API calls required
+pytest -m "not network"   # 302 tests, no API calls required
 ruff check orchid/
 ```
+
+CI runs automatically on push/PR via GitHub Actions (`.github/workflows/ci.yml`).
 
 ## Languages and Formats
 The project uses these languages and formats:

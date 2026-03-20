@@ -16,15 +16,15 @@ Orchid is an AI agent orchestration tool. You install it once and point it at an
 ## 1. Install Orchid
 
 ```bash
-git clone git@github.com:dave/orchid.git ~/orchid
-cd ~/orchid
-uv venv && source .venv/bin/activate
-uv pip install -e .
+git clone git@github.com:scheidydude/orchid.git ~/LocalAI/orchid
+cd ~/LocalAI/orchid
+uv tool install .
 
-cp .env.example .env
+# Config lives at ~/.config/orchid/.env (XDG standard, chmod 600)
+bash scripts/setup-config.sh
 ```
 
-Edit `.env` and set your API key:
+Edit `~/.config/orchid/.env` and set your API key:
 
 ```
 ANTHROPIC_API_KEY=sk-ant-...
@@ -287,6 +287,23 @@ orchid --check-providers
 5. orchid --project <path> --mode auto    let it run
 6. Review output, mark done, add more tasks, repeat
 ```
+
+---
+
+## 11. Shell Safety Mode
+
+By default Orchid's `bash` tool blocks known-dangerous commands (`rm -rf /`, `mkfs`, `dd if=`, fork bombs, etc.) while allowing everything else. For stricter control you can switch to **allowlist mode**, which only permits a curated set of executables:
+
+```yaml
+# .orchid.yaml
+agents:
+  shell_mode: allowlist          # blocklist (default) | allowlist
+  shell_allowlist:               # add project-specific extras
+    - make
+    - docker
+```
+
+Built-in allowlist covers the tools agents typically need: `git`, `python`, `python3`, `uv`, `pytest`, `ruff`, `node`, `npm`, `npx`, `cargo`, `make`, `cmake`, file inspection (`cat`, `ls`, `find`, `grep`, `diff`), archive tools, and more. Blocklist patterns always apply regardless of mode.
 
 ---
 
