@@ -218,7 +218,8 @@ def _cmd_auto(
 ) -> None:
     """Autonomous mode — run all pending tasks."""
     session = _make_session(project)
-    pending = [t for t in session.tasks if t.status.value == "TODO"]
+    from orchid.memory.state import TaskStatus
+    pending = [t for t in session.tasks if t.status == TaskStatus.TODO]
 
     model_note = ""
     if offline:
@@ -284,6 +285,20 @@ def _cmd_interactive(project: str, model: str = "claude") -> None:
 
     session.close(summary="Interactive session.")
     console.print("[dim]Session saved. Goodbye.[/dim]")
+
+    # TODO
+    # One real limitation worth knowing: there's no conversation history between messages. 
+    # Each agent.run(user_input) is a fresh ReAct call. The agent has your project context 
+    # (CLAUDE.md, hot memory) but not what you asked 2 turns ago. So:
+    #
+    # - "What does T001 do?" → works fine                                                     
+    # - "And what about T002?" → the agent has no memory of the previous question
+    #
+    # If you want to add conversation continuity, the fix would be accumulating a messages:
+    # list[Message] across the loop and passing it into each agent.run() call. 
+    # But that's a real feature addition — the current implementation is functional 
+    # for standalone questions about your project. 
+    # Try it as-is first and see if the stateless behaviour is actually a problem in practice.
 
 
 def _count_last_session_delegations(project: str) -> int:
@@ -356,7 +371,8 @@ def _cmd_status(project: str) -> None:
 
     failures = _load_last_failures(proj_path)
 
-    completed_ids = {t.id for t in session.tasks if t.status.value == "DONE"}
+    from orchid.memory.state import TaskStatus
+    completed_ids = {t.id for t in session.tasks if t.status == TaskStatus.DONE}
     for t in session.tasks:
         color = status_color.get(t.status.value, "white")
         deps_str = ""

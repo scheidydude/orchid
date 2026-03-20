@@ -538,10 +538,11 @@ def create_app(
         for pid, path in items:
             try:
                 s = _load_session(path)
-                todo = sum(1 for t in s.tasks if t.status.value == "TODO")
-                done = sum(1 for t in s.tasks if t.status.value == "DONE")
-                inprog = sum(1 for t in s.tasks if t.status.value == "IN_PROGRESS")
-                blocked = sum(1 for t in s.tasks if t.status.value == "BLOCKED")
+                from orchid.memory.state import TaskStatus
+                todo = sum(1 for t in s.tasks if t.status == TaskStatus.TODO)
+                done = sum(1 for t in s.tasks if t.status == TaskStatus.DONE)
+                inprog = sum(1 for t in s.tasks if t.status == TaskStatus.IN_PROGRESS)
+                blocked = sum(1 for t in s.tasks if t.status == TaskStatus.BLOCKED)
                 runner = _runners.get(pid)
                 persistent = _read_persistent_config(path)
                 result.append({

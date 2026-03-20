@@ -16,8 +16,16 @@ Restart=on-failure
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
+
+# Hardening
 PrivateTmp=true
 NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/home/dave
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
 
 [Install]
 WantedBy=multi-user.target

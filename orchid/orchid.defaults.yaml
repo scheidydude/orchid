@@ -81,6 +81,8 @@ agents:
   max_react_iterations: 25
   tool_timeout_seconds: 30
   bash_timeout_seconds: 60
+  shell_mode: blocklist      # blocklist | allowlist
+  shell_allowlist: []        # extra executables to permit in allowlist mode (merged with built-in defaults)
 
 # projects_dir is no longer used — projects are standalone external repos
 

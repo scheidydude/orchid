@@ -18,19 +18,59 @@ TYPE_RESEARCH = "research"
 TYPE_NOTE = "note"
 
 
+_tiktoken_enc = None
+
+
+def _count_tokens(text: str) -> int:
+    """Count BPE tokens using tiktoken (cl100k_base) if available, else estimate.
+
+    tiktoken is a transitive dependency of chromadb and is usually present.
+    The cl100k_base encoding is a reasonable approximation for all models in use.
+    Fallback: 1 token ≈ len(text) // 3 (conservative for code-heavy content).
+    """
+    global _tiktoken_enc  # noqa: PLW0603
+    try:
+        import tiktoken  # noqa: PLC0415
+        if _tiktoken_enc is None:
+            _tiktoken_enc = tiktoken.get_encoding("cl100k_base")
+        return len(_tiktoken_enc.encode(text))
+    except ImportError:
+        return max(1, len(text) // 3)
+
+
 def _chunk_text(text: str, chunk_size: int = 512, overlap: int = 64) -> list[str]:
-    """Sliding-window token-approximate chunker (splits on whitespace tokens)."""
-    tokens = text.split()
-    if not tokens:
+    """Sliding-window BPE-token-aware chunker.
+
+    chunk_size is a token limit.  Words are accumulated until adding the next
+    word would exceed chunk_size tokens, then a new chunk begins with the last
+    `overlap` words carried over.  This avoids the word-count approximation
+    that can silently exceed embedding model token limits for code-heavy content.
+    """
+    words = text.split()
+    if not words:
         return []
+
     chunks: list[str] = []
     start = 0
-    while start < len(tokens):
-        end = min(start + chunk_size, len(tokens))
-        chunks.append(" ".join(tokens[start:end]))
-        if end == len(tokens):
+
+    while start < len(words):
+        end = start + 1
+        while end < len(words):
+            candidate = " ".join(words[start : end + 1])
+            if _count_tokens(candidate) > chunk_size:
+                break
+            end += 1
+
+        chunk = " ".join(words[start:end])
+        chunks.append(chunk)
+
+        if end >= len(words):
             break
-        start += chunk_size - overlap
+
+        # Advance, keeping overlap words from the end of this chunk
+        advance = max(1, (end - start) - overlap)
+        start += advance
+
     return chunks
 
 

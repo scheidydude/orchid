@@ -215,10 +215,11 @@ class SlackBot:
             try:
                 s = Session(project_dir=proj_path)
                 s.load()
-                todo = sum(1 for t in s.tasks if t.status.value == "TODO")
-                done = sum(1 for t in s.tasks if t.status.value == "DONE")
-                inprog = sum(1 for t in s.tasks if t.status.value == "IN_PROGRESS")
-                blocked = sum(1 for t in s.tasks if t.status.value == "BLOCKED")
+                from orchid.memory.state import TaskStatus
+                todo = sum(1 for t in s.tasks if t.status == TaskStatus.TODO)
+                done = sum(1 for t in s.tasks if t.status == TaskStatus.DONE)
+                inprog = sum(1 for t in s.tasks if t.status == TaskStatus.IN_PROGRESS)
+                blocked = sum(1 for t in s.tasks if t.status == TaskStatus.BLOCKED)
                 parts = []
                 if inprog:
                     parts.append(f"{inprog} running")
@@ -283,7 +284,8 @@ class SlackBot:
             return
 
         session = self._make_session()
-        pending = [t for t in session.tasks if t.status.value == "TODO"]
+        from orchid.memory.state import TaskStatus
+        pending = [t for t in session.tasks if t.status == TaskStatus.TODO]
         if not pending:
             ack("No pending tasks.")
             return

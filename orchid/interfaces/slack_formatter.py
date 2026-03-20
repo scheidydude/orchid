@@ -67,7 +67,8 @@ def format_status(session: Any) -> list[dict[str, Any]]:
         blocks.append(_section("No tasks found."))
         return blocks
 
-    completed_ids = {t.id for t in session.tasks if t.status.value == "DONE"}
+    from orchid.memory.state import TaskStatus
+    completed_ids = {t.id for t in session.tasks if t.status == TaskStatus.DONE}
     counts: dict[str, int] = {}
     lines: list[str] = []
 
@@ -102,7 +103,8 @@ def format_status_text(session: Any) -> str:
         lines.append(f"_{session.project_description}_")
     lines.append("")
 
-    completed_ids = {t.id for t in session.tasks if t.status.value == "DONE"}
+    from orchid.memory.state import TaskStatus
+    completed_ids = {t.id for t in session.tasks if t.status == TaskStatus.DONE}
     for t in session.tasks:
         emoji = _STATUS_EMOJI.get(t.status.value, "❓")
         ttype = _TYPE_ABBREV.get(t.type, t.type[:4])
