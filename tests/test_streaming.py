@@ -116,6 +116,44 @@ def test_tail_reads_live_log(tmp_path):
         assert f"Thinking step {i}" in content
 
 
+def test_maybe_compress_hot_memory_above_threshold(tmp_path):
+    """_maybe_compress_hot_memory() should call the LLM and replace hot_memory when over threshold."""
+    session = _make_session(tmp_path)
+    session.hot_memory = "word " * 1500  # ~7500 chars, exceeds 6000-char threshold
+
+    compressed = "# Compressed CLAUDE.md\n\nEssential facts only."
+    with patch("orchid.tools.models.call", return_value=compressed):
+        session._maybe_compress_hot_memory()
+
+    assert "<!-- compressed" in session.hot_memory
+    assert compressed in session.hot_memory
+
+
+def test_maybe_compress_hot_memory_below_threshold(tmp_path):
+    """_maybe_compress_hot_memory() should be a no-op when under the threshold."""
+    session = _make_session(tmp_path)
+    session.hot_memory = "short content"
+
+    with patch("orchid.tools.models.call") as mock_call:
+        session._maybe_compress_hot_memory()
+
+    mock_call.assert_not_called()
+    assert session.hot_memory == "short content"
+
+
+def test_maybe_compress_hot_memory_survives_llm_failure(tmp_path):
+    """_maybe_compress_hot_memory() should not raise if the LLM call fails."""
+    session = _make_session(tmp_path)
+    original = "word " * 1500
+    session.hot_memory = original
+
+    with patch("orchid.tools.models.call", side_effect=RuntimeError("API down")):
+        session._maybe_compress_hot_memory()  # must not raise
+
+    # Hot memory should be unchanged on failure
+    assert session.hot_memory == original
+
+
 def test_stream_callback_called_in_agent(tmp_path):
     """BaseAgent calls stream_callback after each ReAct iteration."""
     from orchid.agents.base import BaseAgent

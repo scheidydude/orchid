@@ -150,7 +150,12 @@ class DuckDuckGoBackend(_Backend):
         soup = BeautifulSoup(resp.text, "html.parser")
         results: list[SearchResult] = []
 
-        for result_div in soup.select(".result__body")[:n]:
+        for result_div in soup.select(".result__body")[:n * 2]:
+            # Skip sponsored/ad results — their parent .result container carries
+            # a "result--ad" class that DDG does not put on organic results.
+            parent = result_div.parent
+            if parent and "result--ad" in parent.get("class", []):
+                continue
             title_el = result_div.select_one(".result__title a")
             snippet_el = result_div.select_one(".result__snippet")
             if not title_el:
@@ -169,6 +174,8 @@ class DuckDuckGoBackend(_Backend):
                 "snippet": snippet,
                 "source": "duckduckgo",
             })
+            if len(results) >= n:
+                break
 
         return results
 

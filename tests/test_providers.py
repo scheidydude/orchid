@@ -237,7 +237,136 @@ def test_all_status_returns_list():
     assert "fix" in off_entry
 
 
-# ── 8. models.call() backward compat ──────────────────────────────────────────
+# ── 8. Empty response.choices guards ─────────────────────────────────────────
+
+
+def _mock_openai_client(empty_choices: bool = True) -> MagicMock:
+    """Return a mock openai.OpenAI that yields a response with empty or single choice."""
+    mock_response = MagicMock()
+    mock_response.choices = [] if empty_choices else [MagicMock()]
+    if not empty_choices:
+        mock_response.choices[0].message.content = "hello"
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = mock_response
+    return mock_client
+
+
+def test_local_provider_raises_on_empty_choices():
+    """LocalProvider.complete() should raise ProviderError when choices is empty."""
+    from orchid.providers.local import LocalProvider
+    from orchid.errors import ProviderError
+    import openai as _openai_mod
+
+    p = LocalProvider()
+    with patch.object(_openai_mod, "OpenAI", return_value=_mock_openai_client()):
+        with pytest.raises(ProviderError, match="empty choices"):
+            p.complete([{"role": "user", "content": "hello"}])
+
+
+def test_ollama_provider_raises_on_empty_choices():
+    """OllamaProvider.complete() should raise ProviderError when choices is empty."""
+    from orchid.providers.ollama import OllamaProvider
+    from orchid.errors import ProviderError
+    import openai as _openai_mod
+
+    p = OllamaProvider()
+    with patch.object(_openai_mod, "OpenAI", return_value=_mock_openai_client()):
+        with pytest.raises(ProviderError, match="empty choices"):
+            p.complete([{"role": "user", "content": "hello"}])
+
+
+def test_openai_provider_raises_on_empty_choices():
+    """OpenAIProvider.complete() should raise ProviderError when choices is empty."""
+    from orchid.providers.openai import OpenAIProvider
+    from orchid.errors import ProviderError
+    import openai as _openai_mod
+
+    p = OpenAIProvider(api_key="test-key")
+    with patch.object(_openai_mod, "OpenAI", return_value=_mock_openai_client()):
+        with pytest.raises(ProviderError, match="empty choices"):
+            p.complete([{"role": "user", "content": "hello"}])
+
+
+# ── 9. Bedrock provider ───────────────────────────────────────────────────────
+
+
+def test_bedrock_available_with_credentials(monkeypatch):
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret")
+    from orchid.providers.bedrock import BedrockProvider
+    p = BedrockProvider()
+    p.reset_availability_cache()
+    assert p.is_available() is True
+
+
+def test_bedrock_unavailable_without_credentials(monkeypatch):
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+    from orchid.providers.bedrock import BedrockProvider
+    p = BedrockProvider()
+    p.reset_availability_cache()
+    assert p.is_available() is False
+    assert "AWS_ACCESS_KEY_ID" in p.fix_suggestion()
+
+
+def test_bedrock_complete_returns_text(monkeypatch):
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret")
+    from orchid.providers.bedrock import BedrockProvider
+    from orchid.errors import ProviderError
+
+    p = BedrockProvider()
+    fake_response = {
+        "output": {"message": {"content": [{"text": "Hello from Bedrock"}]}}
+    }
+    mock_client = MagicMock()
+    mock_client.converse.return_value = fake_response
+
+    mock_boto3 = MagicMock()
+    mock_boto3.client.return_value = mock_client
+
+    with patch.dict("sys.modules", {"boto3": mock_boto3}):
+        result = p.complete([{"role": "user", "content": "hi"}])
+
+    assert result == "Hello from Bedrock"
+
+
+def test_bedrock_raises_provider_error_on_bad_response(monkeypatch):
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret")
+    from orchid.providers.bedrock import BedrockProvider
+    from orchid.errors import ProviderError
+
+    p = BedrockProvider()
+    mock_client = MagicMock()
+    mock_client.converse.return_value = {}  # missing keys
+
+    mock_boto3 = MagicMock()
+    mock_boto3.client.return_value = mock_client
+
+    with patch.dict("sys.modules", {"boto3": mock_boto3}):
+        with pytest.raises(ProviderError, match="unexpected response structure"):
+            p.complete([{"role": "user", "content": "hi"}])
+
+
+def test_bedrock_raises_provider_error_when_boto3_missing():
+    """Missing boto3 should raise ProviderError, not ImportError."""
+    from orchid.providers.bedrock import BedrockProvider
+    from orchid.errors import ProviderError
+    import sys
+
+    p = BedrockProvider()
+    # Temporarily hide boto3 from sys.modules
+    original = sys.modules.pop("boto3", None)
+    try:
+        with pytest.raises(ProviderError, match="boto3"):
+            p.complete([{"role": "user", "content": "hi"}])
+    finally:
+        if original is not None:
+            sys.modules["boto3"] = original
+
+
+# ── 10. models.call() backward compat ─────────────────────────────────────────
 
 
 def test_models_call_routes_to_registry():

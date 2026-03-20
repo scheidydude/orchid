@@ -42,3 +42,19 @@ def test_bash_exit_code():
 def test_bash_blocked():
     with pytest.raises(ToolError, match="Blocked"):
         bash("rm -rf /")
+
+
+@pytest.mark.parametrize("cmd", [
+    "bash -c 'rm -rf /'",          # rm -rf / inside bash -c
+    "$(rm -rf /tmp/../)",           # command substitution wrapping rm -rf /
+    ":(){:|:&};:",                  # fork bomb
+    "echo test > /dev/sda",        # block device write
+    "dd if=/dev/urandom of=/dev/sdb",  # raw disk write
+    "mkfs.ext4 /dev/sda1",         # filesystem format (mkfs word boundary)
+    "sudo shutdown now",            # shutdown
+    "sudo reboot",                  # reboot
+])
+def test_bash_blocked_obfuscated(cmd):
+    """Blocklist patterns should catch destructive commands in various forms."""
+    with pytest.raises(ToolError, match="Blocked"):
+        bash(cmd)

@@ -18,8 +18,14 @@ TYPE_RESEARCH = "research"
 TYPE_NOTE = "note"
 
 
-def _chunk_text(text: str, chunk_size: int = 512, overlap: int = 64) -> list[str]:
-    """Sliding-window token-approximate chunker (splits on whitespace tokens)."""
+def _chunk_text(text: str, chunk_size: int = 400, overlap: int = 64) -> list[str]:
+    """Sliding-window token-approximate chunker (splits on whitespace tokens).
+
+    chunk_size is in words, not BPE tokens.  Technical text (identifiers, code)
+    can run ~1.3–1.5 tokens/word, so 400 words ≈ 520–600 tokens — safely under
+    the nomic-embed-text / all-MiniLM-L6-v2 limit of 1024 tokens.  Using a
+    higher word count risks silently skipped chunks for code-heavy content.
+    """
     tokens = text.split()
     if not tokens:
         return []

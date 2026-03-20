@@ -7,7 +7,7 @@ from pathlib import Path
 
 from orchid.memory.state import (
     Task, TaskStatus, load_tasks, save_tasks, next_task,
-    load_hot_memory, save_hot_memory,
+    load_hot_memory, save_hot_memory, TaskResultStore,
 )
 
 
@@ -51,6 +51,27 @@ def test_hot_memory_round_trip(tmp_path):
     save_hot_memory(content, tmp_path)
     loaded = load_hot_memory(tmp_path)
     assert loaded == content
+
+
+def test_task_result_store_skips_corrupt_lines(tmp_path):
+    """_read_all() should skip malformed JSON lines without crashing."""
+    store = TaskResultStore(tmp_path)
+    store._path.parent.mkdir(parents=True, exist_ok=True)
+
+    import json
+    good = json.dumps({"task_id": "T001", "title": "A", "type": "draft",
+                       "completed_at": "2026-01-01T00:00:00+00:00", "result": "ok"})
+    store._path.write_text(
+        good + "\n"
+        "THIS IS NOT JSON\n"
+        + good.replace("T001", "T002") + "\n",
+        encoding="utf-8",
+    )
+
+    results = store._read_all()
+    assert len(results) == 2
+    assert results[0]["task_id"] == "T001"
+    assert results[1]["task_id"] == "T002"
 
 
 def test_task_to_md_line():
