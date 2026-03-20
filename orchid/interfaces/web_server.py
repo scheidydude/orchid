@@ -459,6 +459,29 @@ def create_app(
         for runner in _runners.values():
             runner.stop()
 
+    # TODO(auth): Web UI has no authentication — acceptable for localhost use but
+    # a problem if exposed via Traefik without an external auth layer.
+    #
+    # Option A — HTTP Basic Auth middleware (no frontend changes needed):
+    #   - Add BasicAuthMiddleware to the app, gated on web.auth.enabled + web.auth.password
+    #   - Exempt /health (Traefik health probes must reach it unauthenticated)
+    #   - Browsers forward Basic Auth credentials on WebSocket upgrade to same origin
+    #   - Config: web.auth.enabled / web.auth.username / web.auth.password
+    #   - Env override: ORCHID_WEB_AUTH_PASSWORD
+    #
+    # Option B — Traefik BasicAuth middleware (zero app code):
+    #   - Add a BasicAuth middleware to the Traefik router config
+    #   - Keeps auth entirely at the edge; app stays auth-free
+    #
+    # Option C — Bearer token with React login page:
+    #   - /api/auth/token endpoint validates a shared secret, returns a signed JWT
+    #   - React app shows a login form; stores token in localStorage
+    #   - All API calls and WebSocket connections include Authorization: Bearer <token>
+    #   - More work but supports multiple users and proper logout
+    #
+    # For a single-user self-hosted install, Option A is the recommended path.
+    # Password should be accepted as plaintext in config/env (bcrypt hash optional).
+
     app = FastAPI(title="Orchid", lifespan=_lifespan)
     app.add_middleware(
         CORSMiddleware,
