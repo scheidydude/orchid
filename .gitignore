@@ -18,7 +18,8 @@ env/
 .env
 
 # Orchid session data (keep structure, ignore logs)
-.orchid/session_logs/
+.orchid/session_logs/*.log
+.orchid/session_logs/*.jsonl
 
 # Editor
 .vscode/
