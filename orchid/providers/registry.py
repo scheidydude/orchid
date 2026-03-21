@@ -33,11 +33,15 @@ def reset_registry() -> None:
 
 # Hardcoded agent-type → provider fallbacks (layer 5)
 _AGENT_DEFAULTS: dict[str, str] = {
-    "orchestrator": "claude",
-    "reviewer":     "claude",
-    "developer":    "local",
-    "researcher":   "local",
-    "base":         "local",
+    "orchestrator":    "claude",
+    "reviewer":        "claude",
+    "developer":       "local",
+    "researcher":      "local",
+    "base":            "local",
+    # V2 strategic agents
+    "discussion":      "claude",
+    "product_manager": "claude",
+    "project_manager": "claude",
 }
 
 # Hardcoded task-type → provider fallbacks (used when no agent-type config found)

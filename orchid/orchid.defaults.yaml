@@ -217,6 +217,10 @@ providers:
   # reviewer: claude
   # developer: local
   # researcher: local
+  # Strategic agent defaults (V2)
+  discussion: claude
+  product_manager: claude
+  project_manager: claude
 
   # Per-task-type overrides (uncomment to activate)
   task_types: {}
@@ -262,3 +266,18 @@ providers:
     #   type: bedrock
     #   model: "${BEDROCK_MODEL:-anthropic.claude-sonnet-4-6-v1:0}"
     #   region: "${AWS_REGION:-us-east-1}"
+
+# Gate system — controls human-in-the-loop approval for lifecycle transitions (V2)
+gates:
+  default: human                        # global fallback: require approval
+  discussing_to_requirements: human
+  requirements_to_planning: human
+  planning_to_ready: human
+  ready_to_executing: human
+  milestone_to_milestone: auto          # auto-advance between milestones
+
+# Lifecycle — project state machine settings (V2)
+lifecycle:
+  auto_git_init: true
+  notify_on_gate: true
+  warn_on_local_planning: true          # warn when using local model for PM agents

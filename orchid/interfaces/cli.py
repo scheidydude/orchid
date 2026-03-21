@@ -129,6 +129,26 @@ def main(
         None, "--get-result", metavar="TASK_ID",
         help="Print stored result for a task ID (e.g. T090). Useful for debugging rollup inputs.",
     ),
+    interactive: bool = typer.Option(
+        False, "--interactive", "-i",
+        help="Start interactive planning/discussion session (V2 lifecycle).",
+    ),
+    approve: bool = typer.Option(
+        False, "--approve",
+        help="Approve the current lifecycle gate to advance to the next phase.",
+    ),
+    auto_approve: bool = typer.Option(
+        False, "--auto",
+        help="With --approve: also set future gates to auto for this session.",
+    ),
+    phase: bool = typer.Option(
+        False, "--phase",
+        help="Show current lifecycle phase and what is needed to advance.",
+    ),
+    artifacts: bool = typer.Option(
+        False, "--artifacts",
+        help="List generated lifecycle artifacts with existence status.",
+    ),
     log_level: str = typer.Option("INFO", "--log-level", "-l"),
 ) -> None:
     if ctx.invoked_subcommand:
@@ -181,6 +201,27 @@ def main(
 
     if get_result is not None:
         _cmd_get_result(proj, get_result)
+        return
+
+    if phase:
+        _cmd_phase(proj)
+        return
+
+    if artifacts:
+        _cmd_artifacts(proj)
+        return
+
+    if approve:
+        _cmd_approve(proj, auto=auto_approve)
+        return
+
+    if interactive:
+        _cmd_interactive_planning(
+            proj,
+            provider_overrides={p.split("=", 1)[0].strip(): p.split("=", 1)[1].strip()
+                                 for p in (provider or []) if "=" in p},
+            offline=offline,
+        )
         return
 
     # Parse --provider agent=provider pairs
@@ -641,6 +682,311 @@ def _cmd_get_result(project: str, task_id: str) -> None:
     ))
 
 
+def _cmd_phase(project: str) -> None:
+    """Show current lifecycle phase and what's needed to advance."""
+    from orchid.lifecycle import ProjectLifecycle
+
+    proj_path = _resolve_project(project)
+    lc = ProjectLifecycle.load(proj_path)
+    phase = lc.current_phase()
+    next_phases = lc.valid_next_phases()
+    artifacts_ok = lc.artifacts_complete()
+
+    console.print(Panel(
+        f"[bold]Phase:[/bold] [cyan]{phase}[/cyan]\n"
+        f"[bold]Project:[/bold] {lc.state.project_name}\n"
+        f"[bold]Artifacts complete:[/bold] {'[green]yes[/green]' if artifacts_ok else '[yellow]no[/yellow]'}\n"
+        f"[bold]Can advance to:[/bold] {', '.join(next_phases) if next_phases else 'none'}",
+        title="[bold]Lifecycle Phase[/bold]",
+        border_style="cyan",
+    ))
+
+
+def _cmd_artifacts(project: str) -> None:
+    """List lifecycle artifacts with existence status."""
+    from orchid.lifecycle import ProjectLifecycle
+
+    proj_path = _resolve_project(project)
+    lc = ProjectLifecycle.load(proj_path)
+
+    artifact_names = [
+        "REQUIREMENTS.md", "ARCHITECTURE.md", "MILESTONES.md", "tasks.md",
+        ".orchid/discussion/conversation.jsonl", ".orchid/discussion/context.md",
+        ".orchid/project.state.json",
+    ]
+    table = Table(title="Lifecycle Artifacts", show_lines=True)
+    table.add_column("File", style="cyan")
+    table.add_column("Status")
+
+    for name in artifact_names:
+        exists = (proj_path / name).exists()
+        status = "[green]exists[/green]" if exists else "[dim]missing[/dim]"
+        table.add_row(name, status)
+
+    console.print(table)
+
+
+def _cmd_approve(project: str, auto: bool = False) -> None:
+    """Approve the current lifecycle gate."""
+    from orchid.lifecycle import ProjectLifecycle
+    from orchid.gates import GateSystem, GateStatus
+
+    proj_path = _resolve_project(project)
+    lc = ProjectLifecycle.load(proj_path)
+    gates = GateSystem(lc)
+
+    current = lc.current_phase()
+    next_phases = [p for p in lc.valid_next_phases() if p != "DISCUSSING"]
+    if not next_phases:
+        console.print(f"[yellow]No non-discussion transitions available from {current}.[/yellow]")
+        raise typer.Exit(1)
+
+    # Approve the first (primary) non-discussion next phase
+    to_phase = next_phases[0]
+    status = gates.check_gate(to_phase)
+    if status == GateStatus.BLOCKED:
+        console.print(
+            f"[red]Gate BLOCKED — prerequisites not met for {current} → {to_phase}.[/red]\n"
+            f"Run [bold]orchid --project {project} --artifacts[/bold] to see what's missing."
+        )
+        raise typer.Exit(1)
+
+    gates.approve(to_phase)
+
+    if auto:
+        # Mark remaining gates as auto for this project
+        remaining = lc.valid_next_phases()
+        for p in remaining:
+            key = lc._transition_key(to_phase, p)
+            lc.state.gates.setdefault(key, {})["type"] = "auto"
+        lc.save()
+
+    # Advance the lifecycle
+    try:
+        lc.advance(to_phase)
+        console.print(
+            f"[green]Approved.[/green] Phase advanced: [cyan]{current}[/cyan] → [bold cyan]{to_phase}[/bold cyan]"
+        )
+    except ValueError as exc:
+        console.print(f"[red]Error: {exc}[/red]")
+        raise typer.Exit(1)
+
+
+def _cmd_interactive_planning(
+    project: str,
+    provider_overrides: dict[str, str] | None = None,
+    offline: bool = False,
+) -> None:
+    """Interactive planning session — routes to appropriate agent based on phase."""
+    from orchid.lifecycle import ProjectLifecycle
+    from orchid.discussion import DiscussionHistory
+    from orchid.gates import GateSystem, GateStatus
+
+    proj_path = _resolve_project(project)
+    lc = ProjectLifecycle.load(proj_path)
+    phase = lc.current_phase()
+
+    po = provider_overrides or {}
+    disc_override = po.get("discussion")
+    pm_override = po.get("product_manager")
+    pmgr_override = po.get("project_manager")
+
+    if phase in ("NEW", "DISCUSSING"):
+        _run_discussion_loop(proj_path, lc, disc_override=disc_override, offline=offline)
+
+    elif phase == "REQUIREMENTS":
+        console.print(Panel(
+            f"[bold]Phase:[/bold] REQUIREMENTS\n"
+            f"Generating REQUIREMENTS.md and ARCHITECTURE.md...",
+            border_style="yellow",
+        ))
+        from orchid.agents.product_manager import ProductManagerAgent
+        agent = ProductManagerAgent(proj_path, cli_override=pm_override, offline=offline)
+        result = agent.run()
+        console.print(f"[green]Generated:[/green] {result.requirements_path.name}, {result.architecture_path.name}")
+        lc.advance("PLANNING")
+        gates = GateSystem(lc)
+        gate_status = gates.check_gate("READY")
+        if gate_status == GateStatus.WAITING:
+            gates.notify_gate_reached("READY")
+            console.print("[yellow]Gate: awaiting approval for PLANNING → READY.[/yellow]")
+            console.print(f"[dim]Run: orchid --project {project} --approve[/dim]")
+
+    elif phase == "PLANNING":
+        console.print(Panel(
+            "[bold]Phase:[/bold] PLANNING\nGenerating MILESTONES.md and tasks.md...",
+            border_style="yellow",
+        ))
+        from orchid.agents.project_manager import ProjectManagerAgent
+        agent = ProjectManagerAgent(proj_path, cli_override=pmgr_override, offline=offline)
+        result = agent.run()
+        console.print(
+            f"[green]Generated:[/green] {result.milestones_path.name}, {result.tasks_path.name}"
+            f" ({result.task_count} tasks)"
+        )
+        lc.advance("READY")
+        gates = GateSystem(lc)
+        gate_status = gates.check_gate("EXECUTING")
+        if gate_status == GateStatus.WAITING:
+            gates.notify_gate_reached("EXECUTING")
+            console.print("[yellow]Gate: awaiting approval for READY → EXECUTING.[/yellow]")
+            console.print(f"[dim]Run: orchid --project {project} --approve[/dim]")
+
+    elif phase == "READY":
+        _show_ready_summary(proj_path, project)
+
+    elif phase == "EXECUTING":
+        _cmd_status(project)
+        console.print("[dim]Phase EXECUTING. Use --mode auto to run tasks.[/dim]")
+
+    else:
+        console.print(f"[dim]Phase: {phase}. Nothing to do interactively.[/dim]")
+
+
+def _run_discussion_loop(
+    proj_path: Path,
+    lc: "ProjectLifecycle",
+    disc_override: str | None = None,
+    offline: bool = False,
+) -> None:
+    """Run the interactive discussion loop until user exits or agent signals readiness."""
+    from orchid.discussion import DiscussionHistory
+    from orchid.agents.discussion_agent import DiscussionAgent
+    from orchid.lifecycle import ProjectLifecycle
+
+    history = DiscussionHistory.load(proj_path)
+    agent = DiscussionAgent(proj_path, cli_override=disc_override, offline=offline)
+
+    if lc.current_phase() == "NEW":
+        lc.advance("DISCUSSING")
+
+    turns = history.turn_count()
+    console.print(Panel(
+        f"[bold cyan]Orchid — Requirements Discussion[/bold cyan]\n"
+        f"Project: [cyan]{lc.state.project_name}[/cyan]"
+        + (f"  •  {turns} turns so far" if turns else "  •  New conversation")
+        + "\n\nDescribe what you want to build. Type [bold]done[/bold] when ready, [bold]exit[/bold] to quit.",
+        border_style="cyan",
+    ))
+
+    # Show existing context if any
+    ctx = history.get_context_md()
+    from orchid.discussion import _DEFAULT_CONTEXT_MD
+    if ctx.strip() != _DEFAULT_CONTEXT_MD.strip():
+        console.print(Panel(ctx[:1500], title="[bold]Captured Context[/bold]", border_style="blue"))
+
+    while True:
+        try:
+            user_input = Prompt.ask("\n[bold blue]You[/bold blue]")
+        except (EOFError, KeyboardInterrupt):
+            break
+        stripped = user_input.strip().lower()
+        if stripped in {"exit", "quit", "q"}:
+            break
+        if stripped in {"done", "advance", "ready"}:
+            console.print("[dim]Signalling readiness...[/dim]")
+            _try_advance_from_discussion(proj_path, lc)
+            break
+
+        history.append("user", user_input)
+        lc.state.discussion_turns += 1
+        lc.save()
+
+        try:
+            response = agent.run(user_input, history)
+        except Exception as exc:
+            console.print(f"[red]Agent error: {exc}[/red]")
+            continue
+
+        history.append("agent", response.message)
+        if response.context_updates:
+            agent.update_context(history, response.context_updates)
+
+        console.print(Panel(
+            Markdown(response.message),
+            title="[bold green]Orchid[/bold green]",
+            border_style="green",
+        ))
+
+        if response.suggestions:
+            console.print("[dim]Suggestions:[/dim]")
+            for s in response.suggestions[:3]:
+                console.print(f"  [dim]• {s}[/dim]")
+
+        if response.ready_to_advance:
+            console.print(
+                "[bold green]Requirements look complete![/bold green] "
+                "Type [bold]done[/bold] to generate artifacts, or continue discussing."
+            )
+
+    console.print("[dim]Discussion saved.[/dim]")
+
+
+def _try_advance_from_discussion(proj_path: Path, lc: "ProjectLifecycle") -> None:
+    """After discussion, generate PM artifacts and advance lifecycle."""
+    from orchid.agents.product_manager import ProductManagerAgent
+    from orchid.agents.project_manager import ProjectManagerAgent
+    from orchid.gates import GateSystem, GateStatus
+
+    project = str(proj_path)
+
+    # Requirements → Planning
+    console.print("[dim]Generating REQUIREMENTS.md and ARCHITECTURE.md...[/dim]")
+    pm = ProductManagerAgent(proj_path)
+    result = pm.run()
+    console.print(f"[green]✓[/green] {result.requirements_path.name}")
+    console.print(f"[green]✓[/green] {result.architecture_path.name}")
+    lc.advance("REQUIREMENTS")
+
+    gates = GateSystem(lc)
+    gate_status = gates.check_gate("PLANNING")
+    if gate_status == GateStatus.WAITING:
+        console.print(
+            "[yellow]Gate: REQUIREMENTS → PLANNING requires approval.[/yellow]\n"
+            f"[dim]orchid --project {project} --approve[/dim]"
+        )
+        return
+
+    # Planning → Ready
+    console.print("[dim]Generating MILESTONES.md and tasks.md...[/dim]")
+    lc.advance("PLANNING")
+    pmgr = ProjectManagerAgent(proj_path)
+    result2 = pmgr.run()
+    console.print(f"[green]✓[/green] {result2.milestones_path.name}")
+    console.print(f"[green]✓[/green] {result2.tasks_path.name} ({result2.task_count} tasks)")
+    lc.advance("READY")
+
+    gates2 = GateSystem(lc)
+    gate_status2 = gates2.check_gate("EXECUTING")
+    if gate_status2 == GateStatus.WAITING:
+        gates2.notify_gate_reached("EXECUTING")
+        console.print(
+            "[bold green]Project is READY![/bold green] Awaiting approval to start execution.\n"
+            f"[dim]orchid --project {project} --approve[/dim]"
+        )
+    else:
+        console.print("[bold green]Project is READY![/bold green]")
+        console.print(f"[dim]orchid --project {project} --mode auto[/dim]")
+
+
+def _show_ready_summary(proj_path: Path, project: str) -> None:
+    """Show summary of generated artifacts when in READY phase."""
+    artifacts = ["REQUIREMENTS.md", "ARCHITECTURE.md", "MILESTONES.md", "tasks.md"]
+    lines = []
+    for name in artifacts:
+        p = proj_path / name
+        if p.exists():
+            lines.append(f"[green]✓[/green]  {name}")
+        else:
+            lines.append(f"[yellow]✗[/yellow]  {name} (missing)")
+    console.print(Panel(
+        "\n".join(lines) + "\n\n[dim]Approve to begin execution:[/dim]\n"
+        f"[bold]orchid --project {project} --approve[/bold]",
+        title="[bold green]Project READY[/bold green]",
+        border_style="green",
+    ))
+
+
 def _cmd_multi(projects: list[str], code_model: str | None = None) -> None:
     """Run multiple projects in parallel worker processes."""
     from orchid.multi import MultiOrchid
@@ -725,6 +1071,81 @@ def init(
     console.print(f"\n[bold green]Orchid initialised in {target}[/bold green]")
     console.print(f"  Edit [cyan]CLAUDE.md[/cyan] and [cyan].orchid.yaml[/cyan], then add tasks and run:")
     console.print(f"  [bold]orchid --project {path} --mode auto[/bold]")
+
+
+@app.command(name="new")
+def new_project(
+    description: str = typer.Argument(..., help="What you want to build (short description)"),
+    name: Optional[str] = typer.Option(None, "--name", "-n", help="Project name (defaults to slug of description)"),
+    dir_path: Optional[str] = typer.Option(None, "--dir", help="Base directory (overrides machine-profile)"),
+    project_type: Optional[str] = typer.Option(
+        None, "--type", "-t",
+        help="Project type for directory routing: ai | web | tool | game",
+    ),
+    no_interactive: bool = typer.Option(False, "--no-interactive", help="Skip discussion after creation"),
+    provider: Optional[List[str]] = typer.Option(
+        None, "--provider",
+        help="Per-agent provider override, e.g. discussion=ollama. Repeatable.",
+    ),
+    offline: bool = typer.Option(False, "--offline", help="Offline mode: use local provider"),
+    log_level: str = typer.Option("INFO", "--log-level", "-l"),
+) -> None:
+    """Create a new Orchid project and drop into interactive planning.
+
+    Examples:
+      orchid new "A simple bookmark manager"
+      orchid new "Recipe sharing app" --name recipes --type web
+      orchid new "CLI tool for git stats" --type tool --no-interactive
+    """
+    _setup_logging(log_level)
+    from orchid.project_creator import ProjectCreator
+    from orchid.machine_profile import MachineProfile
+
+    profile = MachineProfile.load()
+    creator = ProjectCreator(machine_profile=profile)
+
+    # Derive project name from description if not provided
+    project_name = name or _slugify(description)
+
+    base_dir = Path(dir_path).expanduser() if dir_path else None
+    suggested = (
+        (base_dir / project_name) if base_dir
+        else creator.confirm_path(project_name, project_type)
+    )
+
+    console.print(f"\nCreate [bold cyan]{suggested}[/bold cyan]? ", end="")
+    confirm = Prompt.ask("", choices=["y", "n"], default="y")
+    if confirm != "y":
+        console.print("[dim]Aborted.[/dim]")
+        raise typer.Exit()
+
+    project_dir = creator.create(
+        name=project_name,
+        description=description,
+        project_type=project_type,
+        base_dir=base_dir,
+    )
+
+    console.print(f"[green]Created project:[/green] {project_dir}")
+
+    if no_interactive:
+        console.print(f"[dim]Start discussion with: orchid --project {project_dir} --interactive[/dim]")
+        return
+
+    po: dict[str, str] = {}
+    for p in (provider or []):
+        if "=" in p:
+            k, v = p.split("=", 1)
+            po[k.strip()] = v.strip()
+
+    _cmd_interactive_planning(str(project_dir), provider_overrides=po, offline=offline)
+
+
+def _slugify(text: str) -> str:
+    """Convert a description to a filesystem-safe project name."""
+    import re as _re
+    slug = _re.sub(r"[^a-z0-9]+", "-", text.lower().strip()).strip("-")
+    return slug[:40] or "project"
 
 
 @app.command()

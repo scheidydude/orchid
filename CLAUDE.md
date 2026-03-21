@@ -24,6 +24,12 @@ orchid --multi --project <path-a> --project <path-b>
 orchid telegram|slack|web --project <path> [--port 7842]
 orchid serve [--watch-dir ~/LocalAI] [--project <path>] [--port 7842]
 orchid --check-providers
+# V2 lifecycle commands
+orchid new "<description>" [--name NAME] [--dir PATH] [--type ai|web|tool|game]
+orchid --project <path> --interactive [--provider discussion=ollama]
+orchid --project <path> --phase
+orchid --project <path> --artifacts
+orchid --project <path> --approve [--auto]
 ```
 tasks.md: `- [ ] **T003** Title \`type:code_generate\` \`p1\` \`needs:T001,T002\` \`model:claude\``
 Rollup: `- [ ] **T099** Title \`type:rollup\` \`p1\` \`rollup:T090,T091\` \`output:FILE.md\``
@@ -69,6 +75,10 @@ Rollup: `- [ ] **T099** Title \`type:rollup\` \`p1\` \`rollup:T090,T091\` \`outp
 - **D0036** Machine-level config at ~/.config/orchid/.env (XDG). load_dotenv() order: cwd → ~/.config/orchid/.env → ~/LocalAI/orchid/.env (legacy).
 - **D0037** Rollup task: `type:rollup` `rollup:T001,T002` `output:FILE.md` — gathers TaskResultStore results, synthesises via Claude, writes output. Always uses Claude.
 - **D0038** TaskResultStore: JSON Lines at `.orchid/task_results.json`. Appended on task completion. CLI: `--get-result T001`.
+- **D0041** V2 project lifecycle state machine (orchid/lifecycle.py): NEW → DISCUSSING → REQUIREMENTS → PLANNING → READY → EXECUTING → COMPLETE. Any phase can return to DISCUSSING. Persisted at `<project>/.orchid/project.state.json`.
+- **D0042** Strategic agent tier (orchid/agents/discussion_agent.py, product_manager.py, project_manager.py): DiscussionAgent elicits requirements conversationally; ProductManagerAgent generates REQUIREMENTS.md + ARCHITECTURE.md; ProjectManagerAgent generates MILESTONES.md + tasks.md. All use provider registry (default: claude).
+- **D0043** Gate system (orchid/gates.py): human|auto gates control phase transitions. Human gates require `orchid --approve`. Auto gates advance automatically. Config: gates.default + per-transition overrides in defaults.yaml and .orchid.yaml lifecycle.gates.
+- **D0044** Machine profile (orchid/machine_profile.py): developer preferences at ~/.config/orchid/machine-profile.yaml. Supplies project_root, preferred_stacks, infrastructure, defaults. Injected into strategic agent prompts. Created with defaults if absent.
 
 ## Tool Call Format (EXACT)
 ```
@@ -102,8 +112,9 @@ One action per ReAct step. Actions: read_file / list_dir / bash / write_file / c
 | T050 | Done | Provider empty-choices guards (local/ollama/openai/bedrock); Bedrock ProviderError; Anthropic retry extended |
 | T051 | Done | Shell allowlist mode (D0039); systemd ProtectSystem=strict hardening; BPE chunking (D0040) |
 | T052 | Done | GitHub Actions CI (.github/workflows/ci.yml); 302 tests passing |
+| T053 | Done | V2 Session 1: lifecycle.py, machine_profile.py, discussion.py, gates.py, project_creator.py, discussion_agent.py, product_manager.py, project_manager.py; orchid new / --interactive / --approve / --phase / --artifacts CLI; 377 tests passing |
 
-**Tests: 302 passing**
+**Tests: 377 passing**
 
 ## Install
 ```bash
