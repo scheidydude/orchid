@@ -1,6 +1,11 @@
 # Tasks
 
 
+## TODO
+
+- [ ] **T050** Fix Planning tab scroll: content is not scrollable, text gets cut off. Check overflow CSS on PlanningTab, DiscussionPanel and ArtifactPanel components — add overflow-y: auto and appropriate max-height or height: 100% to allow scrolling. `type:code_generate` `p1`
+- [ ] **T051** Fix Planning tab scroll: content not scrollable in DiscussionPanel, ArtifactPanel and ApprovalPanel — add overflow-y:auto and proper height constraints so all content is reachable `type:code_generate` `p1`
+
 ## DONE
 
 - [x] **T046** Check all Python files in orchid/ for syntax errors using py_compile `type:review` `p1`

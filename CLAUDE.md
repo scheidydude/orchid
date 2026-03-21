@@ -79,6 +79,9 @@ Rollup: `- [ ] **T099** Title \`type:rollup\` \`p1\` \`rollup:T090,T091\` \`outp
 - **D0042** Strategic agent tier (orchid/agents/discussion_agent.py, product_manager.py, project_manager.py): DiscussionAgent elicits requirements conversationally; ProductManagerAgent generates REQUIREMENTS.md + ARCHITECTURE.md; ProjectManagerAgent generates MILESTONES.md + tasks.md. All use provider registry (default: claude).
 - **D0043** Gate system (orchid/gates.py): human|auto gates control phase transitions. Human gates require `orchid --approve`. Auto gates advance automatically. Config: gates.default + per-transition overrides in defaults.yaml and .orchid.yaml lifecycle.gates.
 - **D0044** Machine profile (orchid/machine_profile.py): developer preferences at ~/.config/orchid/machine-profile.yaml. Supplies project_root, preferred_stacks, infrastructure, defaults. Injected into strategic agent prompts. Created with defaults if absent.
+- **D0045** Web UI Planning tab: 9 REST + 1 WS endpoints in web_server.py for lifecycle, discussion, advance, approve, artifacts, project creation, machine profile. React components: PlanningTab, PhaseIndicator, DiscussionPanel, ArtifactPanel, ApprovalPanel, NewProjectWizard. Settings tab with machine profile editor and provider status.
+- **D0046** Discussion streaming via WebSocket `/ws/{id}/discussion`: sends `{type:"thinking"}` → `{type:"token", data:full_response}` → `{type:"done", data:metadata}`. No true token streaming (providers use complete()). Main WS broadcasts `advance_status`/`advance_artifact`/`advance_done` during `/api/projects/{id}/advance`.
+- **D0047** NewProjectWizard: 4-step modal (Name+Description → Confirm Path → Options → Creating). Auto-slugifies name. Fetches suggested path from POST /api/projects with confirm_path:false before final creation with confirm_path:true.
 
 ## Tool Call Format (EXACT)
 ```
@@ -113,8 +116,9 @@ One action per ReAct step. Actions: read_file / list_dir / bash / write_file / c
 | T051 | Done | Shell allowlist mode (D0039); systemd ProtectSystem=strict hardening; BPE chunking (D0040) |
 | T052 | Done | GitHub Actions CI (.github/workflows/ci.yml); 302 tests passing |
 | T053 | Done | V2 Session 1: lifecycle.py, machine_profile.py, discussion.py, gates.py, project_creator.py, discussion_agent.py, product_manager.py, project_manager.py; orchid new / --interactive / --approve / --phase / --artifacts CLI; 377 tests passing |
+| T054 | Done | V2 Session 2: Planning tab API (9 endpoints + WS), React components (PlanningTab, PhaseIndicator, DiscussionPanel, ArtifactPanel, ApprovalPanel, NewProjectWizard), Settings tab, index.css planning styles; 396 tests passing |
 
-**Tests: 377 passing**
+**Tests: 396 passing**
 
 ## Install
 ```bash

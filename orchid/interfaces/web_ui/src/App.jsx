@@ -7,15 +7,20 @@ import DecisionLog from './components/DecisionLog.jsx'
 import SessionHistory from './components/SessionHistory.jsx'
 import RecallSearch from './components/RecallSearch.jsx'
 import HotMemory from './components/HotMemory.jsx'
+import PlanningTab from './components/planning/PlanningTab.jsx'
+import NewProjectWizard from './components/planning/NewProjectWizard.jsx'
+import Settings from './components/Settings.jsx'
 import { useProjects } from './hooks/useProjects.js'
 import { useAgentStream } from './hooks/useAgentStream.js'
 
-const TABS = ['Tasks', 'Stream', 'Decisions', 'Sessions', 'Recall', 'Memory']
+const TABS = ['Tasks', 'Planning', 'Stream', 'Decisions', 'Sessions', 'Recall', 'Memory', 'Settings']
 
 export default function App() {
   const { projects, loading: projectsLoading, refresh: refreshProjects, newProjectIds } = useProjects()
   const [activeProject, setActiveProject] = useState(null)
   const [activeTab, setActiveTab] = useState('Tasks')
+  const [showNewWizard, setShowNewWizard] = useState(false)
+  const [planningBadge, setPlanningBadge] = useState(false)
   const { entries, runStatus, clear } = useAgentStream(activeProject)
 
   // Auto-select first project
@@ -30,10 +35,19 @@ export default function App() {
   const handleProjectSelect = (id) => {
     setActiveProject(id)
     setActiveTab('Tasks')
+    setPlanningBadge(false)
   }
 
-  const handleRunChange = () => {
+  const handleRunChange = () => refreshProjects()
+
+  const handleProjectCreated = (projectId, projectPath) => {
+    setShowNewWizard(false)
     refreshProjects()
+    // Wait for project list to update, then switch to it
+    setTimeout(() => {
+      setActiveProject(projectId)
+      setActiveTab('Planning')
+    }, 500)
   }
 
   return (
@@ -63,8 +77,17 @@ export default function App() {
             )}
           </>
         )}
-        <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-dim)' }}>
-          {projects.length} project{projects.length !== 1 ? 's' : ''}
+        <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+            {projects.length} project{projects.length !== 1 ? 's' : ''}
+          </span>
+          <button
+            className="primary"
+            style={{ fontSize: 12, padding: '5px 12px' }}
+            onClick={() => setShowNewWizard(true)}
+          >
+            + New Project
+          </button>
         </span>
       </header>
 
@@ -85,11 +108,13 @@ export default function App() {
         <div className="main-content">
           {activeProject ? (
             <>
-              <RunControls
-                projectId={activeProject}
-                runStatus={runStatus}
-                onRunChange={handleRunChange}
-              />
+              {activeTab !== 'Planning' && activeTab !== 'Settings' && (
+                <RunControls
+                  projectId={activeProject}
+                  runStatus={runStatus}
+                  onRunChange={handleRunChange}
+                />
+              )}
               <div className="panel-tabs">
                 {TABS.map(tab => (
                   <button
@@ -103,12 +128,24 @@ export default function App() {
                         {entries.length}
                       </span>
                     )}
+                    {tab === 'Planning' && planningBadge && (
+                      <span style={{ marginLeft: 5, fontSize: 10, background: 'var(--warning)', color: '#000', borderRadius: 8, padding: '0 5px' }}>
+                        !
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>
               <div className="panel-body">
                 {activeTab === 'Tasks' && (
                   <TaskBoard projectId={activeProject} runStatus={runStatus} />
+                )}
+                {activeTab === 'Planning' && (
+                  <PlanningTab
+                    projectId={activeProject}
+                    runStatus={runStatus}
+                    onSwitchToTasks={() => setActiveTab('Tasks')}
+                  />
                 )}
                 {activeTab === 'Stream' && (
                   <AgentStream entries={entries} onClear={clear} />
@@ -125,15 +162,25 @@ export default function App() {
                 {activeTab === 'Memory' && (
                   <HotMemory projectId={activeProject} />
                 )}
+                {activeTab === 'Settings' && (
+                  <Settings />
+                )}
               </div>
             </>
           ) : (
             <div className="empty-state" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              {projectsLoading ? 'Loading projects…' : 'Select a project from the sidebar'}
+              {projectsLoading ? 'Loading projects…' : 'Select a project or create one with + New Project'}
             </div>
           )}
         </div>
       </div>
+
+      {showNewWizard && (
+        <NewProjectWizard
+          onCreated={handleProjectCreated}
+          onClose={() => setShowNewWizard(false)}
+        />
+      )}
     </>
   )
 }

@@ -316,6 +316,29 @@ if _FASTAPI_AVAILABLE:
     class SearchBody(BaseModel):
         query: str
 
+    # ── V2 lifecycle request models ────────────────────────────────────────────
+
+    class DiscussionBody(BaseModel):
+        message: str
+        provider_override: Optional[str] = None
+
+    class AdvanceBody(BaseModel):
+        confirm: bool = True
+        provider_override: Optional[str] = None
+
+    class ApproveBody(BaseModel):
+        auto_future: bool = False
+
+    class CreateProjectBody(BaseModel):
+        name: str
+        description: str = ""
+        project_type: Optional[str] = None
+        base_dir: Optional[str] = None
+        confirm_path: bool = True
+
+    class SaveArtifactBody(BaseModel):
+        content: str
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -788,6 +811,275 @@ def create_app(
         runner.inject(text)
         return {"injected": True}
 
+    # ── V2 lifecycle endpoints ────────────────────────────────────────────────
+
+    @app.get("/api/machine-profile")
+    async def get_machine_profile():
+        from orchid.machine_profile import MachineProfile
+        p = MachineProfile.load()
+        return {
+            "developer_name": p.developer_name,
+            "project_roots": p.project_roots,
+            "preferred_stacks": p.preferred_stacks,
+            "infrastructure": {
+                k: v for k, v in p.infrastructure.items()
+                if k not in ("local_llm", "embedding")
+            },
+            "defaults": p.defaults,
+        }
+
+    @app.put("/api/machine-profile")
+    async def update_machine_profile(body: dict):
+        from orchid.machine_profile import MachineProfile
+        p = MachineProfile.load()
+        if "developer_name" in body:
+            p.developer_name = body["developer_name"]
+        if "project_roots" in body:
+            p.project_roots.update(body["project_roots"])
+        if "infrastructure" in body:
+            p.infrastructure.update(body["infrastructure"])
+        if "defaults" in body:
+            p.defaults.update(body["defaults"])
+        p.save()
+        return {"saved": True}
+
+    @app.post("/api/projects", status_code=201)
+    async def create_project(body: CreateProjectBody):
+        from orchid.project_creator import ProjectCreator
+        from orchid.machine_profile import MachineProfile
+        profile = MachineProfile.load()
+        creator = ProjectCreator(machine_profile=profile)
+        base_dir = Path(body.base_dir).expanduser() if body.base_dir else None
+        suggested = (
+            (base_dir / body.name).resolve() if base_dir
+            else creator.confirm_path(body.name, body.project_type).resolve()
+        )
+        if not body.confirm_path:
+            return {"suggested_path": str(suggested)}
+
+        loop = asyncio.get_running_loop()
+        try:
+            project_dir = await loop.run_in_executor(None, lambda: creator.create(
+                name=body.name,
+                description=body.description,
+                project_type=body.project_type,
+                base_dir=base_dir,
+            ))
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+        pid = _register_project(str(project_dir))
+        if pid is None:
+            with _state_lock:
+                for epid, epath in _projects.items():
+                    if epath == str(project_dir):
+                        pid = epid
+                        break
+        if not pid:
+            raise HTTPException(status_code=500, detail="Created but failed to register project")
+        loop_ref = _main_loop
+        if loop_ref and not loop_ref.is_closed():
+            _broadcast_to_all(
+                {"type": "project_added", "data": {"project_id": pid, "path": str(project_dir)}},
+                loop_ref,
+            )
+        return {"project_id": pid, "path": str(project_dir)}
+
+    @app.get("/api/projects/{project_id}/lifecycle")
+    async def get_lifecycle(project_id: str):
+        path = _get_project(project_id)
+        from orchid.lifecycle import ProjectLifecycle
+        lc = ProjectLifecycle.load(Path(path))
+        artifact_names = ["REQUIREMENTS.md", "ARCHITECTURE.md", "MILESTONES.md", "tasks.md"]
+        return {
+            "phase": lc.state.phase,
+            "project_name": lc.state.project_name,
+            "artifacts": {n: (Path(path) / n).exists() for n in artifact_names},
+            "gates": lc.state.gates,
+            "discussion_turns": lc.state.discussion_turns,
+            "slack_channel": lc.state.slack_channel,
+            "created_at": lc.state.created_at,
+            "last_activity": lc.state.last_activity,
+            "current_milestone": lc.state.current_milestone,
+        }
+
+    @app.get("/api/projects/{project_id}/discussion")
+    async def get_discussion(project_id: str):
+        path = _get_project(project_id)
+        from orchid.discussion import DiscussionHistory
+        history = DiscussionHistory.load(Path(path))
+        return {
+            "turns": history.get_full_history()[-50:],
+            "context_md": history.get_context_md(),
+            "turn_count": history.turn_count(),
+        }
+
+    @app.post("/api/projects/{project_id}/discussion")
+    async def post_discussion(project_id: str, body: DiscussionBody):
+        path = _get_project(project_id)
+        loop = asyncio.get_running_loop()
+
+        def _run():
+            from orchid.discussion import DiscussionHistory
+            from orchid.lifecycle import ProjectLifecycle
+            from orchid.agents.discussion_agent import DiscussionAgent
+            proj_path = Path(path)
+            history = DiscussionHistory.load(proj_path)
+            lc = ProjectLifecycle.load(proj_path)
+            if lc.current_phase() == "NEW":
+                lc.advance("DISCUSSING")
+            history.append("user", body.message)
+            lc.state.discussion_turns += 1
+            lc.save()
+            agent = DiscussionAgent(proj_path, cli_override=body.provider_override)
+            response = agent.run(body.message, history)
+            history.append("agent", response.message)
+            if response.context_updates:
+                agent.update_context(history, response.context_updates)
+            return {
+                "response": response.message,
+                "ready_to_advance": response.ready_to_advance,
+                "suggestions": response.suggestions,
+                "phase": lc.current_phase(),
+            }
+
+        try:
+            return await loop.run_in_executor(None, _run)
+        except Exception as exc:
+            logger.exception("Discussion agent error")
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    @app.post("/api/projects/{project_id}/advance")
+    async def advance_project(project_id: str, body: AdvanceBody):
+        path = _get_project(project_id)
+        if not body.confirm:
+            from orchid.lifecycle import ProjectLifecycle
+            lc = ProjectLifecycle.load(Path(path))
+            return {"phase": lc.current_phase()}
+
+        loop = asyncio.get_running_loop()
+        manager = _managers.get(project_id)
+
+        def _emit(ev_type: str, data: Any) -> None:
+            if manager and loop and not loop.is_closed():
+                manager.broadcast_sync({"type": ev_type, "data": data}, loop)
+
+        def _run():
+            from orchid.lifecycle import ProjectLifecycle
+            from orchid.agents.product_manager import ProductManagerAgent
+            from orchid.agents.project_manager import ProjectManagerAgent
+            proj_path = Path(path)
+            lc = ProjectLifecycle.load(proj_path)
+            phase = lc.current_phase()
+            po = body.provider_override
+
+            if phase in ("NEW", "DISCUSSING"):
+                if phase == "NEW":
+                    lc.advance("DISCUSSING")
+                _emit("advance_status", {"status": "Generating REQUIREMENTS.md…"})
+                pm = ProductManagerAgent(proj_path, cli_override=po)
+                r = pm.run()
+                _emit("advance_artifact", {"name": "requirements", "path": str(r.requirements_path)})
+                _emit("advance_status", {"status": "Generating ARCHITECTURE.md…"})
+                _emit("advance_artifact", {"name": "architecture", "path": str(r.architecture_path)})
+                lc.advance("REQUIREMENTS")
+                _emit("advance_status", {"status": "Generating MILESTONES.md and tasks.md…"})
+                pmgr = ProjectManagerAgent(proj_path, cli_override=po)
+                r2 = pmgr.run()
+                _emit("advance_artifact", {"name": "milestones", "path": str(r2.milestones_path)})
+                _emit("advance_artifact", {"name": "tasks", "path": str(r2.tasks_path)})
+                lc.advance("PLANNING")
+                lc.advance("READY")
+
+            elif phase == "REQUIREMENTS":
+                _emit("advance_status", {"status": "Generating MILESTONES.md and tasks.md…"})
+                pmgr = ProjectManagerAgent(proj_path, cli_override=po)
+                r = pmgr.run()
+                _emit("advance_artifact", {"name": "milestones", "path": str(r.milestones_path)})
+                _emit("advance_artifact", {"name": "tasks", "path": str(r.tasks_path)})
+                lc.advance("PLANNING")
+                lc.advance("READY")
+
+            elif phase == "PLANNING":
+                lc.advance("READY")
+
+            new_phase = lc.current_phase()
+            _emit("advance_done", {"phase": new_phase})
+            return {"phase": new_phase}
+
+        try:
+            return await loop.run_in_executor(None, _run)
+        except Exception as exc:
+            logger.exception("Advance error")
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    @app.post("/api/projects/{project_id}/approve")
+    async def approve_gate(project_id: str, body: ApproveBody):
+        path = _get_project(project_id)
+        from orchid.lifecycle import ProjectLifecycle
+        from orchid.gates import GateSystem, GateStatus
+        proj_path = Path(path)
+        lc = ProjectLifecycle.load(proj_path)
+        gates = GateSystem(lc)
+        current = lc.current_phase()
+        next_phases = [p for p in lc.valid_next_phases() if p != "DISCUSSING"]
+        if not next_phases:
+            raise HTTPException(status_code=400, detail=f"No valid transitions from {current}")
+        to_phase = next_phases[0]
+        status = gates.check_gate(to_phase)
+        if status == GateStatus.BLOCKED:
+            raise HTTPException(status_code=409, detail=f"Prerequisites not met for {to_phase}")
+        gates.approve(to_phase)
+        if body.auto_future:
+            for p in lc.valid_next_phases():
+                if p != "DISCUSSING":
+                    key = lc._transition_key(to_phase, p)
+                    lc.state.gates.setdefault(key, {})["type"] = "auto"
+            lc.save()
+        lc.advance(to_phase)
+        new_nexts = [p for p in lc.valid_next_phases() if p != "DISCUSSING"]
+        return {"phase": lc.current_phase(), "next_gate": new_nexts[0] if new_nexts else None}
+
+    @app.get("/api/projects/{project_id}/artifacts")
+    async def get_artifacts(project_id: str):
+        path = _get_project(project_id)
+        proj_path = Path(path)
+        artifact_map = {
+            "requirements": "REQUIREMENTS.md",
+            "architecture": "ARCHITECTURE.md",
+            "milestones": "MILESTONES.md",
+            "tasks": "tasks.md",
+        }
+        result = {}
+        for key, filename in artifact_map.items():
+            fp = proj_path / filename
+            exists = fp.exists()
+            content = None
+            if exists:
+                try:
+                    raw = fp.read_text(encoding="utf-8")
+                    content = raw[:50000] + "\n…(truncated)" if len(raw) > 50000 else raw
+                except Exception:
+                    pass
+            result[key] = {"exists": exists, "content": content, "path": str(fp)}
+        return result
+
+    @app.patch("/api/projects/{project_id}/artifacts/{artifact_name}")
+    async def save_artifact(project_id: str, artifact_name: str, body: SaveArtifactBody):
+        path = _get_project(project_id)
+        name_map = {
+            "requirements": "REQUIREMENTS.md",
+            "architecture": "ARCHITECTURE.md",
+            "milestones": "MILESTONES.md",
+            "tasks": "tasks.md",
+        }
+        filename = name_map.get(artifact_name)
+        if not filename:
+            raise HTTPException(status_code=400, detail=f"Unknown artifact: {artifact_name}")
+        fp = Path(path) / filename
+        fp.write_text(body.content, encoding="utf-8")
+        return {"saved": True, "path": str(fp)}
+
     # ── WebSocket ─────────────────────────────────────────────────────────────
 
     @app.websocket("/ws/{project_id}")
@@ -809,6 +1101,64 @@ def create_app(
                 await ws.receive_text()
         except WebSocketDisconnect:
             manager.remove(ws)
+
+    @app.websocket("/ws/{project_id}/discussion")
+    async def ws_discussion(ws: WebSocket, project_id: str):
+        """Bidirectional WebSocket for discussion agent.
+
+        Client sends: {"message": "...", "provider_override": null}
+        Server sends:
+          {"type": "thinking"}
+          {"type": "token", "data": "...full response..."}
+          {"type": "done", "data": {ready_to_advance, suggestions}}
+          {"type": "error", "data": "..."}
+        """
+        if project_id not in _projects:
+            await ws.close(code=4004, reason="Project not found")
+            return
+        path = _projects[project_id]
+        await ws.accept()
+        loop = asyncio.get_running_loop()
+        try:
+            while True:
+                data = await ws.receive_json()
+                message = data.get("message", "").strip()
+                provider_override = data.get("provider_override")
+                if not message:
+                    continue
+                await ws.send_json({"type": "thinking"})
+
+                def _process(msg=message, po=provider_override):
+                    from orchid.discussion import DiscussionHistory
+                    from orchid.lifecycle import ProjectLifecycle
+                    from orchid.agents.discussion_agent import DiscussionAgent
+                    proj_path = Path(path)
+                    history = DiscussionHistory.load(proj_path)
+                    lc = ProjectLifecycle.load(proj_path)
+                    if lc.current_phase() == "NEW":
+                        lc.advance("DISCUSSING")
+                    history.append("user", msg)
+                    lc.state.discussion_turns += 1
+                    lc.save()
+                    agent = DiscussionAgent(proj_path, cli_override=po)
+                    response = agent.run(msg, history)
+                    history.append("agent", response.message)
+                    if response.context_updates:
+                        agent.update_context(history, response.context_updates)
+                    return response
+
+                try:
+                    response = await loop.run_in_executor(None, _process)
+                    await ws.send_json({"type": "token", "data": response.message})
+                    await ws.send_json({"type": "done", "data": {
+                        "ready_to_advance": response.ready_to_advance,
+                        "suggestions": response.suggestions,
+                    }})
+                except Exception as exc:
+                    logger.exception("Discussion WS agent error")
+                    await ws.send_json({"type": "error", "data": str(exc)})
+        except WebSocketDisconnect:
+            pass
 
     # ── Frontend static files ─────────────────────────────────────────────────
 
