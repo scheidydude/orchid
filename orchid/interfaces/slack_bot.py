@@ -208,7 +208,6 @@ class SlackBot:
 
     def _handle_status_multi(self, say) -> None:
         from orchid.session import Session
-        statuses: dict[str, Any] = {}
         lines = ["*📊 Multi-project status*", ""]
         for proj_path in self._all_projects:
             try:

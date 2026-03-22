@@ -15,6 +15,11 @@ from __future__ import annotations
 
 import importlib.metadata
 import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from orchid.lifecycle import ProjectLifecycle
+    from orchid.session import Session
 
 from dotenv import load_dotenv
 
@@ -705,10 +710,7 @@ def _cmd_phase(project: str) -> None:
 
 def _cmd_artifacts(project: str) -> None:
     """List lifecycle artifacts with existence status."""
-    from orchid.lifecycle import ProjectLifecycle
-
     proj_path = _resolve_project(project)
-    lc = ProjectLifecycle.load(proj_path)
 
     artifact_names = [
         "REQUIREMENTS.md", "ARCHITECTURE.md", "MILESTONES.md", "tasks.md",
