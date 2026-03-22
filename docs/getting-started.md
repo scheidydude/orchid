@@ -1,6 +1,6 @@
 # Getting Started with Orchid
 
-Orchid is an AI agent orchestration tool. You install it once and point it at any project. It reads your project's task list, picks the next task, and runs an AI agent loop to complete it — writing code, searching the web, reviewing output, and recording decisions.
+Orchid is an AI agent orchestration tool. You install it once and point it at any project. In V2, it guides you through a full planning workflow — discuss requirements with an AI product manager, generate architecture and task documents, then execute tasks with specialized agents.
 
 ---
 
@@ -8,7 +8,7 @@ Orchid is an AI agent orchestration tool. You install it once and point it at an
 
 - Python 3.12+
 - [uv](https://github.com/astral-sh/uv) package manager
-- An Anthropic API key (for planning, review, and critique tasks)
+- An Anthropic API key (for planning, discussion, review, and critique tasks)
 - Optionally: [llama.cpp](https://github.com/ggerganov/llama.cpp) running locally on port 8080 (for code generation and drafting without the API)
 
 ---
@@ -44,15 +44,23 @@ orchid --help
 
 ---
 
-## 2. Scaffold a Project
+## 2. Create a Project
 
-Navigate to your project directory (any existing repo, or a new empty folder) and run:
+### Option A — New project wizard
+
+```bash
+orchid new "A REST API for inventory tracking" --name myapp
+```
+
+This prompts for confirmation, scaffolds the project directory, and starts the planning workflow automatically.
+
+### Option B — Scaffold into an existing repo
 
 ```bash
 orchid init ~/projects/myapp --name myapp --description "A brief description of your project"
 ```
 
-This creates three files in your project:
+Both approaches create:
 
 ```
 myapp/
@@ -65,9 +73,77 @@ myapp/
 
 ---
 
-## 3. Write Your CLAUDE.md
+## 3. V2 Planning Workflow
 
-`CLAUDE.md` is loaded into every agent prompt as context. Fill it in before running tasks — the more relevant context you provide, the better the agent performs.
+Orchid V2 uses a lifecycle state machine to guide a project from idea to running code:
+
+```
+NEW → DISCUSSING → REQUIREMENTS → PLANNING → READY → EXECUTING → COMPLETE
+```
+
+Check the current phase at any time:
+
+```bash
+orchid --project ~/projects/myapp --phase
+```
+
+### Step 1 — Discuss requirements
+
+```bash
+orchid --project ~/projects/myapp --discuss
+```
+
+This starts an interactive chat with the DiscussionAgent (Claude). The agent asks clarifying questions about your goals, constraints, and technical preferences. You can exit and resume at any time — conversation history is persisted.
+
+Example session:
+
+```
+Orchid: What problem are you solving and who are your primary users?
+You: A REST API for tracking inventory. Used by warehouse staff on tablets.
+Orchid: What existing systems does it need to integrate with?
+You: Our ERP exports CSV. We need to import those and expose data via JSON API.
+Orchid: Any authentication requirements?
+You: JWT, managed by our existing auth service. We just need to validate tokens.
+```
+
+When you're satisfied, type `done` or `exit` to end the discussion.
+
+### Step 2 — Generate planning artifacts
+
+```bash
+orchid --project ~/projects/myapp --approve
+```
+
+This advances the lifecycle gate. From DISCUSSING it triggers:
+
+1. **ProductManagerAgent** → writes `REQUIREMENTS.md` and `ARCHITECTURE.md`
+2. **ProjectManagerAgent** → writes `MILESTONES.md` and populates `tasks.md`
+
+Review the generated documents and run `--approve` again to advance to READY.
+
+```bash
+orchid --project ~/projects/myapp --artifacts    # check what was generated
+cat ~/projects/myapp/REQUIREMENTS.md
+cat ~/projects/myapp/tasks.md
+```
+
+### Step 3 — Execute tasks
+
+```bash
+orchid --project ~/projects/myapp --mode auto
+```
+
+Orchid picks the highest-priority pending task, routes it to the right agent and model, runs the ReAct loop, stores the result, and moves on. Each task's output is saved and retrievable:
+
+```bash
+orchid --project ~/projects/myapp --get-result T001
+```
+
+---
+
+## 4. Write or Edit CLAUDE.md
+
+`CLAUDE.md` is loaded into every agent prompt as context. For projects created with `orchid init` (not the wizard), fill it in before running tasks — the more relevant context you provide, the better the agent performs.
 
 ```markdown
 # CLAUDE.md — myapp
@@ -92,9 +168,9 @@ Orchid will automatically compress this file when it grows too large.
 
 ---
 
-## 4. Add Tasks
+## 5. Add Tasks Manually
 
-Open `tasks.md` and add tasks in this format:
+You can also skip the planning workflow and add tasks directly to `tasks.md`:
 
 ```markdown
 # Tasks
@@ -105,12 +181,13 @@ Open `tasks.md` and add tasks in this format:
   - Add SQLAlchemy model in src/db/models.py with fields: id, name, sku, quantity, price
 - [ ] **T002** Create product CRUD endpoints `type:code_generate` `p1` `agent:developer`
   - GET /products, POST /products, PUT /products/{id}, DELETE /products/{id}
-  - Depends on T001
+  - `needs:T001`
 - [ ] **T003** Write tests for product endpoints `type:code_generate` `p2` `agent:developer`
 - [ ] **T004** Review product API `type:review` `p2` `agent:reviewer`
+- [ ] **T099** Sprint rollup `type:rollup` `rollup:T001,T002,T003,T004` `output:SPRINT1.md`
 ```
 
-You can also add tasks from the command line:
+Or from the command line:
 
 ```bash
 orchid --project ~/projects/myapp --add-task "Create product model" --type code_generate --priority 1
@@ -120,13 +197,25 @@ orchid --project ~/projects/myapp --add-task "Create product model" --type code_
 
 | Field | Values | Description |
 |-------|--------|-------------|
-| `type:` | `code_generate` `draft` `review` `summarize` `search` `plan` `critique` `rollup` | What kind of work |
+| `type:` | `code_generate` `draft` `review` `summarize` `search` `plan` `critique` `synthesize` `rollup` | What kind of work |
 | `p1` / `p2` / `p3` | high / normal / low | Priority |
 | `agent:` | `developer` `researcher` `reviewer` `base` | Which agent to use |
 | `needs:T001,T002` | task IDs | Dependencies (won't run until those are done) |
 | `model:claude` | `claude` `local` `auto` | Force a specific model for this task |
+| `rollup:T001,T002` | task IDs | Sources for rollup synthesis |
+| `output:FILE.md` | filename | Rollup output file |
 
 All fields except the task title are optional.
+
+### Rollup tasks
+
+A `rollup` task gathers the saved results from a set of completed tasks and synthesises a summary via Claude:
+
+```markdown
+- [ ] **T099** Sprint summary `type:rollup` `rollup:T001,T002,T003` `output:SPRINT1.md`
+```
+
+Rollup always uses Claude regardless of routing config.
 
 ### Routing simple vs. complex tasks
 
@@ -145,7 +234,7 @@ Use `model:local` to force local even for task types that normally use Claude:
 
 ---
 
-## 5. Run Orchid
+## 6. Run Orchid
 
 ### Check what's pending
 
@@ -179,7 +268,7 @@ Chat directly with an agent. Useful for exploration or one-off questions about y
 
 ---
 
-## 6. Watch What's Happening
+## 7. Watch What's Happening
 
 Orchid writes a live log to `.orchid/session_logs/`. To tail it in another terminal:
 
@@ -195,7 +284,7 @@ orchid --project ~/projects/myapp --inject "Focus on error handling, ignore the 
 
 ---
 
-## 7. Record Decisions
+## 8. Record Decisions
 
 When you make an architectural decision, record it so future agents have context:
 
@@ -210,18 +299,24 @@ Decisions are stored in `.orchid/decisions.json` and surfaced to agents automati
 
 ---
 
-## 8. Mark Tasks Done or Blocked
+## 9. Mark Tasks Done or Blocked
 
 ```bash
 orchid task done --id T001 --project ~/projects/myapp
 orchid task block --id T002 --project ~/projects/myapp
 ```
 
+Retrieve a task's stored output:
+
+```bash
+orchid --project ~/projects/myapp --get-result T001
+```
+
 ---
 
-## 9. Web UI (Optional)
+## 10. Web UI (Optional)
 
-Orchid ships a browser-based UI for managing projects, watching agent runs live, and browsing session history.
+Orchid ships a browser-based UI for managing projects, running the planning workflow, watching agent runs live, and browsing session history.
 
 **Start a persistent server** that auto-discovers all orchid projects under a directory:
 
@@ -237,6 +332,8 @@ Open **http://localhost:7842** in your browser.
 orchid web --project ~/projects/myapp
 ```
 
+The **Planning tab** exposes the full V2 workflow — phase indicator, discussion chat with streaming responses, artifact viewer, gate approval panel, and the NewProject wizard.
+
 ### Run as a systemd service
 
 ```bash
@@ -246,21 +343,22 @@ sudo journalctl -u orchid-serve -f
 
 ---
 
-## 10. Provider Configuration
+## 11. Provider Configuration
 
 By default Orchid routes tasks to two backends:
 
 | Tasks | Backend |
 |-------|---------|
-| `plan` `review` `critique` `orchestrate` `synthesize` | Claude API (`ANTHROPIC_API_KEY`) |
+| `plan` `review` `critique` `orchestrate` `synthesize` `rollup` | Claude API (`ANTHROPIC_API_KEY`) |
 | `code_generate` `draft` `summarize` `search` | llama.cpp at `localhost:8080` |
 
 You can override this per-project in `.orchid.yaml`:
 
 ```yaml
-model_preference: claude   # send everything to Claude
-# or
-model_preference: local    # send everything to local model
+providers:
+  developer: ollama   # use Ollama instead of llama.cpp for developer agent
+
+model_preference: claude   # or: send everything to Claude
 ```
 
 Or per-task with the `model:` tag in `tasks.md`:
@@ -275,22 +373,15 @@ To check what providers are available and reachable:
 orchid --check-providers
 ```
 
----
+To use a specific provider for one run:
 
-## Workflow Summary
-
-```
-1. orchid init <path>         scaffold CLAUDE.md + tasks.md
-2. Edit CLAUDE.md             give the agent project context
-3. Edit tasks.md              describe what needs to be done
-4. orchid --project <path> --status    confirm tasks are parsed correctly
-5. orchid --project <path> --mode auto    let it run
-6. Review output, mark done, add more tasks, repeat
+```bash
+orchid --project PATH --mode auto --provider developer=ollama
 ```
 
 ---
 
-## 11. Shell Safety Mode
+## 12. Shell Safety Mode
 
 By default Orchid's `bash` tool blocks known-dangerous commands (`rm -rf /`, `mkfs`, `dd if=`, fork bombs, etc.) while allowing everything else. For stricter control you can switch to **allowlist mode**, which only permits a curated set of executables:
 
@@ -307,16 +398,49 @@ Built-in allowlist covers the tools agents typically need: `git`, `python`, `pyt
 
 ---
 
+## Workflow Summary
+
+**V2 planning workflow (new projects):**
+
+```
+1. orchid new "description"               create project with wizard
+2. orchid --project PATH --discuss        discuss requirements with AI PM
+3. orchid --project PATH --approve        generate REQUIREMENTS, ARCHITECTURE, tasks
+4. orchid --project PATH --approve        advance to READY
+5. orchid --project PATH --mode auto      execute tasks
+6. orchid --project PATH --get-result T001   review output
+7. Repeat: add tasks, approve, execute
+```
+
+**Direct task workflow (existing projects):**
+
+```
+1. orchid init PATH                       scaffold CLAUDE.md + tasks.md
+2. Edit CLAUDE.md                         give the agent project context
+3. Edit tasks.md                          describe what needs to be done
+4. orchid --project PATH --status         confirm tasks are parsed correctly
+5. orchid --project PATH --mode auto      let it run
+6. Review output, mark done, add more tasks, repeat
+```
+
+---
+
 ## Common Issues
 
 **"ANTHROPIC_API_KEY not set"**
-Set it in `.env` at the orchid root, or export it in your shell. Use `--offline` to skip Claude entirely.
+Set it in `~/.config/orchid/.env`, or export it in your shell. Use `--offline` to skip Claude entirely.
 
 **"Provider unavailable: local"**
-llama.cpp is not running. Start it on port 8080, or use `--code-model claude` to route all tasks to the API.
+llama.cpp is not running. Start it on port 8080, or add `model:claude` to tasks that need the API, or use `--offline` mode to confirm what's working.
 
 **Task stays in TODO**
 Check for unmet dependencies (`needs:` tags) or a `BLOCKED` status. Run `--status` to see the full board.
 
 **Agent hits max iterations without finishing**
 The task may be too broad. Break it into smaller atomic tasks — one clear deliverable per task ID works best.
+
+**Phase won't advance**
+A gate is waiting for human approval. Run `orchid --project PATH --approve`. To make a gate automatic, add `gates: {ready_to_executing: auto}` to `.orchid.yaml`.
+
+**Discussion agent gives generic responses**
+Fill in your machine profile at `~/.config/orchid/machine-profile.yaml` — preferred stacks, infrastructure, and project root. The discussion agent uses this to ask more targeted questions.
