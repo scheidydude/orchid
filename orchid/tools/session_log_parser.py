@@ -1,12 +1,9 @@
 """Complex regex parser for extracting structured data from session logs."""
 
-import json
 import logging
-import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Iterator
+from datetime import UTC, datetime
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -40,4 +37,4 @@ class SessionLogEvent:
             try:
                 self.timestamp = datetime.fromisoformat(self.raw_data["ts"].replace("Z", "+00:00"))
             except (ValueError, AttributeError):
-                self.timestamp = datetime.now(timezone.utc)
+                self.timestamp = datetime.now(UTC)

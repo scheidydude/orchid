@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -17,10 +17,10 @@ logger = logging.getLogger(__name__)
 
 # Module-level reference to the active session — set by Session.load().
 # Allows providers to report stats without a direct session dependency.
-_current_session: "Session | None" = None
+_current_session: Session | None = None
 
 
-def get_current_session() -> "Session | None":
+def get_current_session() -> Session | None:
     """Return the currently active Session, or None if no session is loaded."""
     return _current_session
 
@@ -45,7 +45,7 @@ class Session:
         self.project_description: str = project_cfg.get("description", "")
         self.context_files: list[str] = project_cfg.get("context_files", [])
 
-        self.started_at = datetime.now(timezone.utc)
+        self.started_at = datetime.now(UTC)
         self.tasks: list[mem_state.Task] = []
         self.hot_memory: str = ""
         self.extra_context: str = ""
@@ -165,7 +165,7 @@ class Session:
 
         logger.info("Hot memory exceeds %d chars — compressing...", threshold)
         try:
-            from orchid.tools.models import call, Message
+            from orchid.tools.models import Message, call
             compressed = call(
                 messages=[
                     Message("user", (
@@ -179,7 +179,7 @@ class Session:
                 model_key="claude",
                 system="You are a technical editor. Compress the document faithfully.",
             )
-            self.hot_memory = f"<!-- compressed {datetime.now(timezone.utc).date()} -->\n\n{compressed}"
+            self.hot_memory = f"<!-- compressed {datetime.now(UTC).date()} -->\n\n{compressed}"
             logger.info("Hot memory compressed to %d chars.", len(self.hot_memory))
         except Exception as e:
             logger.warning("Hot memory compression failed: %s", e)
@@ -248,7 +248,7 @@ class Session:
         """Append a ReAct iteration record to the live streaming log."""
         if not self._live_log_path:
             return
-        ts = data.get("timestamp", datetime.now(timezone.utc).isoformat())
+        ts = data.get("timestamp", datetime.now(UTC).isoformat())
         iteration = data.get("iter", "?")
         thought = data.get("thought", "").strip()
         action = data.get("action", "").strip()
@@ -293,7 +293,7 @@ class Session:
         if not self._log_path:
             return
         record = {
-            "ts": datetime.now(timezone.utc).isoformat(),
+            "ts": datetime.now(UTC).isoformat(),
             "type": event_type,
             **data,
         }
@@ -301,7 +301,7 @@ class Session:
             f.write(json.dumps(record) + "\n")
 
     def _write_session_log(self, summary: str) -> None:
-        ended_at = datetime.now(timezone.utc)
+        ended_at = datetime.now(UTC)
         duration = (ended_at - self.started_at).total_seconds()
 
         # Collect cache stats from Anthropic provider if available
@@ -366,7 +366,7 @@ class Session:
             parts.append(self.project_description)
         parts += [
             f"\n### Hot Memory\n{self.hot_memory[:2000]}",
-            f"\n### Current Tasks\n" + "\n".join(task_lines),
+            "\n### Current Tasks\n" + "\n".join(task_lines),
         ]
         if self.extra_context:
             parts.append(f"\n### Additional Context\n{self.extra_context[:2000]}")

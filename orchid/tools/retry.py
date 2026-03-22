@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
 
 import httpx
 from tenacity import (
     retry,
+    retry_if_exception_message,
+    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type,
-    retry_if_exception_message,
 )
 
 logger = logging.getLogger(__name__)
@@ -90,7 +89,7 @@ class RetryClient:
         self._config = config or RETRY_CONFIG
         self._client = httpx.Client(**kwargs)
     
-    def __enter__(self) -> "RetryClient":
+    def __enter__(self) -> RetryClient:
         """Enter context manager."""
         return self
     

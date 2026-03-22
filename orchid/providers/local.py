@@ -114,6 +114,7 @@ class LocalProvider(ProviderBase):
         global _logged_response_keys  # noqa: PLW0603
 
         from openai import OpenAI  # lazy import
+
         from orchid import config as cfg
 
         raw = self._normalise_messages(messages)

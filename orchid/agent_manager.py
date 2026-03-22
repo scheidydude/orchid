@@ -12,8 +12,7 @@ from __future__ import annotations
 import logging
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import UTC, datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -143,8 +142,8 @@ class AgentManager:
 
     def _run_project(self, proj: ProjectConfig) -> None:
         """Execute one auto run for a project (runs in daemon thread)."""
-        from orchid.session import Session
         from orchid.orchestrator import Orchestrator
+        from orchid.session import Session
 
         logger.info("AgentManager: starting run for %s at %s", proj.project_id, proj.path)
         try:
@@ -164,7 +163,7 @@ class AgentManager:
             with self._lock:
                 state = self._states[proj.project_id]
                 state.running = False
-                state.last_run = datetime.now(timezone.utc)
+                state.last_run = datetime.now(UTC)
 
     def _start_scheduler(self, projects: list[ProjectConfig]) -> None:
         """Start APScheduler BackgroundScheduler with cron jobs for the given projects."""

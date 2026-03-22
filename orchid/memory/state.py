@@ -6,9 +6,9 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
+from datetime import UTC
 from enum import Enum
 from pathlib import Path
-from typing import Optional
 
 from orchid import config as cfg
 
@@ -31,12 +31,12 @@ class Task:
     type: str = "draft"           # determines model routing
     priority: int = 2             # 1=high, 2=normal, 3=low
     description: str = ""
-    agent: Optional[str] = None   # assigned agent class
+    agent: str | None = None   # assigned agent class
     tags: list[str] = field(default_factory=list)
     depends_on: list[str] = field(default_factory=list)   # task IDs this task waits for
-    model_override: Optional[str] = None                  # claude | local | auto
+    model_override: str | None = None                  # claude | local | auto
     rollup_sources: list[str] = field(default_factory=list)  # task IDs to gather results from (rollup type)
-    output_file: Optional[str] = None                        # output filename for rollup synthesis
+    output_file: str | None = None                        # output filename for rollup synthesis
 
     def is_runnable(self, completed_ids: set[str]) -> bool:
         """True when all declared dependencies are done (includes rollup_sources)."""
@@ -228,13 +228,13 @@ class TaskResultStore:
 
     def append(self, task_id: str, title: str, task_type: str, result: str) -> None:
         """Append a completed task result to the store."""
-        from datetime import datetime, timezone
+        from datetime import datetime
         self._path.parent.mkdir(parents=True, exist_ok=True)
         entry = {
             "task_id": task_id,
             "title": title,
             "type": task_type,
-            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "completed_at": datetime.now(UTC).isoformat(),
             "result": result,
         }
         with self._path.open("a", encoding="utf-8") as f:

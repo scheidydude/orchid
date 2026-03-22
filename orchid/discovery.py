@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -120,8 +120,8 @@ class ProjectDiscovery:
         inotify limit when watch_dirs contain large trees (.venv, node_modules).
         """
         try:
-            from watchdog.observers import Observer
             from watchdog.events import FileSystemEventHandler
+            from watchdog.observers import Observer
         except ImportError:
             logger.warning(
                 "watchdog not installed; file watching disabled. "

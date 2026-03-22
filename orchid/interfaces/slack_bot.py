@@ -207,7 +207,6 @@ class SlackBot:
         say(text=format_status_text(session), blocks=blocks)
 
     def _handle_status_multi(self, say) -> None:
-        from orchid.interfaces.slack_formatter import format_multi_status
         from orchid.session import Session
         statuses: dict[str, Any] = {}
         lines = ["*📊 Multi-project status*", ""]
@@ -251,7 +250,11 @@ class SlackBot:
             return
 
         ack()
-        from orchid.interfaces.slack_formatter import format_task_started, format_task_complete, format_task_failed
+        from orchid.interfaces.slack_formatter import (
+            format_task_complete,
+            format_task_failed,
+            format_task_started,
+        )
         channel = command.get("channel_id", self.default_channel)
         self._notify_channels.add(channel)
 
@@ -291,7 +294,11 @@ class SlackBot:
             return
 
         ack()
-        from orchid.interfaces.slack_formatter import format_task_complete, format_task_failed, format_auto_summary
+        from orchid.interfaces.slack_formatter import (
+            format_auto_summary,
+            format_task_complete,
+            format_task_failed,
+        )
         channel = command.get("channel_id", self.default_channel)
         self._notify_channels.add(channel)
         say(text=f"🚀 Starting auto run — {len(pending)} pending tasks…", channel=channel)
@@ -355,9 +362,9 @@ class SlackBot:
             ack("Usage: /orchid-recall <query>")
             return
         ack()
-        from orchid.memory.vector import VectorMemory
         from orchid import config as cfg
         from orchid.interfaces.slack_formatter import format_recall_results
+        from orchid.memory.vector import VectorMemory
         cfg.configure_for_project(self.project_path)
         vm = VectorMemory(project_dir=self.project_path)
         if not vm.available:
@@ -372,9 +379,9 @@ class SlackBot:
             ack("Usage: /orchid-search <query>")
             return
         ack()
-        from orchid.tools.search import WebSearchTool, reset_backend_cache
         from orchid import config as cfg
         from orchid.interfaces.slack_formatter import format_search_results
+        from orchid.tools.search import WebSearchTool, reset_backend_cache
         cfg.configure_for_project(self.project_path)
         reset_backend_cache()
         vm = None
@@ -449,7 +456,11 @@ class SlackBot:
             if task is None:
                 say(text=f"❌ Task {task_id} not found.", thread_ts=thread_ts)
                 return
-            from orchid.interfaces.slack_formatter import format_task_started, format_task_complete, format_task_failed
+            from orchid.interfaces.slack_formatter import (
+                format_task_complete,
+                format_task_failed,
+                format_task_started,
+            )
             ts = self._post(channel, format_task_started(task_id, task.title), thread_ts=thread_ts)
             if ts:
                 self._task_threads[task_id] = {"channel": channel, "thread_ts": ts}
@@ -475,18 +486,18 @@ class SlackBot:
             say(text=f"✅ Added *{tid}*: {arg}  `type=draft p2`", thread_ts=thread_ts)
 
         elif action == "recall":
-            from orchid.memory.vector import VectorMemory
             from orchid import config as cfg
             from orchid.interfaces.slack_formatter import format_recall_results
+            from orchid.memory.vector import VectorMemory
             cfg.configure_for_project(self.project_path)
             vm = VectorMemory(project_dir=self.project_path)
             results = vm.query(arg, n=3) if vm.available else []
             say(text=f"🔍 *Recall:* {arg}\n\n{format_recall_results(results)}", thread_ts=thread_ts)
 
         elif action == "search":
-            from orchid.tools.search import WebSearchTool, reset_backend_cache
             from orchid import config as cfg
             from orchid.interfaces.slack_formatter import format_search_results
+            from orchid.tools.search import WebSearchTool, reset_backend_cache
             cfg.configure_for_project(self.project_path)
             reset_backend_cache()
             tool = WebSearchTool(project_name=Path(self.project_path).name)
@@ -526,7 +537,7 @@ class SlackBot:
 
         # Fall back to Claude for ambiguous input
         try:
-            from orchid.tools.models import call, Message
+            from orchid.tools.models import Message, call
             prompt = (
                 "Parse the intent from this Orchid bot message.\n"
                 'Return JSON only: {"intent": "status|run|add|recall|search|help", "arg": "..."}\n\n'

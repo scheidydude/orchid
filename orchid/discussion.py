@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ _DEFAULT_CONTEXT_MD = """\
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 class DiscussionHistory:
@@ -45,7 +45,7 @@ class DiscussionHistory:
     # ── Factory ───────────────────────────────────────────────────────────────
 
     @classmethod
-    def load(cls, project_dir: Path) -> "DiscussionHistory":
+    def load(cls, project_dir: Path) -> DiscussionHistory:
         h = cls(project_dir)
         h._dir.mkdir(parents=True, exist_ok=True)
         if h._conv_path.exists():

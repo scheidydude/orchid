@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from datetime import UTC
+from typing import Any
 
 from orchid import config as cfg
-from orchid.memory.state import Task, TaskStatus, TaskResultStore
+from orchid.memory.state import Task, TaskResultStore, TaskStatus
 from orchid.session import Session
-from orchid.tools.models import call, route, Message
+from orchid.tools.models import Message, call, route
 
 logger = logging.getLogger(__name__)
 
@@ -18,10 +20,10 @@ _AGENT_REGISTRY: dict[str, type] = {}
 
 def _get_registry() -> dict[str, type]:
     if not _AGENT_REGISTRY:
+        from orchid.agents.base import BaseAgent
         from orchid.agents.developer import DeveloperAgent
         from orchid.agents.researcher import ResearcherAgent
         from orchid.agents.reviewer import ReviewerAgent
-        from orchid.agents.base import BaseAgent
         _AGENT_REGISTRY.update({
             "developer": DeveloperAgent,
             "researcher": ResearcherAgent,
@@ -396,8 +398,8 @@ class Orchestrator:
 
     def _insert_auto_review_task(self) -> None:
         """Insert an auto-review task after N code_generate completions (T043)."""
-        from datetime import datetime, timezone
-        ts = datetime.now(timezone.utc).strftime("%H%M%S")
+        from datetime import datetime
+        ts = datetime.now(UTC).strftime("%H%M%S")
         review_task = Task(
             id=f"AUTOREV_{ts}",
             title="Auto-review: check imports and syntax verification",

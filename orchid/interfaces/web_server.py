@@ -25,9 +25,9 @@ import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +46,8 @@ _DIST_DIR = Path(__file__).parent / "web_ui" / "dist"
 # ── Module-level state ─────────────────────────────────────────────────────────
 
 _projects: dict[str, str] = {}           # project_id → absolute project path
-_managers: dict[str, "ConnectionManager"] = {}
-_runners: dict[str, "_WebProjectRunner"] = {}
+_managers: dict[str, ConnectionManager] = {}
+_runners: dict[str, _WebProjectRunner] = {}
 _main_loop: asyncio.AbstractEventLoop | None = None
 _state_lock = threading.Lock()           # protects _projects/_managers/_runners
 
@@ -193,7 +193,7 @@ class _WebProjectRunner:
         with self._lock:
             if self.is_running():
                 return ""
-            rid = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            rid = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
             self.run_id = rid
             self._cancel.clear()
             self.current_task = ""
@@ -219,9 +219,9 @@ class _WebProjectRunner:
         mode: str,
         code_model: str | None,
     ) -> None:
-        from orchid.session import Session
-        from orchid.orchestrator import Orchestrator
         from orchid.memory.state import TaskStatus
+        from orchid.orchestrator import Orchestrator
+        from orchid.session import Session
 
         done_ids: list[str] = []
         failed_ids: list[str] = []
@@ -299,7 +299,7 @@ if _FASTAPI_AVAILABLE:
         type: str = "draft"
         priority: int = 2
         depends_on: list[str] = []
-        model: Optional[str] = None
+        model: str | None = None
         description: str = ""
 
     class PatchTaskBody(BaseModel):
@@ -307,7 +307,7 @@ if _FASTAPI_AVAILABLE:
 
     class RunBody(BaseModel):
         mode: str = "auto"
-        code_model: Optional[str] = None
+        code_model: str | None = None
 
     class RecallBody(BaseModel):
         query: str
@@ -320,11 +320,11 @@ if _FASTAPI_AVAILABLE:
 
     class DiscussionBody(BaseModel):
         message: str
-        provider_override: Optional[str] = None
+        provider_override: str | None = None
 
     class AdvanceBody(BaseModel):
         confirm: bool = True
-        provider_override: Optional[str] = None
+        provider_override: str | None = None
 
     class ApproveBody(BaseModel):
         auto_future: bool = False
@@ -332,8 +332,8 @@ if _FASTAPI_AVAILABLE:
     class CreateProjectBody(BaseModel):
         name: str
         description: str = ""
-        project_type: Optional[str] = None
-        base_dir: Optional[str] = None
+        project_type: str | None = None
+        base_dir: str | None = None
         confirm_path: bool = True
 
     class SaveArtifactBody(BaseModel):
@@ -364,7 +364,7 @@ def _last_session_timestamp(path: str) -> str | None:
     if not logs:
         return None
     mtime = logs[-1].stat().st_mtime
-    return datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+    return datetime.fromtimestamp(mtime, tz=UTC).isoformat()
 
 
 # ── App factory ───────────────────────────────────────────────────────────────
@@ -626,7 +626,7 @@ def create_app(
             "enabled": True,
             "watch_dirs": [str(d) for d in _discovery.watch_dirs],
             "discovered_projects": current_projects,
-            "last_scan": datetime.now(timezone.utc).isoformat(),
+            "last_scan": datetime.now(UTC).isoformat(),
         }
 
     @app.get("/api/projects/{project_id}/status")
@@ -716,7 +716,7 @@ def create_app(
                 "id": f.stem,
                 "filename": f.name,
                 "size": stat.st_size,
-                "modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+                "modified": datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
             })
         return sessions
 
@@ -845,8 +845,8 @@ def create_app(
 
     @app.post("/api/projects", status_code=201)
     async def create_project(body: CreateProjectBody):
-        from orchid.project_creator import ProjectCreator
         from orchid.machine_profile import MachineProfile
+        from orchid.project_creator import ProjectCreator
         profile = MachineProfile.load()
         creator = ProjectCreator(machine_profile=profile)
         base_dir = Path(body.base_dir).expanduser() if body.base_dir else None
@@ -920,9 +920,9 @@ def create_app(
         loop = asyncio.get_running_loop()
 
         def _run():
+            from orchid.agents.discussion_agent import DiscussionAgent
             from orchid.discussion import DiscussionHistory
             from orchid.lifecycle import ProjectLifecycle
-            from orchid.agents.discussion_agent import DiscussionAgent
             proj_path = Path(path)
             history = DiscussionHistory.load(proj_path)
             lc = ProjectLifecycle.load(proj_path)
@@ -965,9 +965,9 @@ def create_app(
                 manager.broadcast_sync({"type": ev_type, "data": data}, loop)
 
         def _run():
-            from orchid.lifecycle import ProjectLifecycle
             from orchid.agents.product_manager import ProductManagerAgent
             from orchid.agents.project_manager import ProjectManagerAgent
+            from orchid.lifecycle import ProjectLifecycle
             proj_path = Path(path)
             lc = ProjectLifecycle.load(proj_path)
             phase = lc.current_phase()
@@ -1016,8 +1016,8 @@ def create_app(
     @app.post("/api/projects/{project_id}/approve")
     async def approve_gate(project_id: str, body: ApproveBody):
         path = _get_project(project_id)
+        from orchid.gates import GateStatus, GateSystem
         from orchid.lifecycle import ProjectLifecycle
-        from orchid.gates import GateSystem, GateStatus
         proj_path = Path(path)
         lc = ProjectLifecycle.load(proj_path)
         gates = GateSystem(lc)
@@ -1129,9 +1129,9 @@ def create_app(
                 await ws.send_json({"type": "thinking"})
 
                 def _process(msg=message, po=provider_override):
+                    from orchid.agents.discussion_agent import DiscussionAgent
                     from orchid.discussion import DiscussionHistory
                     from orchid.lifecycle import ProjectLifecycle
-                    from orchid.agents.discussion_agent import DiscussionAgent
                     proj_path = Path(path)
                     history = DiscussionHistory.load(proj_path)
                     lc = ProjectLifecycle.load(proj_path)

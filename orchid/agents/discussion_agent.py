@@ -103,7 +103,7 @@ class DiscussionAgent:
 
     def _get_provider(self):
         from orchid import config as cfg
-        from orchid.providers.registry import get_registry, reset_registry
+        from orchid.providers.registry import get_registry
 
         cfg.configure_for_project(self.project_dir)
         registry = get_registry()
@@ -114,11 +114,10 @@ class DiscussionAgent:
     def run(
         self,
         user_message: str,
-        history: "DiscussionHistory",  # noqa: F821  (forward ref OK at runtime)
+        history: DiscussionHistory,  # noqa: F821  (forward ref OK at runtime)
         machine_profile=None,
     ) -> DiscussionResponse:
         """Process one user turn and return a DiscussionResponse."""
-        from orchid.discussion import DiscussionHistory
         from orchid.machine_profile import MachineProfile
 
         if machine_profile is None:
@@ -160,7 +159,7 @@ class DiscussionAgent:
         return self._parse_response(raw)
 
     def update_context(
-        self, history: "DiscussionHistory", context_updates: str  # noqa: F821
+        self, history: DiscussionHistory, context_updates: str  # noqa: F821
     ) -> None:
         """Persist context updates to context.md."""
         if context_updates:

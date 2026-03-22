@@ -14,7 +14,7 @@ Config resolution (highest priority first):
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 
 from orchid import config as cfg
@@ -62,7 +62,7 @@ class GateSystem:
             "type": "human",
             "approved": True,
             "approver": approver,
-            "approved_at": datetime.now(timezone.utc).isoformat(),
+            "approved_at": datetime.now(UTC).isoformat(),
         }
         self.lifecycle.save()
         logger.info("Gate approved: %s → %s by %s", from_phase, to_phase, approver)

@@ -10,9 +10,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from orchid import config as cfg
 
@@ -177,8 +178,8 @@ class BackgroundRunner:
         failed_ids: list[str] = []
         try:
             session = self._make_session()
-            from orchid.orchestrator import Orchestrator
             from orchid.memory.state import TaskStatus
+            from orchid.orchestrator import Orchestrator
 
             orch = Orchestrator(session)
 

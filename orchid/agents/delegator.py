@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from orchid import config as cfg
@@ -45,8 +45,8 @@ class AgentDelegator:
 
     def __init__(
         self,
-        session: "Session | None" = None,
-        vector_memory: "VectorMemory | None" = None,
+        session: Session | None = None,
+        vector_memory: VectorMemory | None = None,
         project_name: str = "",
     ):
         self.session = session
@@ -114,7 +114,7 @@ class AgentDelegator:
         result = agent.run(task)
         result_summary = result[:500]
 
-        timestamp = datetime.now(timezone.utc).isoformat()
+        timestamp = datetime.now(UTC).isoformat()
         delegation_record: dict[str, Any] = {
             "session_id": (
                 self.session._log_path.stem
@@ -134,7 +134,7 @@ class AgentDelegator:
 
         if cfg.get("delegation.embed_results", True) and self._vector and self._vector.available:
             try:
-                ts_int = int(datetime.now(timezone.utc).timestamp())
+                ts_int = int(datetime.now(UTC).timestamp())
                 self._vector.add(
                     text=f"Delegation task: {task}\nResult: {result}",
                     metadata={

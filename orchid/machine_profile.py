@@ -85,7 +85,7 @@ class MachineProfile:
     _path: Path = field(default_factory=lambda: PROFILE_PATH, repr=False)
 
     @classmethod
-    def load(cls, path: Path | None = None) -> "MachineProfile":
+    def load(cls, path: Path | None = None) -> MachineProfile:
         profile_path = Path(path) if path else PROFILE_PATH
         if not profile_path.exists():
             logger.info("No machine profile at %s — writing defaults", profile_path)

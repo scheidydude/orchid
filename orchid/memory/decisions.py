@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -51,7 +51,7 @@ def record_decision(
     existing = load_decisions(project_dir)
     record = {
         "id": f"D{len(existing) + 1:04d}",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "title": title,
         "decision": decision,
         "rationale": rationale,

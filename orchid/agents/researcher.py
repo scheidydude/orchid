@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from orchid.agents.base import BaseAgent, _SEARCH_SCHEMAS, _BUILTIN_SCHEMAS
+from orchid.agents.base import _BUILTIN_SCHEMAS, _SEARCH_SCHEMAS, BaseAgent
 
 
 class ResearcherAgent(BaseAgent):

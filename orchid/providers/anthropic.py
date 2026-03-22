@@ -118,6 +118,7 @@ class AnthropicProvider(ProviderBase):
         **kwargs: Any,
     ) -> str:
         import anthropic  # lazy import
+
         from orchid import config as cfg
 
         raw = self._normalise_messages(messages)

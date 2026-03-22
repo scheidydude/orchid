@@ -5,9 +5,9 @@ from __future__ import annotations
 import re
 import shlex
 import subprocess
+
 from orchid import config as cfg
 from orchid.errors import ToolError
-
 
 # Commands that are never allowed regardless of config or mode.
 # Matched against the full command string (case-sensitive).

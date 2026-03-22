@@ -1,13 +1,11 @@
 # orchid/planning.py
-import json
-import os
 import asyncio
+import json
 import re
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Optional, Callable, Awaitable
 
 from orchid.providers.anthropic_provider import AnthropicProvider
-
 
 SYSTEM_PROMPT = """You are a senior product manager and software architect helping to plan a new software project.
 
@@ -94,7 +92,7 @@ class PlanningSession:
     async def chat(
         self,
         user_message: str,
-        status_callback: Optional[Callable[[str], Awaitable[None]]] = None,
+        status_callback: Callable[[str], Awaitable[None]] | None = None,
     ) -> str:
         """Send a message and get a response.
 
@@ -126,7 +124,7 @@ class PlanningSession:
     async def _save_artifacts(
         self,
         response: str,
-        status_callback: Optional[Callable[[str], Awaitable[None]]] = None,
+        status_callback: Callable[[str], Awaitable[None]] | None = None,
     ):
         """Parse and save artifact files from the response."""
         pattern = r'<artifact name="([^"]+)">(.*?)</artifact>'

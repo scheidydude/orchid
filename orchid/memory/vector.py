@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import logging
-import re
 import warnings
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -160,14 +159,14 @@ class VectorMemory:
 
         meta = metadata or {}
         meta.setdefault("project", str(self.project_dir))
-        meta.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
+        meta.setdefault("timestamp", datetime.now(UTC).isoformat())
         meta.setdefault("type", TYPE_NOTE)
 
         chunks = _chunk_text(text, self.chunk_size, self.chunk_overlap)
         if not chunks:
             return
 
-        prefix = doc_id_prefix or f"doc_{int(datetime.now(timezone.utc).timestamp())}"
+        prefix = doc_id_prefix or f"doc_{int(datetime.now(UTC).timestamp())}"
         ids: list[str] = []
         embeddings: list[list[float]] = []
         documents: list[str] = []

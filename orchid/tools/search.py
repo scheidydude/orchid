@@ -20,7 +20,7 @@ SearchResult = dict[str, str]  # {title, url, snippet, source}
 # Storing the chain (not just the first) enables per-query fallback: if the
 # primary backend fails during a search call, WebSearchTool tries the next.
 
-_backend_chain: "list[_Backend]" = []
+_backend_chain: list[_Backend] = []
 _backend_chain_ts: float = 0.0
 
 
@@ -159,7 +159,7 @@ class DuckDuckGoBackend(_Backend):
             url = title_el.get("href", "")
             # DDG wraps URLs in redirects — extract uddg= param when present
             if "uddg=" in url:
-                from urllib.parse import urlparse, parse_qs, unquote  # noqa: PLC0415
+                from urllib.parse import parse_qs, unquote, urlparse  # noqa: PLC0415
                 qs = parse_qs(urlparse(url).query)
                 url = unquote(qs.get("uddg", [url])[0])
             snippet = snippet_el.get_text(strip=True) if snippet_el else ""

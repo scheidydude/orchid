@@ -15,13 +15,11 @@ from __future__ import annotations
 
 import importlib.metadata
 import logging
-import shutil
 
 from dotenv import load_dotenv
 
 load_dotenv()
 from pathlib import Path
-from typing import List, Optional
 
 import typer
 from rich.console import Console
@@ -29,6 +27,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.table import Table
+
 
 def _version_callback(value: bool) -> None:
     if value:
@@ -59,7 +58,7 @@ def _setup_logging(level: str) -> None:
     )
 
 
-def _make_session(project: str) -> "Session":
+def _make_session(project: str) -> Session:
     from orchid.session import Session
     s = Session(project_dir=project)
     s.load()
@@ -76,40 +75,40 @@ def _resolve_project(project: str) -> Path:
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
-    version: Optional[bool] = typer.Option(
+    version: bool | None = typer.Option(
         None, "--version", "-V",
         callback=_version_callback,
         is_eager=True,
         help="Show version and exit.",
     ),
-    project: Optional[List[str]] = typer.Option(
+    project: list[str] | None = typer.Option(
         None, "--project", "-p",
         help="Path to the project directory. Repeat for --multi mode.",
     ),
     multi: bool = typer.Option(False, "--multi", help="Run multiple projects in parallel"),
-    mode: Optional[str] = typer.Option(
+    mode: str | None = typer.Option(
         None, "--mode", "-m",
         help="Run mode: auto (autonomous) | interactive (chat)",
     ),
     status: bool = typer.Option(False, "--status", "-s", help="Show task board and hot memory"),
-    add_task: Optional[str] = typer.Option(
+    add_task: str | None = typer.Option(
         None, "--add-task", "-a",
         help="Add a new task (title string). Use --type and --priority to customise.",
     ),
     task_type: str = typer.Option("draft", "--type", help="Task type for --add-task"),
     priority: int = typer.Option(2, "--priority", help="Priority for --add-task (1=high)"),
     max_tasks: int = typer.Option(50, "--max-tasks", "-n", help="Max tasks for auto mode"),
-    recall: Optional[str] = typer.Option(
+    recall: str | None = typer.Option(
         None, "--recall", help="Query vector memory and print top results",
     ),
-    search: Optional[str] = typer.Option(
+    search: str | None = typer.Option(
         None, "--search", help="Run a web search and print results (embeds if vector enabled)",
     ),
-    code_model: Optional[str] = typer.Option(
+    code_model: str | None = typer.Option(
         None, "--code-model",
         help="Force model for all tasks: claude | local | auto",
     ),
-    provider: Optional[List[str]] = typer.Option(
+    provider: list[str] | None = typer.Option(
         None, "--provider",
         help="Per-agent-type provider override: agent=provider (e.g. developer=ollama). Repeatable.",
     ),
@@ -122,10 +121,10 @@ def main(
         help="Probe all configured providers and print their availability status.",
     ),
     tail: bool = typer.Option(False, "--tail", help="Tail the most recent live agent log"),
-    inject: Optional[str] = typer.Option(
+    inject: str | None = typer.Option(
         None, "--inject", help="Inject context into the running agent via inject.queue",
     ),
-    get_result: Optional[str] = typer.Option(
+    get_result: str | None = typer.Option(
         None, "--get-result", metavar="TASK_ID",
         help="Print stored result for a task ID (e.g. T090). Useful for debugging rollup inputs.",
     ),
@@ -436,7 +435,6 @@ def _cmd_status(project: str) -> None:
 
     # Warn about tasks that failed in the last run
     if failures:
-        from rich.text import Text
         lines = []
         for tid, reason in failures.items():
             short = reason[:120].replace("\n", " ")
@@ -467,9 +465,10 @@ def _cmd_status(project: str) -> None:
 
 def _cmd_search(project: str, query: str) -> None:
     """Run a web search and print results."""
+    from rich.markup import escape  # noqa: PLC0415
+
     from orchid import config as cfg  # noqa: PLC0415
     from orchid.tools.search import WebSearchTool, reset_backend_cache  # noqa: PLC0415
-    from rich.markup import escape  # noqa: PLC0415
 
     proj_path = _resolve_project(project)
     cfg.configure_for_project(proj_path)
@@ -514,13 +513,13 @@ def _cmd_search(project: str, query: str) -> None:
         console.print(Panel(body, title=f"[{i}]", border_style="dim"))
 
     if vector_memory and vector_memory.available and cfg.get("web_search.embed_results", True):
-        console.print(f"[dim]Results embedded into vector store.[/dim]")
+        console.print("[dim]Results embedded into vector store.[/dim]")
 
 
 def _cmd_recall(project: str, query: str) -> None:
     """Query vector memory and pretty-print results."""
-    from orchid.memory.vector import VectorMemory  # noqa: PLC0415
     from orchid import config as cfg  # noqa: PLC0415
+    from orchid.memory.vector import VectorMemory  # noqa: PLC0415
 
     proj_path = _resolve_project(project)
     cfg.configure_for_project(proj_path)
@@ -568,6 +567,7 @@ def _cmd_recall(project: str, query: str) -> None:
 def _cmd_tail(project: str) -> None:
     """Tail the most recent live agent log."""
     import time
+
     from rich.markup import escape
 
     log_dir = _resolve_project(project) / ".orchid" / "session_logs"
@@ -615,7 +615,7 @@ def _cmd_inject(project: str, text: str) -> None:
     with open(queue_path, "a", encoding="utf-8") as f:
         f.write(text + "\n")
     console.print(f"[green]Injected into queue: {text[:100]}[/green]")
-    console.print(f"[dim]Agent will pick this up on next ReAct iteration.[/dim]")
+    console.print("[dim]Agent will pick this up on next ReAct iteration.[/dim]")
 
 
 def _cmd_check_providers(proj: str | None = None) -> None:
@@ -664,8 +664,9 @@ def _cmd_add_task(project: str, title: str, task_type: str, priority: int) -> No
 
 def _cmd_get_result(project: str, task_id: str) -> None:
     """Print the stored result for a specific task ID."""
-    from orchid.memory.state import TaskResultStore
     from rich.markup import escape
+
+    from orchid.memory.state import TaskResultStore
 
     proj_path = _resolve_project(project)
     store = TaskResultStore(proj_path)
@@ -728,8 +729,8 @@ def _cmd_artifacts(project: str) -> None:
 
 def _cmd_approve(project: str, auto: bool = False) -> None:
     """Approve the current lifecycle gate."""
+    from orchid.gates import GateStatus, GateSystem
     from orchid.lifecycle import ProjectLifecycle
-    from orchid.gates import GateSystem, GateStatus
 
     proj_path = _resolve_project(project)
     lc = ProjectLifecycle.load(proj_path)
@@ -778,9 +779,8 @@ def _cmd_interactive_planning(
     offline: bool = False,
 ) -> None:
     """Interactive planning session — routes to appropriate agent based on phase."""
+    from orchid.gates import GateStatus, GateSystem
     from orchid.lifecycle import ProjectLifecycle
-    from orchid.discussion import DiscussionHistory
-    from orchid.gates import GateSystem, GateStatus
 
     proj_path = _resolve_project(project)
     lc = ProjectLifecycle.load(proj_path)
@@ -796,8 +796,8 @@ def _cmd_interactive_planning(
 
     elif phase == "REQUIREMENTS":
         console.print(Panel(
-            f"[bold]Phase:[/bold] REQUIREMENTS\n"
-            f"Generating REQUIREMENTS.md and ARCHITECTURE.md...",
+            "[bold]Phase:[/bold] REQUIREMENTS\n"
+            "Generating REQUIREMENTS.md and ARCHITECTURE.md...",
             border_style="yellow",
         ))
         from orchid.agents.product_manager import ProductManagerAgent
@@ -845,14 +845,13 @@ def _cmd_interactive_planning(
 
 def _run_discussion_loop(
     proj_path: Path,
-    lc: "ProjectLifecycle",
+    lc: ProjectLifecycle,
     disc_override: str | None = None,
     offline: bool = False,
 ) -> None:
     """Run the interactive discussion loop until user exits or agent signals readiness."""
-    from orchid.discussion import DiscussionHistory
     from orchid.agents.discussion_agent import DiscussionAgent
-    from orchid.lifecycle import ProjectLifecycle
+    from orchid.discussion import DiscussionHistory
 
     history = DiscussionHistory.load(proj_path)
     agent = DiscussionAgent(proj_path, cli_override=disc_override, offline=offline)
@@ -922,11 +921,11 @@ def _run_discussion_loop(
     console.print("[dim]Discussion saved.[/dim]")
 
 
-def _try_advance_from_discussion(proj_path: Path, lc: "ProjectLifecycle") -> None:
+def _try_advance_from_discussion(proj_path: Path, lc: ProjectLifecycle) -> None:
     """After discussion, generate PM artifacts and advance lifecycle."""
     from orchid.agents.product_manager import ProductManagerAgent
     from orchid.agents.project_manager import ProjectManagerAgent
-    from orchid.gates import GateSystem, GateStatus
+    from orchid.gates import GateStatus, GateSystem
 
     project = str(proj_path)
 
@@ -989,8 +988,8 @@ def _show_ready_summary(proj_path: Path, project: str) -> None:
 
 def _cmd_multi(projects: list[str], code_model: str | None = None) -> None:
     """Run multiple projects in parallel worker processes."""
-    from orchid.multi import MultiOrchid
     from orchid.interfaces.multi_formatter import format_notification as fmt_multi
+    from orchid.multi import MultiOrchid
 
     console.print(Panel(
         "[bold green]Orchid — Multi-Project Mode[/bold green]\n"
@@ -1026,7 +1025,7 @@ def _cmd_multi(projects: list[str], code_model: str | None = None) -> None:
 @app.command()
 def init(
     path: str = typer.Argument(".", help="Directory to initialise (defaults to cwd)"),
-    name: Optional[str] = typer.Option(None, "--name", "-n", help="Project name (defaults to dirname)"),
+    name: str | None = typer.Option(None, "--name", "-n", help="Project name (defaults to dirname)"),
     description: str = typer.Option("", "--description", "-d", help="One-line project description"),
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing files"),
 ) -> None:
@@ -1069,21 +1068,21 @@ def init(
         console.print(f"[dim]  skipped[/dim]  {f} (already exists, use --force to overwrite)")
 
     console.print(f"\n[bold green]Orchid initialised in {target}[/bold green]")
-    console.print(f"  Edit [cyan]CLAUDE.md[/cyan] and [cyan].orchid.yaml[/cyan], then add tasks and run:")
+    console.print("  Edit [cyan]CLAUDE.md[/cyan] and [cyan].orchid.yaml[/cyan], then add tasks and run:")
     console.print(f"  [bold]orchid --project {path} --mode auto[/bold]")
 
 
 @app.command(name="new")
 def new_project(
     description: str = typer.Argument(..., help="What you want to build (short description)"),
-    name: Optional[str] = typer.Option(None, "--name", "-n", help="Project name (defaults to slug of description)"),
-    dir_path: Optional[str] = typer.Option(None, "--dir", help="Base directory (overrides machine-profile)"),
-    project_type: Optional[str] = typer.Option(
+    name: str | None = typer.Option(None, "--name", "-n", help="Project name (defaults to slug of description)"),
+    dir_path: str | None = typer.Option(None, "--dir", help="Base directory (overrides machine-profile)"),
+    project_type: str | None = typer.Option(
         None, "--type", "-t",
         help="Project type for directory routing: ai | web | tool | game",
     ),
     no_interactive: bool = typer.Option(False, "--no-interactive", help="Skip discussion after creation"),
-    provider: Optional[List[str]] = typer.Option(
+    provider: list[str] | None = typer.Option(
         None, "--provider",
         help="Per-agent provider override, e.g. discussion=ollama. Repeatable.",
     ),
@@ -1098,8 +1097,8 @@ def new_project(
       orchid new "CLI tool for git stats" --type tool --no-interactive
     """
     _setup_logging(log_level)
-    from orchid.project_creator import ProjectCreator
     from orchid.machine_profile import MachineProfile
+    from orchid.project_creator import ProjectCreator
 
     profile = MachineProfile.load()
     creator = ProjectCreator(machine_profile=profile)
@@ -1165,7 +1164,7 @@ def decide(
 def task(
     action: str = typer.Argument(..., help="add | done | block | cancel"),
     project: str = typer.Option(".", "--project", "-p"),
-    task_id: Optional[str] = typer.Option(None, "--id"),
+    task_id: str | None = typer.Option(None, "--id"),
     title: str = typer.Argument("", help="Task title (required for add)"),
     task_type: str = typer.Option("draft", "--type"),
     priority: int = typer.Option(2, "--priority"),
@@ -1210,11 +1209,11 @@ def task(
 @app.command(name="multi")
 def multi_cmd(
     action: str = typer.Argument("start", help="start | status | stop"),
-    project: Optional[List[str]] = typer.Option(
+    project: list[str] | None = typer.Option(
         None, "--project", "-p",
         help="Project directory (repeat for multiple projects)",
     ),
-    code_model: Optional[str] = typer.Option(
+    code_model: str | None = typer.Option(
         None, "--code-model",
         help="Force model for all tasks: claude | local | auto",
     ),
@@ -1259,11 +1258,11 @@ def multi_cmd(
 
 @app.command()
 def telegram(
-    project: Optional[List[str]] = typer.Option(
+    project: list[str] | None = typer.Option(
         None, "--project", "-p",
         help="Project directory. Repeat with --multi for multi-project mode.",
     ),
-    token: Optional[str] = typer.Option(None, "--token", help="Telegram bot token (overrides env)"),
+    token: str | None = typer.Option(None, "--token", help="Telegram bot token (overrides env)"),
     multi: bool = typer.Option(False, "--multi", help="Multi-project mode — tag all notifications with project name"),
     log_level: str = typer.Option("INFO", "--log-level", "-l"),
 ) -> None:
@@ -1304,7 +1303,7 @@ def telegram(
 
     if multi:
         all_projects = resolved_projects
-        console.print(f"[green]Starting Telegram bot (multi-project):[/green]")
+        console.print("[green]Starting Telegram bot (multi-project):[/green]")
         for p in all_projects:
             console.print(f"  • {p}")
     else:
@@ -1327,13 +1326,13 @@ def telegram(
 
 @app.command()
 def slack(
-    project: Optional[List[str]] = typer.Option(
+    project: list[str] | None = typer.Option(
         None, "--project", "-p",
         help="Project directory. Repeat with --multi for multi-project mode.",
     ),
-    bot_token: Optional[str] = typer.Option(None, "--token", help="Slack bot token xoxb- (overrides env)"),
-    app_token: Optional[str] = typer.Option(None, "--app-token", help="Slack app token xapp- (overrides env)"),
-    channel: Optional[str] = typer.Option(None, "--channel", help="Default Slack channel (overrides env)"),
+    bot_token: str | None = typer.Option(None, "--token", help="Slack bot token xoxb- (overrides env)"),
+    app_token: str | None = typer.Option(None, "--app-token", help="Slack app token xapp- (overrides env)"),
+    channel: str | None = typer.Option(None, "--channel", help="Default Slack channel (overrides env)"),
     multi: bool = typer.Option(False, "--multi", help="Multi-project mode — tag all notifications with project name"),
     log_level: str = typer.Option("INFO", "--log-level", "-l"),
 ) -> None:
@@ -1404,7 +1403,7 @@ def slack(
 
 @app.command()
 def web(
-    project: Optional[List[str]] = typer.Option(
+    project: list[str] | None = typer.Option(
         None, "--project", "-p",
         help="Project directory. Repeat for multi-project mode.",
     ),
@@ -1453,11 +1452,11 @@ def web(
 
 @app.command()
 def serve(
-    watch_dir: Optional[List[str]] = typer.Option(
+    watch_dir: list[str] | None = typer.Option(
         None, "--watch-dir",
         help="Directory to watch for orchid projects (repeatable). Default: ~/LocalAI",
     ),
-    project: Optional[List[str]] = typer.Option(
+    project: list[str] | None = typer.Option(
         None, "--project", "-p",
         help="Explicit project path (repeatable). Always registered, .orchid.yaml optional.",
     ),

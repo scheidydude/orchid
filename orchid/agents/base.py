@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from orchid import config as cfg
 from orchid.tools.models import Message, call
@@ -18,10 +19,9 @@ logger = logging.getLogger(__name__)
 ToolFn = Callable[..., str]
 
 # ── Built-in tools ────────────────────────────────────────────────────────────
-from orchid.tools.filesystem import read_file, write_file, list_dir, append_file
-from orchid.tools.shell import bash
 from orchid.tools.consistency import check_imports_summary
-
+from orchid.tools.filesystem import append_file, list_dir, read_file, write_file
+from orchid.tools.shell import bash
 
 _BUILTIN_TOOLS: dict[str, ToolFn] = {
     "read_file": read_file,
@@ -446,7 +446,7 @@ class BaseAgent:
                         "thought": thought_m.group(1).strip() if thought_m else "",
                         "action": "final_answer",
                         "observation": answer[:200],
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "timestamp": datetime.now(UTC).isoformat(),
                     })
                 return answer
 
@@ -539,7 +539,7 @@ class BaseAgent:
                     "thought": thought_m.group(1).strip() if thought_m else "",
                     "action": tool_name or "",
                     "observation": observation[:300],
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "timestamp": datetime.now(UTC).isoformat(),
                 })
 
         return "[max iterations reached without final answer]"
@@ -571,7 +571,8 @@ class BaseAgent:
             return f"[unknown tool: {tool_name}]"
         try:
             timeout = cfg.get("agents.tool_timeout_seconds", 30)
-            from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+            from concurrent.futures import ThreadPoolExecutor
+            from concurrent.futures import TimeoutError as FuturesTimeout
             with ThreadPoolExecutor(max_workers=1) as ex:
                 future = ex.submit(fn, **args)
                 try:

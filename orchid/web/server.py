@@ -1,24 +1,13 @@
 # orchid/web/server.py
 import asyncio
-import json
-import logging
-import os
-import re
-import subprocess
-import sys
-import time
-import uuid
 from pathlib import Path
-from typing import Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-
-from orchid.config import load_config
-from orchid.discovery import ProjectDiscovery
 from orchid.registry import ProjectRegistry
 from orchid.runner import BackgroundRunner
+
 from orchid.planning import PlanningSession
 
 app = FastAPI()

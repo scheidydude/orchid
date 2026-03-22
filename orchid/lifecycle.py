@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ for _p in PHASES:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 @dataclass
@@ -60,7 +60,7 @@ class ProjectLifecycle:
     # ── Factory ───────────────────────────────────────────────────────────────
 
     @classmethod
-    def load(cls, project_dir: Path) -> "ProjectLifecycle":
+    def load(cls, project_dir: Path) -> ProjectLifecycle:
         """Load from disk, or create NEW state if file absent."""
         project_dir = Path(project_dir).resolve()
         state_path = project_dir / ".orchid" / "project.state.json"

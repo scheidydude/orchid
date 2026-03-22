@@ -15,8 +15,9 @@ import logging
 import multiprocessing
 import signal
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +27,10 @@ logger = logging.getLogger(__name__)
 
 def worker_main(
     project_path: str,
-    notification_queue: "multiprocessing.Queue[dict[str, Any]]",
-    api_semaphore: "multiprocessing.Semaphore",
-    local_semaphore: "multiprocessing.Semaphore",
-    stop_event: "multiprocessing.Event",
+    notification_queue: multiprocessing.Queue[dict[str, Any]],
+    api_semaphore: multiprocessing.Semaphore,
+    local_semaphore: multiprocessing.Semaphore,
+    stop_event: multiprocessing.Event,
     code_model: str | None,
 ) -> None:
     """Worker process entry point.
@@ -64,9 +65,9 @@ def worker_main(
     try:
         _install_semaphore_wrapper(api_semaphore, local_semaphore)
 
-        from orchid.session import Session
-        from orchid.orchestrator import Orchestrator
         from orchid.memory.state import TaskStatus
+        from orchid.orchestrator import Orchestrator
+        from orchid.session import Session
 
         session = Session(project_dir=project_path)
         session.load()
@@ -120,8 +121,8 @@ def worker_main(
 
 
 def _install_semaphore_wrapper(
-    api_semaphore: "multiprocessing.Semaphore",
-    local_semaphore: "multiprocessing.Semaphore",
+    api_semaphore: multiprocessing.Semaphore,
+    local_semaphore: multiprocessing.Semaphore,
 ) -> None:
     """Monkey-patch orchid.tools.models.call in the worker process.
 

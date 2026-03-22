@@ -12,7 +12,6 @@ Usage:
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 from typing import Any
 
@@ -114,7 +113,7 @@ class TelegramBot:
 
     def _guard(self, handler):
         """Wrap a handler with user-whitelist check."""
-        async def _wrapped(update: "Update", ctx: "ContextTypes.DEFAULT_TYPE") -> None:
+        async def _wrapped(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             user_id = update.effective_user.id if update.effective_user else None
             if self.allowed_users and user_id not in self.allowed_users:
                 logger.warning("Rejected message from user_id=%s", user_id)
@@ -129,7 +128,7 @@ class TelegramBot:
     # ── Helpers ────────────────────────────────────────────────────────────────
 
     @staticmethod
-    async def _reply(update: "Update", text: str, parse_mode: str | None = None) -> None:
+    async def _reply(update: Update, text: str, parse_mode: str | None = None) -> None:
         if update.message:
             await update.message.reply_text(text, parse_mode=parse_mode)
 
@@ -168,7 +167,7 @@ class TelegramBot:
 
     # ── Command handlers ───────────────────────────────────────────────────────
 
-    async def _cmd_start(self, update: "Update", ctx: "ContextTypes.DEFAULT_TYPE") -> None:
+    async def _cmd_start(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         session = self._make_session()
         text = (
             f"👋 *Orchid* — {session.project_name}\n\n"
@@ -186,10 +185,10 @@ class TelegramBot:
         )
         await self._reply(update, text, parse_mode=ParseMode.MARKDOWN)
 
-    async def _cmd_help(self, update: "Update", ctx: "ContextTypes.DEFAULT_TYPE") -> None:
+    async def _cmd_help(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await self._cmd_start(update, ctx)
 
-    async def _cmd_status(self, update: "Update", ctx: "ContextTypes.DEFAULT_TYPE") -> None:
+    async def _cmd_status(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if self.multi_project and len(self._all_projects) > 1:
             await self._cmd_status_multi(update)
             return
@@ -197,9 +196,8 @@ class TelegramBot:
         session = self._make_session()
         await self._reply(update, format_status(session))
 
-    async def _cmd_status_multi(self, update: "Update") -> None:
+    async def _cmd_status_multi(self, update: Update) -> None:
         """Show aggregate status across all configured projects."""
-        from orchid.interfaces.telegram_formatter import format_status
         from orchid.session import Session
 
         lines = ["📊 Multi-project status", ""]
@@ -227,8 +225,12 @@ class TelegramBot:
                 lines.append(f"• {Path(proj_path).name}: error — {exc}")
         await self._reply(update, "\n".join(lines))
 
-    async def _cmd_run(self, update: "Update", ctx: "ContextTypes.DEFAULT_TYPE") -> None:
-        from orchid.interfaces.telegram_formatter import format_task_started, format_task_complete, format_task_failed
+    async def _cmd_run(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        from orchid.interfaces.telegram_formatter import (
+            format_task_complete,
+            format_task_failed,
+            format_task_started,
+        )
         args = ctx.args or []
         if not args:
             await self._reply(update, "Usage: /run <task\\_id>  e.g. /run T001")
@@ -263,13 +265,15 @@ class TelegramBot:
 
         self._runner.run_task(task_id, on_done, loop)
 
-    async def _cmd_auto(self, update: "Update", ctx: "ContextTypes.DEFAULT_TYPE") -> None:
+    async def _cmd_auto(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if self.multi_project and len(self._all_projects) > 1:
             await self._cmd_auto_multi(update)
             return
 
         from orchid.interfaces.telegram_formatter import (
-            format_task_complete, format_task_failed, format_auto_summary
+            format_auto_summary,
+            format_task_complete,
+            format_task_failed,
         )
         if self._runner.is_running():
             await self._reply(update, "⚠️ Already running. Use /cancel first.")
@@ -301,10 +305,11 @@ class TelegramBot:
 
         self._runner.run_auto(on_task, on_done, loop)
 
-    async def _cmd_auto_multi(self, update: "Update") -> None:
+    async def _cmd_auto_multi(self, update: Update) -> None:
         """Start a multi-project run — all projects in parallel worker processes."""
         import asyncio
         import threading
+
         from orchid.multi import MultiOrchid
 
         if self._multi_thread and self._multi_thread.is_alive():
@@ -339,7 +344,7 @@ class TelegramBot:
         self._multi_thread = threading.Thread(target=_run, daemon=True, name="orchid-multi-bot")
         self._multi_thread.start()
 
-    async def _cmd_add(self, update: "Update", ctx: "ContextTypes.DEFAULT_TYPE") -> None:
+    async def _cmd_add(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         args = ctx.args or []
         if not args:
             await self._reply(update, "Usage: /add <task description>")
@@ -355,7 +360,7 @@ class TelegramBot:
         save_tasks(session.tasks, self.project_path)
         await self._reply(update, f"✅ Added {tid}: {description}  (type=draft, p2)")
 
-    async def _cmd_inject(self, update: "Update", ctx: "ContextTypes.DEFAULT_TYPE") -> None:
+    async def _cmd_inject(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Inject context into the running agent."""
         args = ctx.args or []
         if not args:
@@ -370,10 +375,10 @@ class TelegramBot:
         self._runner.inject(text)
         await self._reply(update, f"💉 Injected: {text[:100]}")
 
-    async def _cmd_recall(self, update: "Update", ctx: "ContextTypes.DEFAULT_TYPE") -> None:
+    async def _cmd_recall(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        from orchid import config as cfg
         from orchid.interfaces.telegram_formatter import format_recall_results
         from orchid.memory.vector import VectorMemory
-        from orchid import config as cfg
 
         args = ctx.args or []
         if not args:
@@ -391,10 +396,10 @@ class TelegramBot:
         results = vm.query(query, n=min(n, 3))
         await self._reply(update, f"🔍 Recall: {query}\n\n" + format_recall_results(results))
 
-    async def _cmd_search(self, update: "Update", ctx: "ContextTypes.DEFAULT_TYPE") -> None:
+    async def _cmd_search(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        from orchid import config as cfg
         from orchid.interfaces.telegram_formatter import format_search_results
         from orchid.tools.search import WebSearchTool, reset_backend_cache
-        from orchid import config as cfg
 
         args = ctx.args or []
         if not args:
@@ -416,7 +421,7 @@ class TelegramBot:
         results = tool.search(query, n=3)
         await self._reply(update, f"🌐 Search: {query}\n\n" + format_search_results(results))
 
-    async def _cmd_decide(self, update: "Update", ctx: "ContextTypes.DEFAULT_TYPE") -> None:
+    async def _cmd_decide(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         text = update.message.text if update.message else ""
         # Strip /decide prefix
         body = text.partition(" ")[2].strip()
@@ -433,7 +438,7 @@ class TelegramBot:
         rec = record_decision(title, decision, rationale, project_dir=self.project_path)
         await self._reply(update, f"📝 Recorded {rec['id']}: {title}")
 
-    async def _cmd_cancel(self, update: "Update", ctx: "ContextTypes.DEFAULT_TYPE") -> None:
+    async def _cmd_cancel(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if self._runner.cancel():
             await self._reply(update, "🛑 Cancellation requested. Task will stop at next checkpoint.")
         else:
@@ -441,6 +446,6 @@ class TelegramBot:
 
     # ── Utilities ──────────────────────────────────────────────────────────────
 
-    def _get_loop(self) -> "asyncio.AbstractEventLoop":
+    def _get_loop(self) -> asyncio.AbstractEventLoop:
         import asyncio
         return asyncio.get_event_loop()
