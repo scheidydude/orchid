@@ -177,7 +177,9 @@ class ProjectManagerAgent:
             machine_context=machine_context,
             project_name=project_name,
         )
-        milestones_content = provider.complete([{"role": "user", "content": mil_prompt}])
+        milestones_content = provider.complete(
+            [{"role": "user", "content": mil_prompt}], cacheable_prefix=1
+        )
         mil_path = self.project_dir / "MILESTONES.md"
         mil_path.write_text(milestones_content.strip() + "\n", encoding="utf-8")
         logger.info("Wrote %s", mil_path)
@@ -191,7 +193,9 @@ class ProjectManagerAgent:
             machine_context=machine_context,
             project_name=project_name,
         )
-        tasks_content = provider.complete([{"role": "user", "content": tasks_prompt}])
+        tasks_content = provider.complete(
+            [{"role": "user", "content": tasks_prompt}], cacheable_prefix=1
+        )
         tasks_path = self.project_dir / "tasks.md"
         tasks_path.write_text(tasks_content.strip() + "\n", encoding="utf-8")
         logger.info("Wrote %s", tasks_path)

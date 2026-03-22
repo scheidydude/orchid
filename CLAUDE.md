@@ -1,4 +1,4 @@
-<!-- compressed 2026-03-19 -->
+<!-- compressed 2026-03-22 -->
 
 # CLAUDE.md — Orchid Framework (compressed)
 
@@ -16,23 +16,24 @@ Standalone AI agent orchestration tool. Installed globally, invoked against exte
 ## Key CLI
 ```bash
 orchid --project <path> --mode auto|interactive [--code-model claude|local|auto] [--provider developer=ollama] [--offline]
-orchid --project <path> --status|--recall "q"|--search "q"|--add-task "t" [--model claude|local|auto]
-orchid --project <path> --tail | --inject "text" | --get-result T001
+orchid --project <path> --status|--recall "q"|--search "q"|--add-task "t"|--tail|--inject "text"|--get-result T001|--phase|--artifacts|--approve [--auto]
 orchid init <path> [--name --description --force]
 orchid decide "Title" --decision "..." --rationale "..." --project <path>
+orchid new "<desc>" [--name NAME] [--dir PATH] [--type ai|web|tool|game]
 orchid --multi --project <path-a> --project <path-b>
 orchid telegram|slack|web --project <path> [--port 7842]
 orchid serve [--watch-dir ~/LocalAI] [--project <path>] [--port 7842]
 orchid --check-providers
-# V2 lifecycle commands
-orchid new "<description>" [--name NAME] [--dir PATH] [--type ai|web|tool|game]
-orchid --project <path> --interactive [--provider discussion=ollama]
-orchid --project <path> --phase
-orchid --project <path> --artifacts
-orchid --project <path> --approve [--auto]
 ```
 tasks.md: `- [ ] **T003** Title \`type:code_generate\` \`p1\` \`needs:T001,T002\` \`model:claude\``
-Rollup: `- [ ] **T099** Title \`type:rollup\` \`p1\` \`rollup:T090,T091\` \`output:FILE.md\``
+Rollup: `- [ ] **T099** Title \`type:rollup\` \`rollup:T090,T091\` \`output:FILE.md\``
+
+## Tool Call Format (EXACT)
+```
+Action: read_file
+Action Input: {"path": "src/server.js"}
+```
+One action per ReAct step. Actions: read_file / list_dir / bash / write_file / check_imports / get_task_files / delegate.
 
 ## Architecture Decisions
 - **D0001** File-based state (tasks.md, CLAUDE.md, decisions.json, session_logs). No DB.
@@ -70,55 +71,33 @@ Rollup: `- [ ] **T099** Title \`type:rollup\` \`p1\` \`rollup:T090,T091\` \`outp
 - **D0033** Auto-discovery via watchdog inotify: scans watch_dirs (depth 2) for .orchid.yaml, debounced 2s. Excludes .venv/node_modules/.git/__pycache__.
 - **D0034** `orchid serve` — unified persistent entry point: web UI + auto-discovery + optional agent loops. systemd: scripts/orchid-serve.service.
 - **D0035** AgentManager: per-project agent loop threads with APScheduler for cron-based auto runs. Per-project persistent config in .orchid.yaml `persistent:` section.
-- **D0039** Shell tool dual-mode: `agents.shell_mode: blocklist` (default) keeps existing behaviour; `allowlist` mode restricts bash to ~40 known-safe executables (git, python, node, uv, pytest, ruff, make, etc.) plus project additions via `agents.shell_allowlist`. Blocklist patterns always run first regardless of mode.
-- **D0040** Vector memory chunking uses tiktoken `cl100k_base` BPE token counting (transitive dep via chromadb) to bound chunk size precisely; falls back to `len//3` char estimate if tiktoken is absent. `chunk_size` config key is now a token limit, not a word count.
 - **D0036** Machine-level config at ~/.config/orchid/.env (XDG). load_dotenv() order: cwd → ~/.config/orchid/.env → ~/LocalAI/orchid/.env (legacy).
 - **D0037** Rollup task: `type:rollup` `rollup:T001,T002` `output:FILE.md` — gathers TaskResultStore results, synthesises via Claude, writes output. Always uses Claude.
 - **D0038** TaskResultStore: JSON Lines at `.orchid/task_results.json`. Appended on task completion. CLI: `--get-result T001`.
-- **D0041** V2 project lifecycle state machine (orchid/lifecycle.py): NEW → DISCUSSING → REQUIREMENTS → PLANNING → READY → EXECUTING → COMPLETE. Any phase can return to DISCUSSING. Persisted at `<project>/.orchid/project.state.json`.
-- **D0042** Strategic agent tier (orchid/agents/discussion_agent.py, product_manager.py, project_manager.py): DiscussionAgent elicits requirements conversationally; ProductManagerAgent generates REQUIREMENTS.md + ARCHITECTURE.md; ProjectManagerAgent generates MILESTONES.md + tasks.md. All use provider registry (default: claude).
-- **D0043** Gate system (orchid/gates.py): human|auto gates control phase transitions. Human gates require `orchid --approve`. Auto gates advance automatically. Config: gates.default + per-transition overrides in defaults.yaml and .orchid.yaml lifecycle.gates.
-- **D0044** Machine profile (orchid/machine_profile.py): developer preferences at ~/.config/orchid/machine-profile.yaml. Supplies project_root, preferred_stacks, infrastructure, defaults. Injected into strategic agent prompts. Created with defaults if absent.
-- **D0045** Web UI Planning tab: 9 REST + 1 WS endpoints in web_server.py for lifecycle, discussion, advance, approve, artifacts, project creation, machine profile. React components: PlanningTab, PhaseIndicator, DiscussionPanel, ArtifactPanel, ApprovalPanel, NewProjectWizard. Settings tab with machine profile editor and provider status.
-- **D0046** Discussion streaming via WebSocket `/ws/{id}/discussion`: sends `{type:"thinking"}` → `{type:"token", data:full_response}` → `{type:"done", data:metadata}`. No true token streaming (providers use complete()). Main WS broadcasts `advance_status`/`advance_artifact`/`advance_done` during `/api/projects/{id}/advance`.
-- **D0047** NewProjectWizard: 4-step modal (Name+Description → Confirm Path → Options → Creating). Auto-slugifies name. Fetches suggested path from POST /api/projects with confirm_path:false before final creation with confirm_path:true.
+- **D0039** Shell tool dual-mode: `agents.shell_mode: blocklist` (default); `allowlist` restricts bash to ~40 known-safe executables plus project additions via `agents.shell_allowlist`. Blocklist always runs first.
+- **D0040** Vector memory chunking uses tiktoken `cl100k_base` BPE token counting; falls back to `len//3` char estimate if absent. `chunk_size` config key is token limit, not word count.
+- **D0041** V2 lifecycle state machine (orchid/lifecycle.py): NEW → DISCUSSING → REQUIREMENTS → PLANNING → READY → EXECUTING → COMPLETE. Any phase can return to DISCUSSING. Persisted at `<project>/.orchid/project.state.json`.
+- **D0042** Strategic agent tier: DiscussionAgent elicits requirements; ProductManagerAgent generates REQUIREMENTS.md + ARCHITECTURE.md; ProjectManagerAgent generates MILESTONES.md + tasks.md. All use provider registry (default: claude).
+- **D0043** Gate system (orchid/gates.py): human|auto gates control phase transitions. Human gates require `orchid --approve`. Config: gates.default + per-transition overrides in defaults.yaml and .orchid.yaml lifecycle.gates.
+- **D0044** Machine profile (orchid/machine_profile.py): developer preferences at ~/.config/orchid/machine-profile.yaml. Supplies project_root, preferred_stacks, infrastructure, defaults. Injected into strategic agent prompts.
+- **D0045** Web UI Planning tab: 9 REST + 1 WS endpoints. React components: PlanningTab, PhaseIndicator, DiscussionPanel, ArtifactPanel, ApprovalPanel, NewProjectWizard. Settings tab with machine profile editor and provider status.
+- **D0046** Discussion streaming via WebSocket `/ws/{id}/discussion`: `{type:"thinking"}` → `{type:"token", data:full_response}` → `{type:"done", data:metadata}`. Main WS broadcasts `advance_status`/`advance_artifact`/`advance_done`.
+- **D0047** NewProjectWizard: 4-step modal (Name+Description → Confirm Path → Options → Creating). Auto-slugifies name. POST /api/projects with confirm_path:false before confirm_path:true.
+- **D0048** Prompt caching: AnthropicProvider (`supports_explicit_caching=True`) auto-caches system prompts ≥2048 chars via `cache_control:{type:ephemeral}`; `cacheable_prefix=N` caches first N messages. DiscussionAgent splits static instructions (cached) from stable context+history (cacheable). PM/PMgr pass `cacheable_prefix=1`. LocalProvider/OllamaProvider (`supports_implicit_caching=True`) send `cache_prompt:true` and use `optimize_for_caching()`. Session cache stats logged at close. Config at `caching:` in orchid.defaults.yaml.
+- **D0049** Local KV cache hit detection uses relative ms/tok threshold (<1.0ms/token = cache hit) with rolling average tracking per model, not absolute tok/ms.
 
-## Tool Call Format (EXACT)
-```
-Action: read_file
-Action Input: {"path": "src/server.js"}
-```
-One action per ReAct step. Actions: read_file / list_dir / bash / write_file / check_imports / get_task_files / delegate.
+## Current State
+**413 tests passing.** Completed through T058.
+- T051: shell allowlist + BPE chunking
+- T053: V2 lifecycle + strategic agents + CLI
+- T054: Planning tab API + React; DDG test marked skipif `ORCHID_NETWORK_TESTS!=true`
+- T055: DiscussionPanel loading/streaming UX; local KV cache hit detection fix (D0049)
+- T056: Prompt caching (D0048) + 17 tests; wrote V2-SUMMARY.md
+- T057: Added Orchid V2 one-line description to README.md
+- T058: Code review of anthropic.py prompt caching — **PASS WITH RESERVATIONS** (3 bugs identified)
+- T059: Review prompt caching in orchid/providers/anthropic.py — cache_control blocks correctly applied *(pending)*
 
-## Task Status
-| ID | Status | Notes |
-|----|--------|-------|
-| T007 | Done | DDG ad-result filter (y.js URLs) |
-| T008 | Done | decisions.json JSON Lines parse error |
-| T034 | Done | `orchid task done` no longer requires TITLE when --id provided |
-| T047 | Done | Dead stub `orchid/cli.py` deleted; real CLI at `orchid/interfaces/cli.py` unaffected |
-| T009–T032 | Done | chunking, log parser, dep tests, Slack formatter, Web UI, CLI --help |
-| T035 | Done | AnthropicProvider: exponential backoff+jitter on 429/APIConnectionError/APITimeoutError, max 3 retries, up to 60s |
-| T036 | Done | discovery.py: skip inotify for non-existent dirs; exclude .venv/node_modules/.git |
-| T037 | Done | scripts/deploy.sh: builds React, reinstalls via uv tool, restarts orchid-serve |
-| T038 | Done | POST /api/projects/{id}/run passes absolute filesystem path to BackgroundRunner |
-| T039 | Done | --model flag added to --add-task CLI |
-| T040 | Done | XDG config ~/.config/orchid/.env; scripts/setup-config.sh (chmod 600) |
-| T041 | Done | Post-write verification: .py→py_compile, .js→node syntax check |
-| T042 | Done | tools/consistency.py: check_imports() scans .js/.py; ReAct action added; reviewer auto-calls at session end |
-| T043 | Done | auto_review.enabled=false, auto_review.after_n_tasks=3 in orchid.defaults.yaml |
-| T044 | Done | project_context() reads package.json/pyproject.toml; injected at task start |
-| T045 | Done | File manifest on task completion: files_created/files_modified in session log; get_task_files(task_id) added |
-| T046 | Done | Rollup task type: TaskResultStore, orchestrator synthesis, --get-result CLI; 25 tests |
-| T048 | Done | 253 tests passing, 0 failed, 2.18s |
-| T049 | Done | Rollup written to HEALTH-REPORT.md |
-| T050 | Done | Provider empty-choices guards (local/ollama/openai/bedrock); Bedrock ProviderError; Anthropic retry extended |
-| T051 | Done | Shell allowlist mode (D0039); systemd ProtectSystem=strict hardening; BPE chunking (D0040) |
-| T052 | Done | GitHub Actions CI (.github/workflows/ci.yml); 302 tests passing |
-| T053 | Done | V2 Session 1: lifecycle.py, machine_profile.py, discussion.py, gates.py, project_creator.py, discussion_agent.py, product_manager.py, project_manager.py; orchid new / --interactive / --approve / --phase / --artifacts CLI; 377 tests passing |
-| T054 | Done | V2 Session 2: Planning tab API (9 endpoints + WS), React components (PlanningTab, PhaseIndicator, DiscussionPanel, ArtifactPanel, ApprovalPanel, NewProjectWizard), Settings tab, index.css planning styles; 396 tests passing |
-
-**Tests: 396 passing**
+**Orchid V2**: Two-tier agent routing (Claude + local LLM), lifecycle-based planning phases, real-time web UI with task board.
 
 ## Install
 ```bash

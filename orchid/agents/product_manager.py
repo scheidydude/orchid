@@ -155,7 +155,8 @@ class ProductManagerAgent:
             project_name=project_name,
         )
         requirements_content = provider.complete(
-            [{"role": "user", "content": req_prompt}]
+            [{"role": "user", "content": req_prompt}],
+            cacheable_prefix=1,
         )
         req_path = self.project_dir / "REQUIREMENTS.md"
         req_path.write_text(requirements_content.strip() + "\n", encoding="utf-8")
@@ -170,7 +171,8 @@ class ProductManagerAgent:
             project_name=project_name,
         )
         architecture_content = provider.complete(
-            [{"role": "user", "content": arch_prompt}]
+            [{"role": "user", "content": arch_prompt}],
+            cacheable_prefix=1,
         )
         arch_path = self.project_dir / "ARCHITECTURE.md"
         arch_path.write_text(architecture_content.strip() + "\n", encoding="utf-8")

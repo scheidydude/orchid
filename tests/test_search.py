@@ -141,6 +141,10 @@ def test_searxng_default_url_is_scheidy():
 # ── DuckDuckGo live test ──────────────────────────────────────────────────────
 
 @pytest.mark.network
+@pytest.mark.skipif(
+    not os.environ.get("ORCHID_NETWORK_TESTS"),
+    reason="DDG scraping unreliable in automated environments"
+)
 def test_duckduckgo_backend_returns_results():
     """Real network test — DuckDuckGo HTML scraping. Mark skip if offline."""
     _reset()

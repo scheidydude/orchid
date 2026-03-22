@@ -15,6 +15,15 @@ from orchid.memory.vector import VectorMemory
 
 logger = logging.getLogger(__name__)
 
+# Module-level reference to the active session — set by Session.load().
+# Allows providers to report stats without a direct session dependency.
+_current_session: "Session | None" = None
+
+
+def get_current_session() -> "Session | None":
+    """Return the currently active Session, or None if no session is loaded."""
+    return _current_session
+
 
 class Session:
     """
@@ -45,11 +54,28 @@ class Session:
         self._log_path: Path | None = None
         self._live_log_path: Path | None = None
         self._vector: VectorMemory | None = None
+        # Local provider KV-cache stats (populated by LocalProvider.complete())
+        self.cache_stats: dict[str, int] = {
+            "local_fast_evals": 0,
+            "local_slow_evals": 0,
+            "local_prompt_tokens": 0,
+            "local_prompt_ms": 0,
+        }
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     def load(self) -> None:
         """Read all state from disk."""
+        global _current_session  # noqa: PLW0603
+        _current_session = self
+
+        # Reset provider cache stats for this session
+        try:
+            from orchid.providers.anthropic import reset_session_stats
+            reset_session_stats()
+        except Exception:
+            pass
+
         self.tasks = mem_state.load_tasks(self.project_dir)
         self.hot_memory = mem_state.load_hot_memory(self.project_dir)
         self.decisions = load_decisions(self.project_dir)
@@ -277,13 +303,46 @@ class Session:
     def _write_session_log(self, summary: str) -> None:
         ended_at = datetime.now(timezone.utc)
         duration = (ended_at - self.started_at).total_seconds()
-        self.log_event("session_end", {
+
+        # Collect cache stats from Anthropic provider if available
+        cache_stats: dict[str, Any] = {}
+        try:
+            from orchid.providers.anthropic import get_session_stats
+            cache_stats = get_session_stats()
+            if cache_stats.get("input_tokens_total", 0) > 0:
+                logger.info(
+                    "Cache stats: %d writes, %d hits, ~%.1f%% token savings",
+                    cache_stats["cache_writes"],
+                    cache_stats["cache_hits"],
+                    cache_stats["estimated_savings_pct"],
+                )
+        except Exception:
+            pass
+
+        event: dict[str, Any] = {
             "summary": summary,
             "duration_seconds": duration,
             "tasks_done": sum(1 for t in self.tasks if t.status == mem_state.TaskStatus.DONE),
             "tasks_total": len(self.tasks),
             "delegations_total": len(self.delegations),
-        })
+        }
+        if cache_stats:
+            event["cache_stats"] = cache_stats
+
+        # Log local KV-cache stats if any local calls were made
+        local = self.cache_stats
+        local_total = local["local_fast_evals"] + local["local_slow_evals"]
+        if local_total > 0:
+            pct = local["local_fast_evals"] / local_total * 100
+            logger.info(
+                "[local cache] %d/%d calls fast (%.0f%% likely cached)",
+                local["local_fast_evals"],
+                local_total,
+                pct,
+            )
+            event["local_cache_stats"] = dict(local)
+
+        self.log_event("session_end", event)
 
     # ── Convenience accessors ─────────────────────────────────────────────────
 

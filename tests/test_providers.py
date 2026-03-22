@@ -241,11 +241,17 @@ def test_all_status_returns_list():
 
 
 def _mock_openai_client(empty_choices: bool = True) -> MagicMock:
-    """Return a mock openai.OpenAI that yields a response with empty or single choice."""
+    """Return a mock openai.OpenAI that yields a response with empty or single choice.
+
+    LocalProvider now uses with_raw_response.create() so we mock that chain.
+    The raw response's .parse() returns the ChatCompletion; .json() returns {}.
+    """
     mock_response = MagicMock()
     mock_response.choices = [] if empty_choices else [MagicMock()]
     if not empty_choices:
         mock_response.choices[0].message.content = "hello"
+
+    mock_response.model_extra = {}
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = mock_response
     return mock_client

@@ -22,6 +22,7 @@ class OllamaProvider(ProviderBase):
     """
 
     name = "ollama"
+    supports_implicit_caching = True
 
     def __init__(
         self,
@@ -48,22 +49,35 @@ class OllamaProvider(ProviderBase):
     def fix_suggestion(self) -> str:
         return f"Start Ollama and ensure it listens at {self.base_url} (set OLLAMA_BASE_URL to override)"
 
+    def optimize_for_caching(
+        self, stable_parts: list[str], dynamic_parts: list[str]
+    ) -> str:
+        """Concatenate stable content before dynamic for KV-cache locality."""
+        return "\n\n".join(p for p in stable_parts + dynamic_parts if p)
+
     def complete(
         self,
         messages: list[Any],
         system: str | None = None,
+        cacheable_prefix: int | None = None,  # accepted but ignored (KV cache is implicit)
         **kwargs: Any,
     ) -> str:
         from openai import OpenAI  # lazy import — Ollama speaks OpenAI protocol
 
         raw = self._normalise_messages(messages)
+        # Flatten any content blocks (from optimize_for_caching) to plain strings
+        flat: list[dict[str, Any]] = []
+        for m in raw:
+            content = self._flatten_content(m["content"])
+            flat.append({"role": m["role"], "content": content})
+
         if system:
-            raw = [{"role": "system", "content": system}] + raw
+            flat = [{"role": "system", "content": system}] + flat
 
         client = OpenAI(base_url=f"{self.base_url}/v1", api_key="ollama")
         response = client.chat.completions.create(
             model=kwargs.pop("model", self.model),
-            messages=raw,
+            messages=flat,
             **kwargs,
         )
         if not response.choices:

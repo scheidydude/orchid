@@ -23,7 +23,7 @@ class DiscussionResponse:
     suggestions: list[str] = field(default_factory=list)  # follow-up prompts
 
 
-_SYSTEM_PROMPT_TEMPLATE = """\
+_SYSTEM_INSTRUCTIONS = """\
 You are a senior software architect and product manager helping a developer define
 requirements for a new project. Your role is to have a friendly, focused conversation
 to capture what the developer wants to build.
@@ -33,15 +33,6 @@ to capture what the developer wants to build.
 - Be concrete — prefer specific technology choices over vague descriptions.
 - Capture decisions as you go; don't re-ask things already answered.
 - When you have enough information to write a solid requirements doc, signal readiness.
-
-## Developer's Environment
-{machine_context}
-
-## Current Context Summary
-{context_md}
-
-## Conversation History
-{discussion_history}
 
 ## Response Format
 Always respond using EXACTLY this structure (XML-style markers, no deviation):
@@ -137,15 +128,8 @@ class DiscussionAgent:
         context_md = history.get_context_md()
         discussion_history = history.to_prompt_context()
 
-        system = _SYSTEM_PROMPT_TEMPLATE.format(
-            machine_context=machine_context,
-            context_md=context_md,
-            discussion_history=discussion_history or "(no conversation yet)",
-        )
-
-        from orchid.tools.models import Message
-
-        messages: list[Message] = [{"role": "user", "content": user_message}]
+        # System: static instructions only — stable across all turns, auto-cached
+        system = _SYSTEM_INSTRUCTIONS
 
         provider = self._get_provider()
 
@@ -157,6 +141,20 @@ class DiscussionAgent:
                 "Using local model for discussion agent — output quality may differ. "
                 "Use --provider discussion=claude for best results."
             )
+
+        # Build message content using provider's caching strategy:
+        #   stable: machine context + context summary + prior conversation (cacheable)
+        #   dynamic: current user message (changes every turn)
+        stable_context = "\n\n".join(filter(None, [
+            f"## Developer's Environment\n{machine_context}" if machine_context else "",
+            f"## Current Context Summary\n{context_md}" if context_md else "",
+            f"## Conversation History\n{discussion_history}" if discussion_history else "## Conversation History\n(no conversation yet)",
+        ]))
+        content = provider.optimize_for_caching(
+            stable_parts=[stable_context],
+            dynamic_parts=[f"Developer: {user_message}"],
+        )
+        messages = [{"role": "user", "content": content}]
 
         raw = provider.complete(messages, system=system)
         return self._parse_response(raw)

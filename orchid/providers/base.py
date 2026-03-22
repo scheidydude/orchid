@@ -30,6 +30,10 @@ class ProviderBase(ABC):
     name: str = ""
     _CACHE_TTL: float = 60.0
 
+    # Caching capability flags
+    supports_explicit_caching: bool = False   # cache_control API (Anthropic)
+    supports_implicit_caching: bool = False   # KV-cache via prefix ordering (local/ollama)
+
     def __init__(self) -> None:
         self._availability_cache: bool | None = None
         self._availability_checked_at: float = 0.0
@@ -81,10 +85,34 @@ class ProviderBase(ABC):
         """Return embedding vector. Raises NotImplementedError if unsupported."""
         raise NotImplementedError(f"Provider '{self.name}' does not support embeddings.")
 
+    # ── Caching helpers ───────────────────────────────────────────────────────
+
+    def optimize_for_caching(
+        self, stable_parts: list[str], dynamic_parts: list[str]
+    ) -> str:
+        """Return combined context optimised for provider's caching strategy.
+
+        Default: concatenate stable before dynamic (benefits implicit KV caches).
+        AnthropicProvider overrides this to return content blocks with cache_control.
+        """
+        return "\n\n".join(p for p in stable_parts + dynamic_parts if p)
+
+    @staticmethod
+    def _flatten_content(content: Any) -> str:
+        """Flatten list-of-blocks content to a plain string."""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return "\n\n".join(
+                b.get("text", str(b)) if isinstance(b, dict) else str(b)
+                for b in content
+            )
+        return str(content)
+
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _normalise_messages(messages: list[Any]) -> list[dict[str, str]]:
+    def _normalise_messages(messages: list[Any]) -> list[dict[str, Any]]:
         """Convert Message objects or raw dicts to {"role": ..., "content": ...} dicts."""
         result = []
         for m in messages:

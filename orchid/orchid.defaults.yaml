@@ -276,6 +276,16 @@ gates:
   ready_to_executing: human
   milestone_to_milestone: auto          # auto-advance between milestones
 
+# Prompt caching — reduces API token costs (D0048)
+caching:
+  enabled: true
+  anthropic:
+    cache_control: true         # add cache_control blocks for explicit caching
+    min_cacheable_chars: 2048   # ~512 tokens — below this, cache overhead exceeds savings
+  local:
+    cache_prompt_hint: true     # send cache_prompt: true to llama.cpp for KV retention
+    optimize_prefix_order: true # ensure stable content comes before dynamic content
+
 # Lifecycle — project state machine settings (V2)
 lifecycle:
   auto_git_init: true
