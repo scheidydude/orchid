@@ -21,6 +21,8 @@ env/
 .orchid/session_logs/*.log
 .orchid/session_logs/*.jsonl
 
+.orchid/
+
 # Editor
 .vscode/
 .idea/
