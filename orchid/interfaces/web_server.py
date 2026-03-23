@@ -54,6 +54,7 @@ _state_lock = threading.Lock()           # protects _projects/_managers/_runners
 # Optional discovery instance (set by create_app when watch_dirs provided)
 _discovery: Any | None = None
 _agent_manager: Any | None = None
+_central_bot_manager: Any | None = None
 
 
 def _project_id(path: str) -> str:
@@ -374,6 +375,8 @@ def create_app(
     watch_dirs: list[str] | None = None,
     depth: int = 2,
     exclude: list[str] | None = None,
+    enable_telegram: bool = False,
+    enable_slack: bool = False,
 ) -> Any:
     """Build and return the FastAPI application.
 
@@ -385,7 +388,7 @@ def create_app(
         depth: Max directory depth for auto-discovery scanning.
         exclude: Directory names to exclude from scanning.
     """
-    global _discovery, _agent_manager
+    global _discovery, _agent_manager, _central_bot_manager
 
     if not _FASTAPI_AVAILABLE:
         raise ImportError(
@@ -420,6 +423,25 @@ def create_app(
         "https://orchid.scheidy.com",
     ])
 
+    # Set up CentralBotManager when bots are enabled
+    if enable_telegram or enable_slack:
+        if _discovery is not None:
+            try:
+                from orchid.interfaces.central_bot import CentralBotManager
+                _central_bot_manager = CentralBotManager.from_env(_discovery)
+                # Disable components not requested
+                if not enable_telegram:
+                    _central_bot_manager._telegram_token = None
+                if not enable_slack:
+                    _central_bot_manager._slack_bot_token = None
+                    _central_bot_manager._slack_app_token = None
+                logger.info("CentralBotManager configured (telegram=%s, slack=%s)",
+                            enable_telegram, enable_slack)
+            except Exception as exc:
+                logger.warning("Failed to configure CentralBotManager: %s", exc)
+        else:
+            logger.warning("--telegram/--slack requires --watch-dir for project discovery")
+
     @asynccontextmanager
     async def _lifespan(app: FastAPI):  # type: ignore[name-defined]
         global _main_loop
@@ -448,6 +470,11 @@ def create_app(
                             loop,
                         )
                         logger.info("Auto-registered project: %s", pid)
+                    if pid and _central_bot_manager:
+                        try:
+                            _central_bot_manager.on_project_added(str(p))
+                        except Exception as _exc:
+                            logger.warning("CentralBotManager.on_project_added error: %s", _exc)
 
             def _on_project_removed(path: Path) -> None:
                 """Handles removal of one specific project path.
@@ -469,8 +496,21 @@ def create_app(
                         loop,
                     )
                     logger.info("Auto-unregistered project: %s", pid)
+                if pid and _central_bot_manager:
+                    try:
+                        _central_bot_manager.on_project_removed(str(path))
+                    except Exception as _exc:
+                        logger.warning("CentralBotManager.on_project_removed error: %s", _exc)
 
             _discovery.watch(_on_discovery_change, on_removed=_on_project_removed)
+
+        # Start central bot manager if enabled
+        if _central_bot_manager is not None:
+            try:
+                _central_bot_manager.start()
+                logger.info("CentralBotManager started")
+            except Exception as exc:
+                logger.warning("CentralBotManager failed to start: %s", exc)
 
         yield
 
@@ -479,6 +519,11 @@ def create_app(
             _discovery.stop()
         if _agent_manager is not None:
             _agent_manager.stop()
+        if _central_bot_manager is not None:
+            try:
+                _central_bot_manager.stop()
+            except Exception as exc:
+                logger.warning("CentralBotManager stop error: %s", exc)
         for runner in _runners.values():
             runner.stop()
 
@@ -1202,6 +1247,8 @@ def serve(
     watch_dirs: list[str] | None = None,
     depth: int = 2,
     exclude: list[str] | None = None,
+    enable_telegram: bool = False,
+    enable_slack: bool = False,
 ) -> None:
     """Start uvicorn serving the Orchid web app."""
     try:
@@ -1216,6 +1263,8 @@ def serve(
         watch_dirs=watch_dirs,
         depth=depth,
         exclude=exclude,
+        enable_telegram=enable_telegram,
+        enable_slack=enable_slack,
     )
 
     reload_dirs = None

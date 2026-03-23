@@ -1268,11 +1268,18 @@ def telegram(
     multi: bool = typer.Option(False, "--multi", help="Multi-project mode — tag all notifications with project name"),
     log_level: str = typer.Option("INFO", "--log-level", "-l"),
 ) -> None:
-    """Start the Telegram bot interface for a project.
+    """[DEPRECATED] Start the Telegram bot interface for a project.
 
     Single-project:  orchid telegram --project ~/myapp
     Multi-project:   orchid telegram --multi --project ~/a --project ~/b
+
+    DEPRECATED: Use 'orchid serve --telegram' instead for the central multi-project bot.
     """
+    console.print(
+        "[yellow]⚠️  DEPRECATED:[/yellow] 'orchid telegram' is deprecated.\n"
+        "Use [bold]orchid serve --telegram[/bold] for the new central multi-project Telegram bot.\n"
+        "Continuing with legacy single-project mode…\n"
+    )
     _setup_logging(log_level)
     import os
 
@@ -1338,14 +1345,21 @@ def slack(
     multi: bool = typer.Option(False, "--multi", help="Multi-project mode — tag all notifications with project name"),
     log_level: str = typer.Option("INFO", "--log-level", "-l"),
 ) -> None:
-    """Start the Slack bot interface for a project (Socket Mode).
+    """[DEPRECATED] Start the Slack bot interface for a project (Socket Mode).
 
     Single-project:  orchid slack --project ~/myapp
     Multi-project:   orchid slack --multi --project ~/a --project ~/b
 
     Requires: SLACK_BOT_TOKEN (xoxb-) and SLACK_APP_TOKEN (xapp-) in .env.
     Create your app at https://api.slack.com/apps with Socket Mode enabled.
+
+    DEPRECATED: Use 'orchid serve --slack' instead for the new central multi-project bot.
     """
+    console.print(
+        "[yellow]⚠️  DEPRECATED:[/yellow] 'orchid slack' is deprecated.\n"
+        "Use [bold]orchid serve --slack[/bold] for the new central multi-project Slack bot.\n"
+        "Continuing with legacy single-project mode…\n"
+    )
     _setup_logging(log_level)
     import os
 
@@ -1465,6 +1479,9 @@ def serve(
     host: str = typer.Option("0.0.0.0", "--host", help="Bind host"),
     port: int = typer.Option(7842, "--port", help="Bind port"),
     log_level: str = typer.Option("info", "--log-level", "-l"),
+    enable_telegram: bool = typer.Option(False, "--telegram", help="Enable central Telegram bot (requires TELEGRAM_BOT_TOKEN)"),
+    enable_slack: bool = typer.Option(False, "--slack", help="Enable central Slack bot (requires SLACK_BOT_TOKEN + SLACK_APP_TOKEN)"),
+    enable_bots: bool = typer.Option(False, "--bots", help="Enable both Telegram and Slack bots"),
 ) -> None:
     """Persistent multi-project server with auto-discovery.
 
@@ -1475,6 +1492,9 @@ def serve(
       orchid serve --watch-dir ~/LocalAI
       orchid serve --watch-dir ~/LocalAI --watch-dir ~/projects --port 7842
       orchid serve --watch-dir ~/LocalAI --project ~/other/myproj
+      orchid serve --watch-dir ~/LocalAI --bots
+      orchid serve --watch-dir ~/LocalAI --telegram
+      orchid serve --watch-dir ~/LocalAI --slack
     """
     _setup_logging(log_level.upper())
 
@@ -1502,6 +1522,10 @@ def serve(
     # Explicit projects provided via --project
     resolved_projects = [str(_resolve_project(p)) for p in (project or [])]
 
+    # --bots enables both
+    run_telegram = enable_telegram or enable_bots
+    run_slack = enable_slack or enable_bots
+
     console.print(
         f"[green]Starting Orchid persistent server on {host}:{port}[/green]"
     )
@@ -1513,6 +1537,10 @@ def serve(
         console.print("[dim]Explicit projects:[/dim]")
         for p in resolved_projects:
             console.print(f"  • {p}")
+    if run_telegram:
+        console.print("  🤖 [cyan]Telegram bot enabled[/cyan]")
+    if run_slack:
+        console.print("  🤖 [cyan]Slack bot enabled[/cyan]")
     console.print(f"  UI: [cyan]http://{'localhost' if host == '0.0.0.0' else host}:{port}[/cyan]")
     console.print("[dim]Press Ctrl+C to stop.[/dim]")
 
@@ -1522,6 +1550,8 @@ def serve(
         port=port,
         log_level=log_level,
         watch_dirs=resolved_watch_dirs or None,
+        enable_telegram=run_telegram,
+        enable_slack=run_slack,
     )
 
 

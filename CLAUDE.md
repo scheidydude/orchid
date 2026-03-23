@@ -21,8 +21,8 @@ orchid init <path> [--name --description --force]
 orchid decide "Title" --decision "..." --rationale "..." --project <path>
 orchid new "<desc>" [--name NAME] [--dir PATH] [--type ai|web|tool|game]
 orchid --multi --project <path-a> --project <path-b>
-orchid telegram|slack|web --project <path> [--port 7842]
-orchid serve [--watch-dir ~/LocalAI] [--project <path>] [--port 7842]
+orchid telegram|slack|web --project <path> [--port 7842]  # DEPRECATED — use orchid serve --telegram/--slack
+orchid serve [--watch-dir ~/LocalAI] [--project <path>] [--port 7842] [--telegram] [--slack] [--bots]
 orchid --check-providers
 ```
 tasks.md: `- [ ] **T003** Title \`type:code_generate\` \`p1\` \`needs:T001,T002\` \`model:claude\``
@@ -33,7 +33,11 @@ Rollup: `- [ ] **T099** Title \`type:rollup\` \`rollup:T090,T091\` \`output:FILE
 Action: read_file
 Action Input: {"path": "src/server.js"}
 ```
-One action per ReAct step. Actions: read_file / list_dir / bash / write_file / check_imports / get_task_files / delegate.
+One action per ReAct step. Actions: read_file / list_dir / bash / write_file / append_file / check_imports / get_task_files / delegate.
+
+## File Writing Guidelines
+- **append_file**: use when ADDING content to existing files (README, docs, etc.)
+- **write_file**: use ONLY when explicitly replacing/rewriting entire file
 
 ## Architecture Decisions
 - **D0001** File-based state (tasks.md, CLAUDE.md, decisions.json, session_logs). No DB.
@@ -85,9 +89,13 @@ One action per ReAct step. Actions: read_file / list_dir / bash / write_file / c
 - **D0047** NewProjectWizard: 4-step modal (Name+Description → Confirm Path → Options → Creating). Auto-slugifies name. POST /api/projects with confirm_path:false before confirm_path:true.
 - **D0048** Prompt caching: AnthropicProvider (`supports_explicit_caching=True`) auto-caches system prompts ≥2048 chars via `cache_control:{type:ephemeral}`; `cacheable_prefix=N` caches first N messages. DiscussionAgent splits static instructions (cached) from stable context+history (cacheable). PM/PMgr pass `cacheable_prefix=1`. LocalProvider/OllamaProvider (`supports_implicit_caching=True`) send `cache_prompt:true` and use `optimize_for_caching()`. Session cache stats logged at close. Config at `caching:` in orchid.defaults.yaml.
 - **D0049** Local KV cache hit detection uses relative ms/tok threshold (<1.0ms/token = cache hit) with rolling average tracking per model, not absolute tok/ms.
+- **D0050** Central bot architecture: single `CentralBotManager` in `orchid/interfaces/central_bot.py` manages both Telegram and Slack bots. Started as part of `orchid serve --telegram/--slack/--bots`. Replaces project-scoped bots. Discovery callbacks wire new/removed projects to both bots.
+- **D0051** Telegram user state at `~/.config/orchid/telegram-state.json`: `{user_id: {active_project, active_project_path, phase, last_interaction}}`. Written atomically. Commands prefixed `/orchid_*` (underscores — Telegram requires `[a-z0-9_]`). Per-user active project context; `/orchid_switch` to change.
+- **D0052** Slack channel map at `~/.config/orchid/slack-channels.json`: `{channel_id: project_path}`. Auto-creates `#{name}-project` channel on project discovery. `/orchid-add-channel --project <name>` links any existing channel. Global commands in `#orchid-general`; project commands auto-routed by channel.
+- **D0053** `orchid serve --telegram` / `--slack` / `--bots` flags enable the central bots as part of the serve process. Old `orchid telegram` / `orchid slack` subcommands show deprecation warnings and suggest the new flags. Requires `--watch-dir` for discovery.
 
 ## Current State
-**413 tests passing.** Completed through T058.
+**413 tests passing.** Completed through T060.
 - T051: shell allowlist + BPE chunking
 - T053: V2 lifecycle + strategic agents + CLI
 - T054: Planning tab API + React; DDG test marked skipif `ORCHID_NETWORK_TESTS!=true`
@@ -95,7 +103,9 @@ One action per ReAct step. Actions: read_file / list_dir / bash / write_file / c
 - T056: Prompt caching (D0048) + 17 tests; wrote V2-SUMMARY.md
 - T057: Added Orchid V2 one-line description to README.md
 - T058: Code review of anthropic.py prompt caching — **PASS WITH RESERVATIONS** (3 bugs identified)
-- T059: Review prompt caching in orchid/providers/anthropic.py — cache_control blocks correctly applied *(pending)*
+- T059: Review prompt caching in orchid/providers/anthropic.py — cache_control blocks correctly applied
+- T060: Added File Writing Guidelines to CLAUDE.md and system prompt (append_file vs write_file)
+- T061: Central bot architecture — CentralBotManager, CentralTelegramBot, CentralSlackBot, serve --bots, 15 tests
 
 **Orchid V2**: Two-tier agent routing (Claude + local LLM), lifecycle-based planning phases, real-time web UI with task board.
 

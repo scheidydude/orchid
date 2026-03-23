@@ -128,6 +128,21 @@ telegram:
     - session_complete
     - provider_unavailable
 
+# Central bot configuration (D0050) — used by orchid serve --telegram/--slack/--bots
+bots:
+  telegram:
+    enabled: false
+    token: ""              # TELEGRAM_BOT_TOKEN env var
+    allowed_users: []      # TELEGRAM_ALLOWED_USERS env var (comma-separated IDs)
+    state_file: "~/.config/orchid/telegram-state.json"
+  slack:
+    enabled: false
+    bot_token: ""          # SLACK_BOT_TOKEN env var (xoxb-)
+    app_token: ""          # SLACK_APP_TOKEN env var (xapp-, requires Socket Mode)
+    channels_file: "~/.config/orchid/slack-channels.json"
+    auto_create_channels: true
+    default_channel: "#orchid-general"
+
 dependencies:
   enabled: true
   cycle_detection: true   # warn and skip if circular dependency detected

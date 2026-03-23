@@ -3,10 +3,13 @@
 
 ## TODO
 
-- [ ] **T060** Add agent instruction to CLAUDE.md and system prompt: when asked to ADD content to an existing file (README, docs, etc) use append_file not write_file. Only use write_file when the task explicitly says to replace/rewrite the entire file. `type:code_generate` `p2`
+- [ ] **T064** Fix --log-level flag: convert input to lowercase before passing to uvicorn. uvicorn expects lowercase log levels (debug, info, warning) but users may type DEBUG, INFO etc. Add .lower() to the log_level parameter before passing to uvicorn.run() `type:code_generate` `p2`
+- [ ] **T065** test task from central slack bot `type:draft` `p2`
+  - test task from central slack bot
 
 ## DONE
 
+- [x] **T062** Fix Slack channel routing: added debug logging to _resolve_project and _get_project_for_channel showing channel_id received vs map contents. `type:code_generate` `p1`
 - [x] **T059** Review the prompt caching implementation in orchid/providers/anthropic.py and confirm cache_control blocks are correctly applied `type:review` `p1`
 - [x] **T058** Review the prompt caching implementation in orchid/providers/anthropic.py and confirm cache_control blocks are correctly applied `type:review` `p1`
 - [x] **T057** Write a one-line comment to README.md describing Orchid V2 `type:draft` `p1`
@@ -45,6 +48,9 @@
 - [x] **T008** Fix decisions.json parse error - likely JSON Lines vs single JSON document format mismatch `type:code_generate` `p1`
 - [x] **T002** Hook LLM summarizer into session compression `type:code_generate` `p1`
 - [x] **T001** Review the session.py compression logic and suggest improvements `type:review` `p1`
+- [x] **T063** Add /orchid-unlink-channel Slack command: removes the current channel from slack-channels.json so it can be relinked to a different project. `type:code_generate` `p2`
+- [x] **T061** Fix Slack auto-channel creation: added _ensure_channels_for_all_projects() called in start() to create channels for projects that existed before bot startup. `type:code_generate` `p2`
+- [x] **T060** Add agent instruction to CLAUDE.md and system prompt: when asked to ADD content to an existing file (README, docs, etc) use append_file not write_file. Only use write_file when the task explicitly says to replace/rewrite the entire file. `type:code_generate` `p2`
 - [x] **T055** Fix local KV cache hit detection: change absolute tok/ms threshold to relative ms/tok threshold (<1.0ms per token = cache hit). Add rolling average tracking for better calibration per model. `type:code_generate` `p2`
 - [x] **T054** Fix test_duckduckgo_backend_returns_results in tests/test_search.py — DDG HTML scraping is unreliable in CI/automated environments. Mark test with @pytest.mark.skip(reason='DDG scraping unreliable in automated environments') or make it conditional on a ORCHID_NETWORK_TESTS=true env var. `type:code_generate` `p2`
 - [x] **T043** Add auto-review config to orchid.defaults.yaml: when auto_review.enabled is true, after every N code_generate tasks automatically insert a review task that runs check_imports and syntax verification on all files written in the previous N tasks. Default: auto_review.enabled=false, auto_review.after_n_tasks=3 `type:code_generate` `p2`
