@@ -548,9 +548,11 @@ class SlackBot:
                 '- "search for FastAPI best practices" → {"intent": "search", "arg": "FastAPI best practices"}\n\n'
                 f"Message: {message}"
             )
+            from orchid.providers.registry import get_provider_registry
+            _model_key = "local" if get_provider_registry().offline_mode else "claude"
             response = call(
                 [Message("user", prompt)],
-                model_key="claude",
+                model_key=_model_key,
                 system="Return JSON only. No explanation.",
             )
             # Extract JSON from response

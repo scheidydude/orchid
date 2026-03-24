@@ -166,6 +166,8 @@ class Session:
         logger.info("Hot memory exceeds %d chars — compressing...", threshold)
         try:
             from orchid.tools.models import Message, call
+            from orchid.providers.registry import get_provider_registry
+            model_key = "local" if get_provider_registry().offline_mode else "claude"
             compressed = call(
                 messages=[
                     Message("user", (
@@ -176,7 +178,7 @@ class Session:
                         f"{self.hot_memory}"
                     ))
                 ],
-                model_key="claude",
+                model_key=model_key,
                 system="You are a technical editor. Compress the document faithfully.",
             )
             self.hot_memory = f"<!-- compressed {datetime.now(UTC).date()} -->\n\n{compressed}"

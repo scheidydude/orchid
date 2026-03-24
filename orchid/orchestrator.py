@@ -255,7 +255,17 @@ class Orchestrator:
             # Wrap write_file to record paths (T045)
             _orig_write = agent.tools.get("write_file")
             if _orig_write:
-                def _tracking_write(path: str, content: str) -> str:
+                def _tracking_write(path: str, content: str = "") -> str:
+                    if not content:
+                        return (
+                            "[write_file error: content is required — use the heredoc format:\n"
+                            "Action: write_file\n"
+                            "Action Path: <path>\n"
+                            "Action Content:\n"
+                            "<<<ORCHID\n"
+                            "<file content>\n"
+                            "ORCHID]"
+                        )
                     result = _orig_write(path=path, content=content)
                     if not result.startswith("["):
                         files_written.append(path)
@@ -485,10 +495,11 @@ class Orchestrator:
             f"Task results:\n{results_text}"
         )
 
+        model_key = "local" if self.offline_mode else "claude"
         logger.info("Running rollup synthesis for %s with %d source tasks", task.id, len(sources))
         synthesis = call(
             messages=[Message("user", prompt)],
-            model_key="claude",
+            model_key=model_key,
             system="You are a technical synthesis assistant. Produce clear, structured summaries.",
         )
 
