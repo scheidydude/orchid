@@ -10,10 +10,11 @@ import HotMemory from './components/HotMemory.jsx'
 import PlanningTab from './components/planning/PlanningTab.jsx'
 import NewProjectWizard from './components/planning/NewProjectWizard.jsx'
 import Settings from './components/Settings.jsx'
+import ProjectSettings from './components/ProjectSettings.jsx'
 import { useProjects } from './hooks/useProjects.js'
 import { useAgentStream } from './hooks/useAgentStream.js'
 
-const TABS = ['Tasks', 'Planning', 'Stream', 'Decisions', 'Sessions', 'Recall', 'Memory', 'Settings']
+const TABS = ['Tasks', 'Planning', 'Stream', 'Decisions', 'Sessions', 'Recall', 'Memory', 'Config', 'Settings']
 
 export default function App() {
   const { projects, loading: projectsLoading, refresh: refreshProjects, newProjectIds } = useProjects()
@@ -39,6 +40,19 @@ export default function App() {
   }
 
   const handleRunChange = () => refreshProjects()
+
+  const handleToggleActive = async (projectId, currentlyActive) => {
+    try {
+      await fetch(`/api/projects/${projectId}/active`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active: !currentlyActive }),
+      })
+      refreshProjects()
+    } catch (err) {
+      console.error('Failed to toggle project active state:', err)
+    }
+  }
 
   const handleProjectCreated = (projectId, projectPath) => {
     setShowNewWizard(false)
@@ -101,6 +115,7 @@ export default function App() {
               activeId={activeProject}
               onSelect={handleProjectSelect}
               newProjectIds={newProjectIds}
+              onToggleActive={handleToggleActive}
             />
           )}
         </nav>
@@ -108,7 +123,7 @@ export default function App() {
         <div className="main-content">
           {activeProject ? (
             <>
-              {activeTab !== 'Planning' && activeTab !== 'Settings' && (
+              {activeTab !== 'Planning' && activeTab !== 'Settings' && activeTab !== 'Config' && (
                 <RunControls
                   projectId={activeProject}
                   runStatus={runStatus}
@@ -136,7 +151,7 @@ export default function App() {
                   </button>
                 ))}
               </div>
-              <div className="panel-body">
+              <div className="panel-body" style={activeTab === 'Planning' ? { padding: 0, overflow: 'hidden' } : {}}>
                 {activeTab === 'Tasks' && (
                   <TaskBoard projectId={activeProject} runStatus={runStatus} />
                 )}
@@ -161,6 +176,9 @@ export default function App() {
                 )}
                 {activeTab === 'Memory' && (
                   <HotMemory projectId={activeProject} />
+                )}
+                {activeTab === 'Config' && (
+                  <ProjectSettings projectId={activeProject} />
                 )}
                 {activeTab === 'Settings' && (
                   <Settings />

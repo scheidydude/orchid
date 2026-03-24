@@ -214,6 +214,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 .status-DONE      { background: #1a3a2a; color: #56d364; }
 .status-BLOCKED   { background: #3a1a1a; color: #ff7b72; }
 .status-CANCELLED { background: var(--surface2); color: var(--text-dim); text-decoration: line-through; }
+.status-SKIPPED   { background: #2a2a3a; color: #8b8b9e; font-style: italic; }
 
 .task-id { font-family: var(--mono); font-size: 12px; color: var(--text-dim); flex-shrink: 0; }
 .task-title { flex: 1; font-size: 13px; }
@@ -505,7 +506,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 .context-md { font-size: 11px; font-family: var(--mono); margin-top: 6px; white-space: pre-wrap; }
 
 /* Artifact panel */
-.artifact-panel { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+.artifact-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
 .artifact-tab-bar {
   display: flex;
   gap: 2px;
@@ -513,7 +514,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
-.artifact-body { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+.artifact-body { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
 .artifact-actions {
   display: flex;
   gap: 8px;
@@ -529,7 +530,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
   justify-content: center;
   padding: 40px;
 }
-.artifact-view { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+.artifact-view { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
 .artifact-toolbar {
   display: flex;
   align-items: center;
@@ -541,6 +542,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 .artifact-path { font-size: 11px; color: var(--text-dim); font-family: var(--mono); flex: 1; }
 .artifact-content {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 16px;
   font-family: var(--mono);
@@ -549,7 +551,8 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
   white-space: pre-wrap;
   word-break: break-word;
 }
-.artifact-editor { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+.artifact-editor { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+.discussion-history-scroll { flex: 1; min-height: 0; overflow-y: auto; }
 .artifact-editor-toolbar {
   display: flex;
   align-items: center;
@@ -662,3 +665,54 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 .provider-status-dot.unavailable { background: var(--error); }
 .provider-name { font-weight: 500; }
 .loading { color: var(--text-dim); font-size: 12px; padding: 8px; }
+
+/* Project group headers */
+.project-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+.project-group-header:hover { color: var(--text); }
+.project-group-chevron { font-size: 8px; transition: transform 0.15s; }
+.project-group-chevron.collapsed { transform: rotate(-90deg); }
+
+/* Project settings panel */
+.project-settings-panel { padding: 16px; max-width: 700px; }
+.project-settings-file {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.project-settings-file-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--text-dim);
+}
+.project-settings-file pre {
+  margin: 0;
+  padding: 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-y: auto;
+  max-height: 300px;
+  color: var(--text);
+}

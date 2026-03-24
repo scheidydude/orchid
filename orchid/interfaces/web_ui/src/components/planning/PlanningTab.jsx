@@ -123,13 +123,13 @@ export default function PlanningTab({ projectId, runStatus, onSwitchToTasks }) {
           )}
 
           {phase === 'READY' && (
-            <div>
+            <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
               <ArtifactPanel
                 projectId={projectId}
                 currentPhase={phase}
                 onRegenerate={doAdvance}
               />
-              <div style={{ marginTop: 16 }}>
+              <div style={{ flexShrink: 0 }}>
                 <ApprovalPanel
                   projectId={projectId}
                   onApproved={handleApproved}
@@ -140,35 +140,42 @@ export default function PlanningTab({ projectId, runStatus, onSwitchToTasks }) {
           )}
 
           {phase === 'EXECUTING' && (
-            <div className="planning-executing">
-              <div style={{ fontSize: 40, marginBottom: 12 }}>⚡</div>
-              <h3>Project is executing</h3>
-              <p style={{ color: 'var(--text-dim)', marginTop: 8 }}>
-                {lifecycle.project_name} has {Object.values(lifecycle.artifacts).filter(Boolean).length} artifacts generated
-                and tasks are ready to run.
-              </p>
-              {onSwitchToTasks && (
-                <button className="primary" onClick={onSwitchToTasks} style={{ marginTop: 16 }}>
-                  Go to Tasks →
-                </button>
-              )}
+            <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+              <ArtifactPanel
+                projectId={projectId}
+                currentPhase={phase}
+                readOnly
+              />
+              <div style={{ flexShrink: 0, padding: '8px 16px', borderTop: '1px solid var(--border)' }}>
+                <p style={{ color: 'var(--text-dim)', margin: 0, fontSize: 13 }}>
+                  ⚡ Tasks are running.
+                  {onSwitchToTasks && (
+                    <> <button className="link-btn" onClick={onSwitchToTasks} style={{ color: 'var(--accent)' }}>Go to Tasks →</button></>
+                  )}
+                </p>
+              </div>
             </div>
           )}
 
           {phase === 'COMPLETE' && (
-            <div className="planning-executing">
-              <div style={{ fontSize: 40, marginBottom: 12 }}>🏁</div>
-              <h3>Project complete</h3>
-              <p style={{ color: 'var(--text-dim)', marginTop: 8 }}>
-                All milestones finished.{' '}
-                <button
-                  className="link-btn"
-                  onClick={doAdvance}
-                  style={{ color: 'var(--accent-2)' }}
-                >
-                  Start new milestone?
-                </button>
-              </p>
+            <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+              <ArtifactPanel
+                projectId={projectId}
+                currentPhase={phase}
+                readOnly
+              />
+              <div style={{ flexShrink: 0, padding: '8px 16px', borderTop: '1px solid var(--border)' }}>
+                <p style={{ color: 'var(--text-dim)', margin: 0, fontSize: 13 }}>
+                  🏁 All milestones finished.{' '}
+                  <button
+                    className="link-btn"
+                    onClick={doAdvance}
+                    style={{ color: 'var(--accent-2)' }}
+                  >
+                    Start new milestone?
+                  </button>
+                </p>
+              </div>
             </div>
           )}
         </>
