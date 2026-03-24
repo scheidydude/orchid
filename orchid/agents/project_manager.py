@@ -374,7 +374,7 @@ class ProjectManagerAgent:
             logger.info("Generating tasks for %s (%d/%d)", milestone_name, idx, len(milestones))
 
             prior_ids = (
-                ", ".join(_extract_task_id(l) for l in all_lines if _extract_task_id(l))
+                ", ".join(_extract_task_id(ln) for ln in all_lines if _extract_task_id(ln))
                 if all_lines
                 else "none yet"
             )
