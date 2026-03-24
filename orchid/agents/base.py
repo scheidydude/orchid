@@ -445,6 +445,7 @@ class BaseAgent:
                         "iter": iteration,
                         "thought": thought_m.group(1).strip() if thought_m else "",
                         "action": "final_answer",
+                        "action_input": "",
                         "observation": answer[:200],
                         "timestamp": datetime.now(UTC).isoformat(),
                     })
@@ -534,10 +535,13 @@ class BaseAgent:
             # Stream iteration data
             if self.stream_callback:
                 thought_m = _THOUGHT_RE.search(response)
+                # Exclude large content fields (write_file body) from action_input
+                _input_args = {k: v for k, v in (tool_args or {}).items() if k != "content"}
                 self.stream_callback({
                     "iter": iteration,
                     "thought": thought_m.group(1).strip() if thought_m else "",
                     "action": tool_name or "",
+                    "action_input": json.dumps(_input_args),
                     "observation": observation[:300],
                     "timestamp": datetime.now(UTC).isoformat(),
                 })

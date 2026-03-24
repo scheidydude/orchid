@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import logging
+import time
+from collections import defaultdict
 from collections.abc import Callable
-from datetime import UTC
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from orchid import config as cfg
@@ -13,6 +16,68 @@ from orchid.session import Session
 from orchid.tools.models import Message, call, route
 
 logger = logging.getLogger(__name__)
+
+_TRUNC = 120
+
+
+class TraceWriter:
+    """Writes ReAct iteration traces to <project>/.orchid/trace.log in append mode."""
+
+    def __init__(self, project_dir: Path) -> None:
+        self._path = project_dir / ".orchid" / "trace.log"
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _write(self, text: str) -> None:
+        with self._path.open("a", encoding="utf-8") as fh:
+            fh.write(text + "\n")
+
+    @staticmethod
+    def _trunc(s: str) -> str:
+        return s[:_TRUNC] + " (truncated)" if len(s) > _TRUNC else s
+
+    def task_start(self, task_id: str, title: str) -> None:
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self._write(f"\n[{ts}] Starting {task_id} — {title}")
+
+    def iteration(
+        self,
+        task_id: str,
+        iter_num: int,
+        max_iter: int,
+        elapsed: float,
+        thought: str,
+        action: str,
+        action_input: str,
+        observation: str,
+    ) -> None:
+        lines = [
+            f"--- {task_id} iter {iter_num}/{max_iter} ({elapsed:.1f}s) ---",
+            f"THOUGHT: {self._trunc(thought)}",
+            f"ACTION:  {action}",
+            f"INPUT:   {self._trunc(action_input)}",
+            f"OBS:     {self._trunc(observation)}",
+        ]
+        self._write("\n".join(lines))
+
+    def task_summary(
+        self,
+        task_id: str,
+        status: str,
+        completed_iters: int,
+        max_iter: int,
+        action_counts: dict[str, int],
+        elapsed: float,
+    ) -> None:
+        counts = " ".join(
+            f"{a}×{n}" for a, n in sorted(action_counts.items()) if n > 0
+        ) or "no tools called"
+        keyword = "DONE" if status == "done" else "BLOCKED"
+        at_word = "in" if status == "done" else "at"
+        self._write(
+            f"=== {task_id} {keyword} {at_word} {completed_iters}/{max_iter} iters"
+            f" | {counts} | {elapsed:.1f}s ==="
+        )
+
 
 # Agent class registry
 _AGENT_REGISTRY: dict[str, type] = {}
@@ -50,9 +115,13 @@ class Orchestrator:
         cli_model_override: str | None = None,
         cli_provider_overrides: dict[str, str] | None = None,
         offline_mode: bool = False,
+        trace_enabled: bool = False,
     ):
         self.session = session
         self.registry = _get_registry()
+        self._trace_writer: TraceWriter | None = (
+            TraceWriter(session.project_dir) if trace_enabled else None
+        )
         self.cli_model_override = cli_model_override
         self.cli_provider_overrides: dict[str, str] = cli_provider_overrides or {}
         self.offline_mode = offline_mode
@@ -172,9 +241,10 @@ class Orchestrator:
 
             # Dispatch to agent
             injection_queue = self.session.project_dir / ".orchid" / "inject.queue"
+            stream_cb = self._make_stream_callback(task.id, task.title)
             agent = agent_cls(
                 session_context=session_context,
-                stream_callback=self._make_stream_callback(task.id),
+                stream_callback=stream_cb,
                 injection_queue_path=injection_queue,
                 project_dir=self.session.project_dir,
             )
@@ -192,7 +262,9 @@ class Orchestrator:
                     return result
                 agent.tools["write_file"] = _tracking_write
 
+            _task_run_start = time.monotonic()
             result_text = agent.run(plan)
+            _task_run_elapsed = time.monotonic() - _task_run_start
 
             # Detect failure sentinels returned by the agent run loop
             _FAILURE_PREFIXES = (
@@ -204,6 +276,18 @@ class Orchestrator:
                 "[unknown tool",
             )
             is_failure = result_text.startswith(_FAILURE_PREFIXES)
+
+            # Write trace summary
+            if self._trace_writer and stream_cb is not None:
+                _ts = getattr(stream_cb, "_trace_state", {})
+                self._trace_writer.task_summary(
+                    task_id=task.id,
+                    status="blocked" if is_failure else "done",
+                    completed_iters=_ts.get("completed_iters", 0),
+                    max_iter=cfg.get("agents.max_react_iterations", 15),
+                    action_counts=dict(_ts.get("action_counts", {})),
+                    elapsed=_task_run_elapsed,
+                )
 
             delegation_count = len(self.session.delegations)
             if is_failure:
@@ -257,18 +341,54 @@ class Orchestrator:
             self.session.log_event("task_error", {"task_id": task.id, "error": str(e)})
             return {"task_id": task.id, "status": "error", "error": str(e)}
 
-    def _make_stream_callback(self, task_id: str) -> Callable[[dict[str, Any]], None] | None:
+    def _make_stream_callback(
+        self, task_id: str, task_title: str = ""
+    ) -> Callable[[dict[str, Any]], None] | None:
         """Build a stream callback that writes to live log and optionally fires progress notifications."""
         outer_stream = self.stream_callback
         session = self.session
         progress_interval = cfg.get("streaming.telegram_progress_interval", 3)
+        trace = self._trace_writer
+        max_iter = cfg.get("agents.max_react_iterations", 15)
+
+        # Mutable state for trace bookkeeping
+        _state: dict[str, Any] = {
+            "completed_iters": 0,
+            "action_counts": defaultdict(int),
+            "iter_start": time.monotonic(),
+        }
+
+        if trace:
+            trace.task_start(task_id, task_title)
 
         def _cb(data: dict[str, Any]) -> None:
             # Write to live log
             session.stream_react(data)
+
+            iteration = data.get("iter", 0)
+            _state["completed_iters"] = iteration + 1
+
+            # Write trace line
+            if trace:
+                now = time.monotonic()
+                elapsed = now - _state["iter_start"]
+                _state["iter_start"] = now
+                action = data.get("action", "")
+                if action and action != "final_answer":
+                    _state["action_counts"][action] += 1
+                trace.iteration(
+                    task_id=task_id,
+                    iter_num=iteration + 1,
+                    max_iter=max_iter,
+                    elapsed=elapsed,
+                    thought=data.get("thought", ""),
+                    action=action,
+                    action_input=data.get("action_input", ""),
+                    observation=data.get("observation", ""),
+                )
+
             # Fire progress notification every N iterations
             if outer_stream is not None:
-                iteration = data.get("iter", 0)
                 if iteration > 0 and iteration % progress_interval == 0:
                     outer_stream({
                         "event": "task_progress",
@@ -277,6 +397,7 @@ class Orchestrator:
                         "thought_snippet": data.get("thought", "")[:80],
                     })
 
+        _cb._trace_state = _state  # type: ignore[attr-defined]
         return _cb
 
     def _plan_task(self, task: Task) -> str:

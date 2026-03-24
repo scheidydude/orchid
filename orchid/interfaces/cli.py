@@ -159,6 +159,10 @@ def main(
         help="Run a single specific task by ID (e.g. T015), ignoring queue order.",
     ),
     log_level: str = typer.Option("INFO", "--log-level", "-l"),
+    trace: bool = typer.Option(
+        False, "--trace",
+        help="Write per-iteration ReAct trace to <project>/.orchid/trace.log.",
+    ),
 ) -> None:
     if ctx.invoked_subcommand:
         return
@@ -234,7 +238,7 @@ def main(
         return
 
     if run_task is not None:
-        _cmd_run_task(proj, run_task, code_model=code_model, offline=offline)
+        _cmd_run_task(proj, run_task, code_model=code_model, offline=offline, trace=trace)
         return
 
     # Parse --provider agent=provider pairs
@@ -252,6 +256,7 @@ def main(
             code_model=code_model,
             provider_overrides=provider_overrides,
             offline=offline,
+            trace=trace,
         )
     elif mode == "interactive":
         _cmd_interactive(proj)
@@ -269,6 +274,7 @@ def _cmd_auto(
     code_model: str | None = None,
     provider_overrides: dict[str, str] | None = None,
     offline: bool = False,
+    trace: bool = False,
 ) -> None:
     """Autonomous mode — run all pending tasks."""
     session = _make_session(project)
@@ -302,7 +308,11 @@ def _cmd_auto(
         cli_model_override=code_model,
         cli_provider_overrides=provider_overrides,
         offline_mode=offline,
+        trace_enabled=trace,
     )
+    if trace:
+        trace_path = session.project_dir / ".orchid" / "trace.log"
+        console.print(f"[dim]Trace → {trace_path}[/dim]")
     try:
         orch.run_loop(max_tasks=max_tasks)
     finally:
@@ -315,6 +325,7 @@ def _cmd_run_task(
     task_id: str,
     code_model: str | None = None,
     offline: bool = False,
+    trace: bool = False,
 ) -> None:
     """Run a single specific task by ID, ignoring queue order."""
     session = _make_session(project)
@@ -332,7 +343,10 @@ def _cmd_run_task(
     ))
 
     from orchid.orchestrator import Orchestrator
-    orch = Orchestrator(session, cli_model_override=code_model, offline_mode=offline)
+    orch = Orchestrator(session, cli_model_override=code_model, offline_mode=offline, trace_enabled=trace)
+    if trace:
+        trace_path = session.project_dir / ".orchid" / "trace.log"
+        console.print(f"[dim]Trace → {trace_path}[/dim]")
     try:
         result = orch._execute_task(task)
         session.save()
