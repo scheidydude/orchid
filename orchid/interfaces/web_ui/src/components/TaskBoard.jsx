@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import TaskRow from './TaskRow.jsx'
 import AddTaskModal from './AddTaskModal.jsx'
 
-const STATUS_ORDER = ['IN_PROGRESS', 'BLOCKED', 'TODO', 'DONE', 'CANCELLED']
+const STATUS_ORDER = ['IN_PROGRESS', 'BLOCKED', 'TODO', 'DONE', 'CANCELLED', 'SKIPPED']
 
 const taskNum = (id) => parseInt((id || '').replace(/\D/g, ''), 10) || 0
 
@@ -55,9 +55,23 @@ export default function TaskBoard({ projectId, runStatus }) {
     }
   }
 
+  const handleRunTask = async (taskId) => {
+    try {
+      const res = await fetch(`/api/projects/${projectId}/tasks/${taskId}/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    } catch (err) {
+      alert(`Failed to start task: ${err.message}`)
+    }
+  }
+
   const filtered = tasks.filter(t => {
     if (filter === 'active') return ['TODO', 'IN_PROGRESS', 'BLOCKED'].includes(t.status)
     if (filter === 'done') return t.status === 'DONE'
+    if (filter === 'skipped') return t.status === 'SKIPPED'
     return true
   }).sort((a, b) => {
     const oa = STATUS_ORDER.indexOf(a.status)
@@ -74,10 +88,11 @@ export default function TaskBoard({ projectId, runStatus }) {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
         <div style={{ display: 'flex', gap: 4 }}>
-          {['active', 'done', 'all'].map(f => {
+          {['active', 'done', 'skipped', 'all'].map(f => {
             const count = tasks.filter(t => {
               if (f === 'active') return ['TODO', 'IN_PROGRESS', 'BLOCKED'].includes(t.status)
               if (f === 'done') return t.status === 'DONE'
+              if (f === 'skipped') return t.status === 'SKIPPED'
               return true
             }).length
             return (
@@ -109,12 +124,18 @@ export default function TaskBoard({ projectId, runStatus }) {
 
       {filtered.length === 0 ? (
         <div className="empty-state">
-          {filter === 'active' ? 'No active tasks. Add a task to get started.' : 'No tasks.'}
+          {filter === 'active' ? 'No active tasks. Add a task to get started.' : `No ${filter} tasks.`}
         </div>
       ) : (
         <div className="task-board" style={{ flex: 1, overflowY: 'auto' }}>
           {filtered.map(t => (
-            <TaskRow key={t.id} task={t} onStatusChange={handleStatusChange} />
+            <TaskRow
+              key={t.id}
+              task={t}
+              onStatusChange={handleStatusChange}
+              onRunTask={handleRunTask}
+              running={runStatus.running}
+            />
           ))}
         </div>
       )}

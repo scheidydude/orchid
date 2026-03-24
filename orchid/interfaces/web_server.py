@@ -185,6 +185,74 @@ class _WebProjectRunner:
         with self._lock:
             return self._future is not None and not self._future.done()
 
+    def start_single_task(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        task_id: str,
+        code_model: str | None = None,
+    ) -> str:
+        with self._lock:
+            if self.is_running():
+                return ""
+            rid = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+            self.run_id = rid
+            self._cancel.clear()
+            self.current_task = task_id
+            self.tasks_done = 0
+            self._future = self._executor.submit(
+                self._run_single_task_sync, loop, task_id, code_model
+            )
+            return rid
+
+    def _run_single_task_sync(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        task_id: str,
+        code_model: str | None,
+    ) -> None:
+        from orchid.memory.state import TaskStatus
+        from orchid.orchestrator import Orchestrator
+        from orchid.session import Session
+
+        try:
+            session = Session(project_dir=self.project_path)
+            session.load()
+            task = next((t for t in session.tasks if t.id == task_id), None)
+            if task is None:
+                self._emit(loop, "error", {"message": f"Task {task_id} not found"})
+                return
+
+            self._emit(loop, "session_start", {"project": session.project_name, "pending": 1})
+            self._emit(loop, "task_start", {
+                "task_id": task.id, "title": task.title, "remaining": 1,
+            })
+
+            orch = Orchestrator(session, cli_model_override=code_model)
+
+            def _stream_cb(data: dict[str, Any]) -> None:
+                if data.get("event") == "task_progress":
+                    self._emit(loop, "task_progress", data)
+
+            orch.stream_callback = _stream_cb
+            result = orch._execute_task(task)
+            session.save()
+            result_text = str(result.get("result", "")) if result else ""
+            with self._lock:
+                self.tasks_done = 1
+            self._emit(loop, "task_complete", {
+                "task_id": task.id,
+                "result_snippet": result_text[:200],
+                "done_so_far": 1,
+            })
+            self._emit(loop, "session_complete", {"done": [task.id], "failed": []})
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Web runner single task %s failed", task_id)
+            self._emit(loop, "task_failed", {"task_id": task_id, "error": str(exc)})
+            self._emit(loop, "error", {"message": str(exc)})
+        finally:
+            with self._lock:
+                self.current_task = ""
+
     def start(
         self,
         loop: asyncio.AbstractEventLoop,
@@ -304,10 +372,13 @@ if _FASTAPI_AVAILABLE:
         description: str = ""
 
     class PatchTaskBody(BaseModel):
-        status: str  # done | blocked | cancelled
+        status: str  # done | blocked | cancelled | skipped | todo | in_progress
 
     class RunBody(BaseModel):
         mode: str = "auto"
+        code_model: str | None = None
+
+    class RunTaskBody(BaseModel):
         code_model: str | None = None
 
     class RecallBody(BaseModel):
@@ -636,6 +707,14 @@ def create_app(
                 blocked = sum(1 for t in s.tasks if t.status == TaskStatus.BLOCKED)
                 runner = _runners.get(pid)
                 persistent = _read_persistent_config(path)
+                # Read active flag from .orchid.yaml (default True)
+                try:
+                    import yaml as _yaml
+                    _oyaml = Path(path) / ".orchid.yaml"
+                    _yd = _yaml.safe_load(_oyaml.read_text(encoding="utf-8")) or {} if _oyaml.exists() else {}
+                    is_active = _yd.get("active", True)
+                except Exception:
+                    is_active = True
                 result.append({
                     "id": pid,
                     "name": s.project_name,
@@ -650,6 +729,7 @@ def create_app(
                     "running": runner.is_running() if runner else False,
                     "persistent": persistent,
                     "last_session": _last_session_timestamp(path),
+                    "active": is_active,
                 })
             except Exception as exc:
                 result.append({"id": pid, "path": path, "error": str(exc)})
@@ -732,6 +812,7 @@ def create_app(
             "cancelled": TaskStatus.CANCELLED,
             "todo": TaskStatus.TODO,
             "in_progress": TaskStatus.IN_PROGRESS,
+            "skipped": TaskStatus.SKIPPED,
         }
         new_status = status_map.get(body.status.lower())
         if new_status is None:
@@ -843,6 +924,63 @@ def create_app(
             "tasks_done": runner.tasks_done,
             "run_id": runner.run_id,
         }
+
+    @app.post("/api/projects/{project_id}/tasks/{task_id}/run")
+    async def run_single_task(project_id: str, task_id: str, body: RunTaskBody):
+        _get_project(project_id)
+        runner = _runners.get(project_id)
+        if runner is None:
+            raise HTTPException(status_code=404, detail="Runner not found")
+        if runner.is_running():
+            raise HTTPException(status_code=409, detail="A run is already in progress")
+        loop = _main_loop or asyncio.get_running_loop()
+        rid = runner.start_single_task(loop, task_id, code_model=body.code_model)
+        if not rid:
+            raise HTTPException(status_code=409, detail="Failed to start run")
+        return {"run_id": rid, "task_id": task_id}
+
+    @app.get("/api/projects/{project_id}/settings")
+    async def get_project_settings(project_id: str):
+        """Return project .orchid.yaml and .env contents with sensitive values redacted."""
+        import re as _re
+        path = _get_project(project_id)
+        result: dict[str, Any] = {}
+
+        orchid_yaml = Path(path) / ".orchid.yaml"
+        if orchid_yaml.exists():
+            result["orchid_yaml"] = orchid_yaml.read_text(encoding="utf-8")
+        else:
+            result["orchid_yaml"] = None
+
+        env_file = Path(path) / ".env"
+        if env_file.exists():
+            raw = env_file.read_text(encoding="utf-8")
+            redacted_lines = []
+            for line in raw.splitlines():
+                if _re.match(r"^\s*[A-Z_]*(KEY|TOKEN|SECRET|PASSWORD|PASS)[A-Z_]*\s*=", line, _re.IGNORECASE):
+                    key = line.split("=", 1)[0]
+                    redacted_lines.append(f"{key}=<redacted>")
+                else:
+                    redacted_lines.append(line)
+            result["env"] = "\n".join(redacted_lines)
+        else:
+            result["env"] = None
+
+        return result
+
+    @app.patch("/api/projects/{project_id}/active")
+    async def set_project_active(project_id: str, body: dict[str, bool]):
+        """Set project active/inactive status in .orchid.yaml."""
+        import yaml  # pyyaml
+        path = _get_project(project_id)
+        orchid_yaml = Path(path) / ".orchid.yaml"
+        try:
+            data = yaml.safe_load(orchid_yaml.read_text(encoding="utf-8")) or {} if orchid_yaml.exists() else {}
+        except Exception:
+            data = {}
+        data["active"] = body.get("active", True)
+        orchid_yaml.write_text(yaml.dump(data, default_flow_style=False), encoding="utf-8")
+        return {"active": data["active"]}
 
     @app.post("/api/projects/{project_id}/inject")
     async def inject_context(project_id: str, body: dict[str, str]):
@@ -1275,7 +1413,7 @@ def serve(
         app,
         host=host,
         port=port,
-        log_level=log_level,
+        log_level=log_level.lower(),
         reload=dev,
         reload_dirs=reload_dirs,
     )

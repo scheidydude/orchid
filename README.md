@@ -46,6 +46,9 @@ orchid --project ~/projects/webtron --approve   # advance to next phase
 # Run all pending tasks autonomously
 orchid --project ~/projects/webtron --mode auto
 
+# Run a single specific task
+orchid --project ~/projects/webtron --run-task T015
+
 # Interactive chat with an agent
 orchid --project ~/projects/webtron --mode interactive
 
@@ -99,6 +102,7 @@ orchid --project PATH --discuss             start/continue discussion
 orchid --project PATH --approve [--auto]    approve current gate
 orchid --project PATH --artifacts           list planning artifact status
 orchid --project PATH --get-result T001     print task result output
+orchid --project PATH --run-task T015       run a single specific task
 ```
 
 ## What a project looks like
@@ -154,10 +158,12 @@ context_files:             # extra files loaded into every agent prompt
 - [ ] **T002** Write unit tests `type:code_generate` `p2`
 - [ ] **T003** Review T001 `type:review` `p2` `agent:reviewer` `needs:T001`
 - [ ] **T099** Rollup sprint results `type:rollup` `rollup:T001,T002,T003` `output:SPRINT1.md`
+- [~] **T004** Skip this task `type:draft` `p3`  # skipped tasks excluded from auto runs
 ```
 
 Task types: `code_generate` `draft` `review` `summarize` `search` `plan` `critique` `synthesize` `rollup`
 Priorities: `p1` high · `p2` normal · `p3` low
+Status: `[ ]` TODO · `[x]` DONE · `[~]` SKIP · `[!]` BLOCKED
 
 ## CLI reference
 
@@ -176,20 +182,24 @@ orchid --project PATH --approve            advance to next phase (human gate)
 orchid --project PATH --approve --auto     advance without confirmation
 orchid --project PATH --artifacts          list planning artifact existence
 orchid --project PATH --get-result T001    print saved task output
+orchid --project PATH --run-task T015      run a single specific task
 
-# Subcommands
-orchid new "description" [--name NAME] [--dir PATH] [--type ai|web|tool|game]
-orchid init PATH [--name NAME] [--description TEXT] [--force]
-orchid decide "Title" -d "Decision" -r "Rationale" --project PATH
+# Task management
 orchid task add --title "..." --type code_generate --project PATH
 orchid task done --id T001 --project PATH
 orchid task block --id T002 --project PATH
+orchid task skip --id T015 --project PATH  # mark task as skipped ([~])
 
 # Interfaces
 orchid serve --watch-dir ~/LocalAI --port 7842   persistent multi-project server
-orchid web --project PATH [--port 7842]           single-session web UI
-orchid telegram --project PATH                    Telegram bot interface
-orchid slack --project PATH                       Slack bot interface
+orchid serve --bots                              start central bot server (Telegram + Slack)
+orchid serve --telegram                          start Telegram bot via central server
+orchid serve --slack                             start Slack bot via central server
+orchid web --project PATH [--port 7842]          single-session web UI
+
+# Deprecated (use `orchid serve --telegram` or `orchid serve --slack` instead)
+orchid telegram --project PATH    → DEPRECATED, use `orchid serve --telegram`
+orchid slack --project PATH       → DEPRECATED, use `orchid serve --slack`
 
 # Diagnostics
 orchid --check-providers                   probe all configured providers
@@ -229,20 +239,45 @@ Health check: `GET /health` → `{"status": "ok", "projects": N}` — used by Tr
 ### Features
 
 - **Planning tab** — V2 lifecycle panel: phase indicator, discussion chat, artifact viewer, gate approval panel, NewProject wizard
+- **Discussion history** — persistent chat history with AI PM, view previous conversations and context
 - **Discussion streaming** — real-time WebSocket feed of PM agent responses as they stream
-- **Task board** — view, create, and update task status
+- **Task board** — view, create, and update task status; skip tasks with [~] status
 - **Agent stream** — live WebSocket feed of agent activity during a run
 - **Decision log** — full history of architectural decisions
 - **Session history** — browse and replay past agent session logs
 - **Vector recall** — semantic search over embedded session memory
 - **Hot memory** — view the project's CLAUDE.md context in real time
-- **Run controls** — start and stop agent runs from the browser
+- **Run controls** — start and stop agent runs from the browser; run single tasks with ▶ button
 - **Settings tab** — machine profile editor and provider availability status
+- **Project Config tab** — view and edit .orchid.yaml settings per project
+- **Active/Inactive project grouping** — projects grouped by activity status in sidebar
 - **Auto-discovery** — projects in watched directories appear automatically;
   adding `.orchid.yaml` to a directory (via `orchid init`) registers it
   within seconds without restarting the server
 - **Project switcher** — sidebar shows all projects with task counts,
   filesystem path, last session timestamp, and live status indicator
+
+### Project Config Tab
+
+The **Project Config tab** provides a dedicated interface for managing per-project settings:
+
+- View and edit `.orchid.yaml` configuration
+- Set model preferences (claude/local/auto)
+- Configure agent roles
+- Manage context files loaded into agent prompts
+- Override gate behaviour (auto vs human approval)
+- Shell mode settings (blocklist/allowlist)
+
+Changes are saved immediately and reflected in subsequent agent runs.
+
+### Active/Inactive Project Grouping
+
+Projects in the sidebar are automatically grouped by activity status:
+
+- **Active projects** — those with recent sessions or pending tasks
+- **Inactive projects** — projects with no recent activity
+
+This grouping helps you quickly focus on projects that need attention while keeping completed or dormant projects accessible but visually separated.
 
 ### Running as a systemd service
 
@@ -302,7 +337,7 @@ npm run dev
 
 | Library | Version | Role |
 |---------|---------|------|
-| React | 18 | UI component framework |
+| React | 18 | UI component frameworks |
 | React DOM | 18 | Browser rendering |
 
 **Build tooling**
@@ -324,6 +359,195 @@ using CSS custom properties (variables) for the dark theme.
 **Backend serving:** FastAPI `StaticFiles` serves `web_ui/dist/` in
 production. The SPA catch-all route returns `index.html` for all
 non-API paths.
+
+## V2.1 Central Bot Architecture
+
+Orchid V2.1 introduces a **central bot server** that unifies Telegram and Slack
+bot management under a single `orchid serve` command. This replaces the legacy
+per-project bot commands with a scalable multi-project architecture.
+
+### Starting the Central Bot Server
+
+```bash
+# Start the central server with both Telegram and Slack bots
+orchid serve --bots --port 7842
+
+# Start only Telegram bot
+orchid serve --telegram --port 7842
+
+# Start only Slack bot
+orchid serve --slack --port 7842
+
+# Combine with project watching
+orchid serve --bots --watch-dir ~/LocalAI --watch-dir ~/Documents/Development
+```
+
+### Environment Variables
+
+Configure bot tokens in `~/.config/orchid/.env`:
+
+```bash
+# Telegram bot token (required for --telegram or --bots)
+TELEGRAM_BOT_TOKEN=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
+
+# Slack bot token (required for --slack or --bots)
+SLACK_BOT_TOKEN=xoxb-1234567890-1234567890123-AbCdEfGhIjKlMnOpQrStUvWx
+```
+
+### Deprecation Notice
+
+The legacy bot commands have been deprecated:
+
+| Old Command | New Command |
+|-------------|-------------|
+| `orchid telegram --project PATH` | `orchid serve --telegram` |
+| `orchid slack --project PATH` | `orchid serve --slack` |
+
+The old commands launched bot instances tied to a single project. The new
+central server manages **multiple projects simultaneously** and routes
+commands based on channel-to-project mappings.
+
+### Telegram Commands (Underscore Style)
+
+Telegram bot commands use **underscores** and support project context:
+
+| Command | Description |
+|---------|-------------|
+| `/orchid_start` | Start a new orchid session in the current project |
+| `/orchid_status` | Show task board and current phase |
+| `/orchid_projects` | List all available projects |
+| `/orchid_switch <project>` | Switch to a different project |
+| `/orchid_phase` | Show current lifecycle phase |
+| `/orchid_tasks` | List pending tasks |
+| `/orchid_approve` | Approve current lifecycle gate |
+| `/orchid_discuss` | Start discussion with AI PM |
+| `/orchid_help` | Show available commands |
+
+### Slack Commands (Hyphen Style)
+
+Slack bot commands use **hyphens** and follow Slack's command conventions:
+
+| Command | Description |
+|---------|-------------|
+| `/orchid-status` | Show task board and current phase |
+| `/orchid-projects` | List all available projects |
+| `/orchid-switch <project>` | Switch to a different project |
+| `/orchid-phase` | Show current lifecycle phase |
+| `/orchid-tasks` | List pending tasks |
+| `/orchid-approve` | Approve current lifecycle gate |
+| `/orchid-discuss` | Start discussion with AI PM |
+| `/orchid-help` | Show available commands |
+
+### Channel Routing
+
+The central bot supports **channel-to-project mapping** for team workflows:
+
+```
+# Each channel can be bound to a specific project
+# Commands in that channel automatically target the bound project
+
+Channel: #webtron-dev → Project: ~/projects/webtron
+Channel: #blog-team → Project: ~/projects/blog
+Channel: #general → Project: (user-selected via /orchid_switch)
+```
+
+**How routing works:**
+
+1. When a command is received, the bot looks up the channel ID
+2. If the channel is mapped to a project, that project is used
+3. If not mapped, the user's last-selected project is used
+4. Users can override with `/orchid_switch <project>` or `/orchid_switch <project>`
+
+### State Files
+
+The central bot maintains state in two JSON files (stored in `~/.config/orchid/`):
+
+#### `slack-channels.json`
+
+Maps Slack channel IDs to projects:
+
+```json
+{
+  "channels": {
+    "C0123456789": {
+      "project_path": "/home/user/projects/webtron",
+      "bound_at": "2026-03-22T10:00:00Z",
+      "bound_by": "user123"
+    },
+    "C9876543210": {
+      "project_path": "/home/user/projects/blog",
+      "bound_at": "2026-03-22T11:30:00Z",
+      "bound_by": "user456"
+    }
+  }
+}
+```
+
+#### `telegram-state.json`
+
+Tracks Telegram user sessions and project selections:
+
+```json
+{
+  "users": {
+    "123456789": {
+      "username": "john_doe",
+      "current_project": "/home/user/projects/webtron",
+      "last_active": "2026-03-22T12:00:00Z"
+    }
+  },
+  "projects": {
+    "/home/user/projects/webtron": {
+      "active_sessions": 2,
+      "last_command": "2026-03-22T12:05:00Z"
+    }
+  }
+}
+```
+
+### Multi-Project Support
+
+The central server can manage **unlimited projects** simultaneously:
+
+```bash
+# Watch multiple directories for projects
+orchid serve --bots \
+  --watch-dir ~/LocalAI \
+  --watch-dir ~/Documents/Development \
+  --watch-dir ~/projects
+
+# Explicitly register projects
+orchid serve --bots \
+  --project ~/projects/webtron \
+  --project ~/projects/blog \
+  --project ~/projects/api-service
+```
+
+Projects are auto-discovered by scanning for `.orchid.yaml` files in watched
+directories. Adding a new project (via `orchid init`) registers it within
+seconds without restarting the server.
+
+### Systemd Service for Central Bot
+
+Install the central bot as a service:
+
+```bash
+# Copy the service template (includes --bots flag)
+sudo cp scripts/orchid-serve.service /etc/systemd/system/
+
+# Edit to configure environment variables
+sudo nano /etc/systemd/system/orchid-serve.service
+
+# Enable and start
+sudo systemctl daemon-reload
+sudo systemctl enable --now orchid-serve
+
+# View logs
+sudo journalctl -u orchid-serve -f
+```
+
+The service template includes documentation for `TELEGRAM_BOT_TOKEN` and
+`SLACK_BOT_TOKEN` environment variables.
 
 ## Architecture
 
@@ -363,6 +587,7 @@ interfaces/
   telegram_bot.py    Telegram bot (python-telegram-bot)
   slack_bot.py       Slack bot (slack-bolt, Socket Mode)
   background_runner.py  non-blocking executor shared by Telegram and Slack
+  central_bot.py     V2.1 central bot server (Telegram + Slack routing)
 
 providers/
   registry.py        5-layer provider resolution chain
@@ -406,7 +631,7 @@ caching:
 ## Development
 
 ```bash
-pytest -m "not network"   # 413 tests, no API calls required
+pytest -m "not network"   # 446 tests, no API calls required
 ruff check orchid/        # 0 errors
 ```
 
@@ -424,7 +649,7 @@ CI runs automatically on push/PR via GitHub Actions (`.github/workflows/ci.yml`)
   Configuration and data formats
   - YAML — orchid.defaults.yaml, .orchid.yaml project configs, Traefik routing, machine-profile.yaml
   - TOML — pyproject.toml (package metadata, build config, tool settings)
-  - JSON — package.json, lock files, project.state.json, task_results.json
+  - JSON — package.json, lock files, project.state.json, task_results.json, slack-channels.json, telegram-state.json
   - JSONL — append-only session logs, decisions, discussion conversation history
 
   Other

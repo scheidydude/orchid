@@ -349,6 +349,15 @@ class CentralSlackBot:
         from orchid.session import Session
         projects = []
         for proj_path in self._discovery.scan():
+            # Skip inactive projects
+            try:
+                import yaml as _yaml
+                _oyaml = proj_path / ".orchid.yaml"
+                _yd = _yaml.safe_load(_oyaml.read_text(encoding="utf-8")) or {} if _oyaml.exists() else {}
+                if not _yd.get("active", True):
+                    continue
+            except Exception:
+                pass
             path_str = str(proj_path)
             name = proj_path.name
             try:

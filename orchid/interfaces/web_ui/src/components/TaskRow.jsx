@@ -1,17 +1,19 @@
 import { useState } from 'react'
 
-export default function TaskRow({ task, onStatusChange }) {
+export default function TaskRow({ task, onStatusChange, onRunTask, running }) {
   const [expanded, setExpanded] = useState(false)
 
   const statusActions = {
-    'TODO':        [['done', 'Mark Done'], ['blocked', '🔴 Block']],
-    'IN_PROGRESS': [['done', 'Mark Done'], ['blocked', '🔴 Block']],
-    'BLOCKED':     [['todo', 'Unblock'], ['done', 'Mark Done']],
+    'TODO':        [['done', 'Mark Done'], ['skipped', '⏭ Skip'], ['blocked', '🔴 Block']],
+    'IN_PROGRESS': [['done', 'Mark Done'], ['skipped', '⏭ Skip'], ['blocked', '🔴 Block']],
+    'BLOCKED':     [['todo', 'Unblock'], ['done', 'Mark Done'], ['skipped', '⏭ Skip']],
     'DONE':        [['todo', 'Reopen']],
     'CANCELLED':   [['todo', 'Reopen']],
+    'SKIPPED':     [['todo', 'Restore']],
   }
 
   const actions = statusActions[task.status] || []
+  const canRun = ['TODO', 'BLOCKED', 'SKIPPED'].includes(task.status)
 
   return (
     <div className={`task-row ${expanded ? 'expanded' : ''}`} onClick={() => setExpanded(x => !x)}>
@@ -21,6 +23,16 @@ export default function TaskRow({ task, onStatusChange }) {
           <span className={`task-status-badge status-${task.status}`}>{task.status.replace('_', ' ')}</span>
           <span className="task-title">{task.title}</span>
           {task.last_error && <span title={task.last_error} style={{ color: 'var(--error, #ff6b6b)', fontSize: 13, cursor: 'help' }}>⚠</span>}
+          {canRun && onRunTask && (
+            <button
+              onClick={e => { e.stopPropagation(); onRunTask(task.id) }}
+              disabled={running}
+              title="Run this task now"
+              style={{ marginLeft: 'auto', fontSize: 11, padding: '2px 8px', color: '#79b8ff', borderColor: '#1f3a5f', background: '#0d1f35' }}
+            >
+              ▶ Run
+            </button>
+          )}
         </div>
         <div className="task-meta">
           <span className="tag">type:{task.type}</span>

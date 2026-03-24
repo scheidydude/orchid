@@ -153,6 +153,11 @@ def main(
         False, "--artifacts",
         help="List generated lifecycle artifacts with existence status.",
     ),
+    run_task: str | None = typer.Option(
+        None, "--run-task",
+        metavar="TASK_ID",
+        help="Run a single specific task by ID (e.g. T015), ignoring queue order.",
+    ),
     log_level: str = typer.Option("INFO", "--log-level", "-l"),
 ) -> None:
     if ctx.invoked_subcommand:
@@ -228,6 +233,10 @@ def main(
         )
         return
 
+    if run_task is not None:
+        _cmd_run_task(proj, run_task, code_model=code_model, offline=offline)
+        return
+
     # Parse --provider agent=provider pairs
     provider_overrides: dict[str, str] = {}
     for p in (provider or []):
@@ -299,6 +308,43 @@ def _cmd_auto(
     finally:
         session.close(summary="Autonomous run complete.")
         console.print("[green]Session saved.[/green]")
+
+
+def _cmd_run_task(
+    project: str,
+    task_id: str,
+    code_model: str | None = None,
+    offline: bool = False,
+) -> None:
+    """Run a single specific task by ID, ignoring queue order."""
+    session = _make_session(project)
+    task = next((t for t in session.tasks if t.id == task_id), None)
+    if task is None:
+        console.print(f"[red]Task {task_id} not found[/red]")
+        raise typer.Exit(1)
+
+    console.print(Panel(
+        f"[bold green]Orchid — Single Task Run[/bold green]\n"
+        f"Project: [cyan]{session.project_name}[/cyan]\n"
+        f"Task: [bold]{task.id}[/bold] {task.title}\n"
+        f"Status: {task.status.value}",
+        border_style="green",
+    ))
+
+    from orchid.orchestrator import Orchestrator
+    orch = Orchestrator(session, cli_model_override=code_model, offline_mode=offline)
+    try:
+        result = orch._execute_task(task)
+        session.save()
+        snippet = str(result.get("result", ""))[:300] if result else ""
+        console.print(f"[green]✓ {task.id} complete[/green]")
+        if snippet:
+            console.print(f"[dim]{snippet}[/dim]")
+    except Exception as exc:
+        console.print(f"[red]Task {task.id} failed: {exc}[/red]")
+        raise typer.Exit(1)
+    finally:
+        session.close(summary=f"Single task run: {task_id}")
 
 
 def _cmd_interactive(project: str, model: str = "claude") -> None:
@@ -1164,7 +1210,7 @@ def decide(
 
 @app.command()
 def task(
-    action: str = typer.Argument(..., help="add | done | block | cancel"),
+    action: str = typer.Argument(..., help="add | done | block | cancel | skip"),
     project: str = typer.Option(".", "--project", "-p"),
     task_id: str | None = typer.Option(None, "--id"),
     title: str = typer.Argument("", help="Task title (required for add)"),
@@ -1172,7 +1218,7 @@ def task(
     priority: int = typer.Option(2, "--priority"),
     description: str = typer.Option("", "--desc", "-d"),
 ) -> None:
-    """Manage tasks: add, mark done, block, or cancel."""
+    """Manage tasks: add, mark done, block, cancel, or skip."""
     session = _make_session(project)
     from orchid.memory.state import Task, TaskStatus, save_tasks
 
@@ -1186,7 +1232,7 @@ def task(
         save_tasks(session.tasks, project)
         console.print(f"[green]Added {tid}: {title}[/green]")
 
-    elif action in ("done", "block", "cancel"):
+    elif action in ("done", "block", "cancel", "skip"):
         if not task_id:
             console.print("[red]--id required[/red]")
             raise typer.Exit(1)
@@ -1194,6 +1240,7 @@ def task(
             "done": TaskStatus.DONE,
             "block": TaskStatus.BLOCKED,
             "cancel": TaskStatus.CANCELLED,
+            "skip": TaskStatus.SKIPPED,
         }
         new_status = status_map[action]
         if session.update_task_status(task_id, new_status):
@@ -1204,7 +1251,7 @@ def task(
             raise typer.Exit(1)
 
     else:
-        console.print(f"[red]Unknown action: {action}. Use add|done|block|cancel[/red]")
+        console.print(f"[red]Unknown action: {action}. Use add|done|block|cancel|skip[/red]")
         raise typer.Exit(1)
 
 

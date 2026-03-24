@@ -1,13 +1,9 @@
 # Tasks
 
 
-## TODO
-
-- [x] **T075** Fix Planning tab artifact panels: text content in Requirements, Architecture, Milestones and tasks.md tabs is not scrollable when it exceeds the viewport. Fixed: min-height:0 on flex chain (.artifact-panel/body/view/content), overflow:hidden on panel-body when Planning active, wrapper divs for READY/EXECUTING/COMPLETE phases get proper flex constraints. `type:code_generate` `p1`
-- [x] **T076** Planning tab Discussion tab: added Discussion tab to ArtifactPanel alongside artifact tabs. Loads from existing GET /api/projects/{id}/discussion endpoint, renders chat-style bubbles (same CSS as DiscussionPanel) in a scrollable read-only view. `type:code_generate` `p2`
-
 ## DONE
 
+- [x] **T075** Fix Planning tab artifact panels: text content in Requirements, Architecture, Milestones and tasks.md tabs is not scrollable when it exceeds the viewport. Fixed: min-height:0 on flex chain (.artifact-panel/body/view/content), overflow:hidden on panel-body when Planning active, wrapper divs for READY/EXECUTING/COMPLETE phases get proper flex constraints. `type:code_generate` `p1`
 - [x] **T074** Planning tab: show completed phase artifacts in read-only mode regardless of current phase. When project is in EXECUTING or COMPLETE phase, the Requirements, Architecture, Milestones and Tasks tabs should still display their content as read-only. Currently they show 'Project is executing' instead of the artifact content. Only hide/disable editing — never hide the content itself. `type:code_generate` `p1`
 - [x] **T072** Fix Planning tab artifact panels: Requirements, Architecture, Milestones and tasks.md tabs should scroll independently even when not in edit mode. Added overflow:hidden/padding:0 to panel-body when Planning tab is active; existing flex chain now propagates height correctly so artifact-content can scroll. `type:code_generate` `p1`
 - [x] **T073** Add SKIP task status to Orchid: orchid task skip --id T015 --project . marks task as skipped (shown as [~] in tasks.md). Skipped tasks are excluded from auto mode runs but count as satisfied for dependencies. Added Skip button to Web UI task board. `type:code_generate` `p1`
@@ -51,6 +47,9 @@
 - [x] **T008** Fix decisions.json parse error - likely JSON Lines vs single JSON document format mismatch `type:code_generate` `p1`
 - [x] **T002** Hook LLM summarizer into session compression `type:code_generate` `p1`
 - [x] **T001** Review the session.py compression logic and suggest improvements `type:review` `p1`
+- [x] **T077** Update README.md and docs/getting-started.md for new features: --run-task flag, SKIP task status ([~]), Active/Inactive project grouping, Project Config tab, Planning tab Discussion history, orchid serve --bots/--telegram/--slack flags (already partially documented but needs the new UI features added) `type:draft` `p2`
+- [x] **T078** Update CLAUDE.md hot memory: reflect current state — 446+ tests passing, V2.1 complete, new CLI flags (--run-task, task skip), active/inactive projects in .orchid.yaml, SKIP task status syntax [~] in tasks.md, Discussion history tab in Planning UI `type:draft` `p2`
+- [x] **T076** Planning tab Discussion tab: added Discussion tab to ArtifactPanel alongside artifact tabs. Loads from existing GET /api/projects/{id}/discussion endpoint, renders chat-style bubbles (same CSS as DiscussionPanel) in a scrollable read-only view. `type:code_generate` `p2`
 - [x] **T070** Add Project Settings panel to Web UI: 'Config' tab shows read-only .orchid.yaml and .env (sensitive values redacted). GET /api/projects/{id}/settings endpoint. `type:code_generate` `p2`
 - [x] **T071** Add Active/Inactive project grouping to Web UI Projects panel: expandable Active/Inactive folders with ⏸/▶ toggle. Stored in .orchid.yaml active:true/false. Telegram and Slack bots filter to active-only projects. `type:code_generate` `p2`
 - [x] **T064** Fix --log-level flag: convert input to lowercase before passing to uvicorn. uvicorn expects lowercase log levels (debug, info, warning) but users may type DEBUG, INFO etc. Add .lower() to the log_level parameter before passing to uvicorn.run() `type:code_generate` `p2`

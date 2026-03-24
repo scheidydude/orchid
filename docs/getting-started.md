@@ -139,6 +139,19 @@ Orchid picks the highest-priority pending task, routes it to the right agent and
 orchid --project ~/projects/myapp --get-result T001
 ```
 
+### Running a Single Task
+
+To run just one specific task without executing all pending tasks:
+
+```bash
+orchid --project ~/projects/myapp --run-task T015
+```
+
+This is useful for:
+- Testing a specific task in isolation
+- Re-running a failed task
+- Executing tasks out of order when dependencies allow
+
 ---
 
 ## 4. Write or Edit CLAUDE.md
@@ -154,7 +167,7 @@ A REST API for tracking inventory. Built with FastAPI and PostgreSQL.
 ## Current Focus
 Implement the product endpoints and wire up the database layer.
 
-## Architecture Notes
+## Architecture Note
 - src/api/ — FastAPI routers
 - src/db/ — SQLAlchemy models and session
 - Tests live in tests/ and use pytest with a real test database
@@ -184,6 +197,7 @@ You can also skip the planning workflow and add tasks directly to `tasks.md`:
   - `needs:T001`
 - [ ] **T003** Write tests for product endpoints `type:code_generate` `p2` `agent:developer`
 - [ ] **T004** Review product API `type:review` `p2` `agent:reviewer`
+- [~] **T005** Skip this feature `type:draft` `p3`  # skipped task
 - [ ] **T099** Sprint rollup `type:rollup` `rollup:T001,T002,T003,T004` `output:SPRINT1.md`
 ```
 
@@ -206,6 +220,36 @@ orchid --project ~/projects/myapp --add-task "Create product model" --type code_
 | `output:FILE.md` | filename | Rollup output file |
 
 All fields except the task title are optional.
+
+### Task Status
+
+Tasks can have the following statuses:
+
+| Status | Syntax | Description |
+|--------|--------|-------------|
+| TODO | `[ ]` | Pending execution |
+| DONE | `[x]` | Completed successfully |
+| SKIP | `[~]` | Skipped — excluded from auto runs, satisfies dependencies |
+| BLOCKED | `[!]` | Blocked — cannot proceed due to external factors |
+
+### Skipping Tasks
+
+To skip a task (e.g., a feature you've decided not to implement):
+
+```bash
+orchid task skip --id T005 --project ~/projects/myapp
+```
+
+Or manually change the checkbox in `tasks.md`:
+
+```markdown
+- [~] **T005** This feature is no longer needed `type:draft` `p3`
+```
+
+Skipped tasks:
+- Are excluded from `--mode auto` runs
+- Count as satisfied for dependency checks (tasks depending on them can proceed)
+- Remain visible in the task board for reference
 
 ### Rollup tasks
 
@@ -249,6 +293,12 @@ orchid --project ~/projects/myapp --mode auto
 ```
 
 Orchid picks the highest-priority pending task, dispatches an agent, loops until it produces a final answer, then moves on to the next task.
+
+### Run a single task
+
+```bash
+orchid --project ~/projects/myapp --run-task T015
+```
 
 ### Run without the Anthropic API (local models only)
 
@@ -299,11 +349,12 @@ Decisions are stored in `.orchid/decisions.json` and surfaced to agents automati
 
 ---
 
-## 9. Mark Tasks Done or Blocked
+## 9. Mark Tasks Done, Blocked, or Skipped
 
 ```bash
 orchid task done --id T001 --project ~/projects/myapp
 orchid task block --id T002 --project ~/projects/myapp
+orchid task skip --id T005 --project ~/projects/myapp
 ```
 
 Retrieve a task's stored output:
@@ -332,7 +383,48 @@ Open **http://localhost:7842** in your browser.
 orchid web --project ~/projects/myapp
 ```
 
-The **Planning tab** exposes the full V2 workflow — phase indicator, discussion chat with streaming responses, artifact viewer, gate approval panel, and the NewProject wizard.
+### Planning Tab
+
+The **Planning tab** exposes the full V2 workflow:
+
+- **Phase indicator** — shows current lifecycle phase (NEW, DISCUSSING, REQUIREMENTS, PLANNING, READY, EXECUTING, COMPLETE)
+- **Discussion chat** — chat with the AI PM with streaming responses
+- **Discussion history** — view previous conversations and context
+- **Artifact viewer** — browse REQUIREMENTS.md, ARCHITECTURE.md, MILESTONES.md
+- **Gate approval panel** — advance through lifecycle gates
+- **NewProject wizard** — create new projects from the browser
+
+### Project Config Tab
+
+The **Project Config tab** provides a dedicated interface for managing per-project settings:
+
+- View and edit `.orchid.yaml` configuration
+- Set model preferences (claude/local/auto)
+- Configure agent roles
+- Manage context files loaded into agent prompts
+- Override gate behaviour (auto vs human approval)
+- Shell mode settings (blocklist/allowlist)
+
+Changes are saved immediately and reflected in subsequent agent runs.
+
+### Task Board
+
+The task board in the Web UI lets you:
+
+- View all tasks with their status, priority, and dependencies
+- Create new tasks directly from the browser
+- Update task status (done, blocked, skipped)
+- Skip tasks with a single click (marked as `[~]`)
+- Run individual tasks with the ▶ button
+
+### Active/Inactive Project Grouping
+
+Projects in the sidebar are automatically grouped by activity status:
+
+- **Active projects** — those with recent sessions or pending tasks
+- **Inactive projects** — projects with no recent activity
+
+This grouping helps you quickly focus on projects that need attention while keeping completed or dormant projects accessible but visually separated.
 
 ### Run as a systemd service
 
@@ -395,6 +487,75 @@ agents:
 ```
 
 Built-in allowlist covers the tools agents typically need: `git`, `python`, `python3`, `uv`, `pytest`, `ruff`, `node`, `npm`, `npx`, `cargo`, `make`, `cmake`, file inspection (`cat`, `ls`, `find`, `grep`, `diff`), archive tools, and more. Blocklist patterns always apply regardless of mode.
+
+---
+
+## 13. Central Bot Server (V2.1)
+
+Orchid V2.1 introduces a **central bot server** that unifies Telegram and Slack bot management under a single `orchid serve` command.
+
+### Starting the Central Bot Server
+
+```bash
+# Start the central server with both Telegram and Slack bots
+orchid serve --bots --port 7842
+
+# Start only Telegram bot
+orchid serve --telegram --port 7842
+
+# Start only Slack bot
+orchid serve --slack --port 7842
+
+# Combine with project watching
+orchid serve --bots --watch-dir ~/LocalAI --watch-dir ~/Documents/Development
+```
+
+### Environment Variables
+
+Configure bot tokens in `~/.config/orchid/.env`:
+
+```bash
+# Telegram bot token (required for --telegram or --bots)
+TELEGRAM_BOT_TOKEN=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
+
+# Slack bot token (required for --slack or --bots)
+SLACK_BOT_TOKEN=xoxb-1234567890-1234567890123-AbCdEfGhIjKlMnOpQrStUvWx
+```
+
+### Telegram Commands
+
+Telegram bot commands use **underscores**:
+
+| Command | Description |
+|---------|-------------|
+| `/orchid_start` | Start a new orchid session in the current project |
+| `/orchid_status` | Show task board and current phase |
+| `/orchid_projects` | List all available projects |
+| `/orchid_switch <project>` | Switch to a different project |
+| `/orchid_phase` | Show current lifecycle phase |
+| `/orchid_tasks` | List pending tasks |
+| `/orchid_approve` | Approve current lifecycle gate |
+| `/orchid_discuss` | Start discussion with AI PM |
+| `/orchid_help` | Show available commands |
+
+### Slack Commands
+
+Slack bot commands use **hyphens**:
+
+| Command | Description |
+|---------|-------------|
+| `/orchid-status` | Show task board and current phase |
+| `/orchid-projects` | List all available projects |
+| `/orchid-switch <project>` | Switch to a different project |
+| `/orchid-phase` | Show current lifecycle phase |
+| `/orchid-tasks` | List pending tasks |
+| `/orchid-approve` | Approve current lifecycle gate |
+| `/orchid-discuss` | Start discussion with AI PM |
+| `/orchid-help` | Show available commands |
+
+### Channel Routing
+
+The central bot supports **channel-to-project mapping** for team workflows. Each channel can be bound to a specific project, so commands in that channel automatically target the bound project.
 
 ---
 

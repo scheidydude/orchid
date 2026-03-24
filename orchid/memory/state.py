@@ -21,6 +21,7 @@ class TaskStatus(str, Enum):
     DONE = "DONE"
     BLOCKED = "BLOCKED"
     CANCELLED = "CANCELLED"
+    SKIPPED = "SKIPPED"
 
 
 @dataclass
@@ -73,6 +74,7 @@ class Task:
             TaskStatus.DONE: "x",
             TaskStatus.BLOCKED: "!",
             TaskStatus.CANCELLED: "-",
+            TaskStatus.SKIPPED: "~",
         }[self.status]
 
 
@@ -86,7 +88,8 @@ _TASK_RE = re.compile(
     r"(?P<rest>.*)$"
 )
 _SC_MAP = {" ": TaskStatus.TODO, ">": TaskStatus.IN_PROGRESS,
-           "x": TaskStatus.DONE, "!": TaskStatus.BLOCKED, "-": TaskStatus.CANCELLED}
+           "x": TaskStatus.DONE, "!": TaskStatus.BLOCKED, "-": TaskStatus.CANCELLED,
+           "~": TaskStatus.SKIPPED}
 
 
 def load_tasks(project_dir: str | Path = ".") -> list[Task]:
@@ -156,7 +159,7 @@ def save_tasks(tasks: list[Task], project_dir: str | Path = ".") -> None:
 
     lines = ["# Tasks\n"]
     for status in [TaskStatus.IN_PROGRESS, TaskStatus.TODO, TaskStatus.BLOCKED,
-                   TaskStatus.DONE, TaskStatus.CANCELLED]:
+                   TaskStatus.DONE, TaskStatus.CANCELLED, TaskStatus.SKIPPED]:
         bucket = groups[status]
         if not bucket:
             continue
@@ -195,7 +198,7 @@ def detect_dependency_cycles(tasks: list[Task]) -> list[list[str]]:
 
 def next_task(tasks: list[Task]) -> Task | None:
     """Pick the highest-priority runnable TODO task."""
-    completed_ids = {t.id for t in tasks if t.status == TaskStatus.DONE}
+    completed_ids = {t.id for t in tasks if t.status in (TaskStatus.DONE, TaskStatus.SKIPPED)}
 
     if cfg.get("dependencies.enabled", True) and cfg.get("dependencies.cycle_detection", True):
         todo_tasks = [t for t in tasks if t.status == TaskStatus.TODO]
