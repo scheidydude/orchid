@@ -533,7 +533,9 @@ class CentralSlackBot:
             respond(f"❌ Task {task_id} not found.")
             return
         from orchid.interfaces.slack_formatter import (
-            format_task_complete, format_task_failed, format_task_started,
+            format_task_complete,
+            format_task_failed,
+            format_task_started,
         )
         channel = command.get("channel_id", "")
         with self._notify_lock:
@@ -568,7 +570,9 @@ class CentralSlackBot:
             respond("No pending tasks.")
             return
         from orchid.interfaces.slack_formatter import (
-            format_auto_summary, format_task_complete, format_task_failed,
+            format_auto_summary,
+            format_task_complete,
+            format_task_failed,
         )
         channel = command.get("channel_id", "")
         with self._notify_lock:

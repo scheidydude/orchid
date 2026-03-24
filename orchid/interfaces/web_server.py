@@ -210,7 +210,6 @@ class _WebProjectRunner:
         task_id: str,
         code_model: str | None,
     ) -> None:
-        from orchid.memory.state import TaskStatus
         from orchid.orchestrator import Orchestrator
         from orchid.session import Session
 

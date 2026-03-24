@@ -165,7 +165,7 @@ class CentralBotManager:
     # ── Factory from config ───────────────────────────────────────────────────
 
     @classmethod
-    def from_env(cls, discovery: Any) -> "CentralBotManager":
+    def from_env(cls, discovery: Any) -> CentralBotManager:
         """Build a CentralBotManager from environment variables and config."""
         from orchid import config as cfg
 

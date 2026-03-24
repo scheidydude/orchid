@@ -39,8 +39,6 @@ try:
         Application,
         CommandHandler,
         ContextTypes,
-        MessageHandler,
-        filters,
     )
     _TELEGRAM_AVAILABLE = True
 except ImportError:
@@ -455,7 +453,9 @@ class CentralTelegramBot:
             await self._reply(update, f"❌ Task {task_id} not found.")
             return
         from orchid.interfaces.telegram_formatter import (
-            format_task_complete, format_task_failed, format_task_started,
+            format_task_complete,
+            format_task_failed,
+            format_task_started,
         )
         chat_id = update.effective_chat.id
         self._subscribe(path, chat_id)
@@ -488,7 +488,9 @@ class CentralTelegramBot:
             await self._reply(update, "No pending tasks.")
             return
         from orchid.interfaces.telegram_formatter import (
-            format_auto_summary, format_task_complete, format_task_failed,
+            format_auto_summary,
+            format_task_complete,
+            format_task_failed,
         )
         chat_id = update.effective_chat.id
         self._subscribe(path, chat_id)
@@ -516,7 +518,7 @@ class CentralTelegramBot:
             await self._reply(update, "Usage: /orchid_add <task description>")
             return
         description = " ".join(args)
-        from orchid.memory.state import Task, TaskStatus, save_tasks
+        from orchid.memory.state import Task, save_tasks
         from orchid.session import Session
         s = Session(project_dir=path)
         s.load()
@@ -658,6 +660,7 @@ class CentralTelegramBot:
         description = " ".join(args)
         try:
             import re
+
             from orchid.project_creator import ProjectCreator
             slug = re.sub(r"[^a-z0-9]+", "-", description.lower()).strip("-")[:40]
             creator = ProjectCreator()
