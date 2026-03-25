@@ -318,7 +318,7 @@ class BaseAgent:
         )
         self.session_context = session_context
         self.history: list[Message] = []
-        self.max_iterations = cfg.get("agents.max_react_iterations", 15)
+        self.max_iterations = cfg.get("agents.max_iterations", 25)
         # Delegation — set by AgentDelegator when spawning sub-agents
         self.delegator: Any = None
         self.delegation_depth: int = 0
