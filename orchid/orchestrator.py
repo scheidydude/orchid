@@ -89,10 +89,12 @@ def _get_registry() -> dict[str, type]:
         from orchid.agents.developer import DeveloperAgent
         from orchid.agents.researcher import ResearcherAgent
         from orchid.agents.reviewer import ReviewerAgent
+        from orchid.agents.tester import TesterAgent
         _AGENT_REGISTRY.update({
             "developer": DeveloperAgent,
             "researcher": ResearcherAgent,
             "reviewer": ReviewerAgent,
+            "tester": TesterAgent,
             "base": BaseAgent,
         })
     return _AGENT_REGISTRY
@@ -153,6 +155,7 @@ class Orchestrator:
         """Run tasks until none remain or max_tasks reached."""
         auto_review_enabled = cfg.get("auto_review.enabled", False)
         auto_review_after = cfg.get("auto_review.after_n_tasks", 3)
+        auto_verify_enabled = cfg.get("auto_verify", False)
         code_gen_since_review = 0
 
         for i in range(max_tasks):
@@ -173,6 +176,15 @@ class Orchestrator:
                 if code_gen_since_review >= auto_review_after:
                     self._insert_auto_review_task()
                     code_gen_since_review = 0
+
+            # T083: auto-inject verify task after completed code_generate tasks
+            if (
+                auto_verify_enabled
+                and result.get("status") == "done"
+                and task.type == "code_generate"
+            ):
+                files = result.get("files_written", [])
+                self._insert_auto_verify_task(task, files)
 
     # ── Task execution ─────────────────────────────────────────────────────────
 
@@ -329,7 +341,7 @@ class Orchestrator:
                     task.id, task.title, task.type, result_text
                 )
                 self._update_hot_memory(task, result_text)
-                return {"task_id": task.id, "status": "done", "result": result_text}
+                return {"task_id": task.id, "status": "done", "result": result_text, "files_written": files_written}
 
         except ProviderUnavailableError as e:
             logger.error("Provider unavailable for task %s: %s — %s", task.id, e.missing, e.suggestion)
@@ -438,6 +450,7 @@ class Orchestrator:
             "summarize": "researcher",
             "review": "reviewer",
             "critique": "reviewer",
+            "verify": "tester",   # T082: verification tasks route to TesterAgent
             "rollup": "base",  # orchestrator handles rollup directly, base is fallback
         }
         agent_name = type_map.get(task.type, "base")
@@ -544,6 +557,27 @@ class Orchestrator:
         )
         self.session.tasks.append(review_task)
         logger.info("Auto-review task inserted: %s", review_task.id)
+
+    def _insert_auto_verify_task(self, source_task: Task, files_written: list[str]) -> None:
+        """T083: Insert a verify task immediately after a completed code_generate task."""
+        from datetime import datetime as _dt
+        ts = _dt.now(UTC).strftime("%H%M%S")
+        files_str = ", ".join(files_written) if files_written else "written files"
+        verify_task = Task(
+            id=f"{source_task.id}-verify-{ts}",
+            title=f"Verify {source_task.id}: {files_str}"[:100],
+            type="verify",
+            priority=source_task.priority,
+            description=(
+                f"Verify the output of task {source_task.id}: {source_task.title}.\n"
+                f"Files to check: {files_str}\n"
+                "Run the project test suite and report results."
+            ),
+            depends_on=[source_task.id],
+        )
+        # Insert at front of pending tasks (after any already in-progress)
+        self.session.tasks.insert(0, verify_task)
+        logger.info("Auto-verify task inserted: %s targeting %s", verify_task.id, files_str[:80])
 
     def _update_hot_memory(self, task: Task, result: str) -> None:
         summary_line = f"\n- [{task.id}] {task.title}: {result[:200].strip()}\n"

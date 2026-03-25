@@ -1,4 +1,4 @@
-"""End-to-end integration smoke tests.
+"""End-to-end integration smoke tests and _tracking_write manifest tests.
 
 These tests exercise the full path:
     Session.load() → Orchestrator.run_loop() → TaskResultStore
@@ -13,6 +13,7 @@ is real code.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -187,3 +188,93 @@ def test_session_save_persists_done_status(project: Path) -> None:
     # run_loop calls session.save() internally — reload from disk to confirm
     reloaded = load_tasks(project)
     assert reloaded[0].status == TaskStatus.DONE
+
+
+# ── _tracking_write manifest recording ────────────────────────────────────────
+
+
+_WRITE_RESP = (
+    "Thought: I will write the file.\n"
+    "Action: write_file\n"
+    "Action Path: output.txt\n"
+    "Action Content:\n"
+    "<<<ORCHID\n"
+    "hello world\n"
+    "ORCHID"
+)
+
+
+def test_tracking_write_records_file_in_manifest(tmp_path: Path) -> None:
+    """Files written via write_file are recorded in a task_manifest session event."""
+    (tmp_path / "tasks.md").write_text(
+        "# Tasks\n\n## TODO\n\n"
+        "- [ ] **T001** Write hello world `type:code_generate` `p1`\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "CLAUDE.md").write_text("# Test\n", encoding="utf-8")
+
+    from orchid.session import Session
+    from orchid.orchestrator import Orchestrator
+
+    session = Session(project_dir=tmp_path)
+    session.load()
+
+    with patch("orchid.orchestrator.call", return_value=_FINAL_ANSWER), \
+         patch("orchid.agents.base.call", side_effect=[_WRITE_RESP, _FINAL_ANSWER]), \
+         patch("orchid.orchestrator.route", return_value=_LOCAL_ROUTE):
+        Orchestrator(session).run_loop(max_tasks=1)
+
+    log_dir = tmp_path / ".orchid" / "session_logs"
+    log_files = list(log_dir.glob("*.jsonl"))
+    assert log_files, "No session log written"
+
+    events = [
+        json.loads(line)
+        for line in log_files[0].read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    manifest_events = [e for e in events if e.get("type") == "task_manifest"]
+    assert len(manifest_events) == 1, f"Expected 1 manifest event, got: {manifest_events}"
+    assert manifest_events[0]["task_id"] == "T001"
+    assert any("output.txt" in p for p in manifest_events[0]["files_created"])
+
+
+def test_tracking_write_missing_content_returns_error(tmp_path: Path) -> None:
+    """_tracking_write with no content returns a helpful error instead of raising TypeError."""
+    (tmp_path / "tasks.md").write_text(
+        "# Tasks\n\n## TODO\n\n"
+        "- [ ] **T001** Write file `type:code_generate` `p1`\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "CLAUDE.md").write_text("# Test\n", encoding="utf-8")
+
+    # Model uses "Action Path:" without heredoc block — dispatches write_file with path only
+    _PATH_ONLY_RESP = (
+        "Thought: Writing now.\n"
+        "Action: write_file\n"
+        "Action Path: output.txt"
+    )
+
+    from orchid.session import Session
+    from orchid.orchestrator import Orchestrator
+
+    session = Session(project_dir=tmp_path)
+    session.load()
+
+    with patch("orchid.orchestrator.call", return_value=_FINAL_ANSWER), \
+         patch("orchid.agents.base.call", side_effect=[_PATH_ONLY_RESP, _FINAL_ANSWER]), \
+         patch("orchid.orchestrator.route", return_value=_LOCAL_ROUTE):
+        # Should complete without raising TypeError
+        Orchestrator(session).run_loop(max_tasks=1)
+
+    # No manifest event: no file was actually written
+    log_dir = tmp_path / ".orchid" / "session_logs"
+    log_files = list(log_dir.glob("*.jsonl"))
+    assert log_files
+    events = [
+        json.loads(line)
+        for line in log_files[0].read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    manifest_events = [e for e in events if e.get("type") == "task_manifest"]
+    assert manifest_events == [], "No manifest should be logged when content was missing"

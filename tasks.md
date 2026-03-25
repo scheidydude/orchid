@@ -1,6 +1,14 @@
 # Tasks
 
 
+## TODO
+
+- [x] **T079** Add venv/Docker awareness to agent bash tool: when running pytest or python in a project directory, check for .venv/bin/python, venv/bin/python, or docker-compose.yml and use the appropriate runner. Add to CLAUDE.md template: if project has .venv use .venv/bin/python, if Docker use docker-compose exec. This prevents agents wasting iterations trying bare python3 which has no packages. `type:code_generate` `p2`
+- [x] **T080** Add project environment detection to agents: at task start, check project root for docker-compose.yml, .venv/, venv/, package.json, Pipfile, pyproject.toml. Store detected environment in session context. Use this to skip runtime test execution when Docker is not running, and prefer syntax-only verification (py_compile, node --check) instead. Add environment: docker|venv|node|unknown field to .orchid.yaml that overrides auto-detection. `type:code_generate` `p2`
+- [x] **T081** Add verify_syntax_only mode to agents: when agents.verify_syntax_only: true is set in .orchid.yaml, DeveloperAgent skips all runtime test execution (pytest, jest, make test, docker exec) and only runs syntax checks (py_compile, node --check, tsc --noEmit). Add this setting to orchid.defaults.yaml defaulting to false. Update agent system prompt to include the current verify mode so the model knows not to attempt runtime tests. `type:code_generate` `p2`
+- [x] **T082** Add TesterAgent: new agent class orchid/agents/tester.py focused solely on verification. Detects project environment (docker-compose.yml → docker, .venv/ → venv, package.json → node). Knows how to run: pytest, jest, make test, docker compose exec. Auto-injected by orchestrator after each code_generate task completes using the task manifest file list. Returns structured result: {passed: bool, tests_run: int, failures: [], files_checked: []}. Route type:verify tasks to TesterAgent. `type:code_generate` `p2`
+- [x] **T083** Add auto-verify task injection to orchestrator: after a code_generate task completes successfully, automatically create and queue a paired type:verify task targeting the files in the task manifest. The verify task inherits the same priority, is inserted next in queue, and is routed to TesterAgent. Add auto_verify: true/false to orchid.defaults.yaml (default false, opt-in per project via .orchid.yaml). `type:code_generate` `p2`
+
 ## DONE
 
 - [x] **T075** Fix Planning tab artifact panels: text content in Requirements, Architecture, Milestones and tasks.md tabs is not scrollable when it exceeds the viewport. Fixed: min-height:0 on flex chain (.artifact-panel/body/view/content), overflow:hidden on panel-body when Planning active, wrapper divs for READY/EXECUTING/COMPLETE phases get proper flex constraints. `type:code_generate` `p1`

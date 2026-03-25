@@ -5,9 +5,60 @@ from __future__ import annotations
 import re
 import shlex
 import subprocess
+from pathlib import Path
 
 from orchid import config as cfg
 from orchid.errors import ToolError
+
+
+def detect_python_runner(project_path: str | Path) -> str:
+    """Return the best python executable for a project.
+
+    Priority:
+      1. <project>/.venv/bin/python
+      2. <project>/venv/bin/python
+      3. system python3
+    """
+    p = Path(project_path)
+    for candidate in (p / ".venv" / "bin" / "python", p / "venv" / "bin" / "python"):
+        if candidate.exists():
+            return str(candidate)
+    return "python3"
+
+
+def detect_environment(project_path: str | Path) -> str:
+    """Detect the runtime environment of a project.
+
+    Returns one of: 'docker', 'venv', 'node', 'python', 'unknown'.
+    """
+    p = Path(project_path)
+    if (p / "docker-compose.yml").exists() or (p / "docker-compose.yaml").exists():
+        return "docker"
+    if (p / ".venv").is_dir() or (p / "venv").is_dir():
+        return "venv"
+    if (p / "package.json").exists():
+        return "node"
+    if (p / "pyproject.toml").exists() or (p / "Pipfile").exists():
+        return "python"
+    return "unknown"
+
+
+def rewrite_python_command(command: str, project_path: str | Path) -> str:
+    """Rewrite bare python/pytest/pip invocations to use the project venv if available.
+
+    Only rewrites when a venv is found — leaves commands unchanged otherwise.
+    """
+    runner = detect_python_runner(project_path)
+    if runner == "python3":
+        return command  # no venv found, leave as-is
+
+    # Replace leading `python3` or `python` with venv runner
+    cmd = re.sub(r"^python3?\b", runner, command)
+    # Replace leading `pytest` with `<runner> -m pytest`
+    cmd = re.sub(r"^pytest\b", f"{runner} -m pytest", cmd)
+    # Replace leading `pip3` or `pip` with `<runner> -m pip`
+    cmd = re.sub(r"^pip3?\b", f"{runner} -m pip", cmd)
+    return cmd
 
 # Commands that are never allowed regardless of config or mode.
 # Matched against the full command string (case-sensitive).

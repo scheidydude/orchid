@@ -78,11 +78,13 @@ memory:
   compression_threshold: 6000   # compress when hot memory exceeds this
 
 agents:
-  max_react_iterations: 25
+  max_react_iterations: 50
   tool_timeout_seconds: 30
   bash_timeout_seconds: 60
   shell_mode: blocklist      # blocklist | allowlist
   shell_allowlist: []        # extra executables to permit in allowlist mode (merged with built-in defaults)
+  verify_syntax_only: false  # T081: when true, skip runtime tests — only run py_compile/node --check
+  environment: null          # T080: override auto-detected env (docker|venv|node|python|unknown)
 
 # projects_dir is no longer used — projects are standalone external repos
 
@@ -208,6 +210,9 @@ rollup:
 auto_review:
   enabled: false
   after_n_tasks: 3
+
+# Auto-verify: after each code_generate task, queue a paired verify task (T083)
+auto_verify: false
 
 # Persistent serve: unified multi-project server (D0034)
 serve:

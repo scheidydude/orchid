@@ -21,7 +21,7 @@ ToolFn = Callable[..., str]
 # ── Built-in tools ────────────────────────────────────────────────────────────
 from orchid.tools.consistency import check_imports_summary
 from orchid.tools.filesystem import append_file, list_dir, read_file, write_file
-from orchid.tools.shell import bash
+from orchid.tools.shell import bash, detect_environment, rewrite_python_command
 
 _BUILTIN_TOOLS: dict[str, ToolFn] = {
     "read_file": read_file,
@@ -89,12 +89,17 @@ def _make_project_tools(project_dir: Path) -> dict[str, ToolFn]:
     def _get_task_files(task_id: str) -> str:
         return _get_task_files_for_project(task_id, project_dir)
 
+    def _project_bash(command: str, timeout: int | None = None) -> str:
+        """Bash wrapper that rewrites python/pytest/pip to use the project venv."""
+        rewritten = rewrite_python_command(command, project_dir)
+        return bash(rewritten, timeout=timeout)
+
     return {
         "read_file": _rr_file,
         "write_file": _rw_file,
         "append_file": _ra_file,
         "list_dir": _rl_dir,
-        "bash": bash,
+        "bash": _project_bash,
         "check_imports": _check_imports,
         "get_task_files": _get_task_files,
     }
@@ -307,6 +312,10 @@ class BaseAgent:
             if self.project_dir else _BUILTIN_TOOLS
         )
         self.tools: dict[str, ToolFn] = {**base_tools, **(extra_tools or {})}
+        # T080: detect project environment for prompt injection
+        self.environment: str = (
+            detect_environment(self.project_dir) if self.project_dir else "unknown"
+        )
         self.session_context = session_context
         self.history: list[Message] = []
         self.max_iterations = cfg.get("agents.max_react_iterations", 15)
@@ -372,6 +381,48 @@ class BaseAgent:
             )
             + "## Project Context\n"
             f"{self.session_context}"
+            + self._environment_prompt_section()
+            + self._verify_syntax_only_section()
+        )
+
+    def _environment_prompt_section(self) -> str:
+        """T080: inject detected project environment into system prompt."""
+        env = cfg.get("agents.environment", None) or self.environment
+        if env == "unknown" or not self.project_dir:
+            return ""
+        _runner_hints = {
+            "docker": (
+                "Use: docker compose exec <service> python -m pytest\n"
+                "Do NOT use bare python3 or pip install inside the container."
+            ),
+            "venv": (
+                "Use: .venv/bin/python -m pytest (or .venv/bin/pytest)\n"
+                "Do NOT use bare python3 or pip — they lack project packages."
+            ),
+            "node": (
+                "Use: npm test  or  npx jest\n"
+                "Do NOT use bare node for test execution."
+            ),
+            "python": (
+                "Use: python3 -m pytest  or the configured test runner.\n"
+                "Install deps with pip if needed."
+            ),
+        }
+        hint = _runner_hints.get(env, "")
+        return f"\n\n## Project Environment\nDetected: {env}\n{hint}"
+
+    def _verify_syntax_only_section(self) -> str:
+        """T081: inject verify_syntax_only mode instruction when enabled."""
+        if not cfg.get("agents.verify_syntax_only", False):
+            return ""
+        return (
+            "\n\n## Verification Mode: SYNTAX ONLY\n"
+            "Do NOT run pytest, jest, make test, or docker exec.\n"
+            "Only verify syntax using:\n"
+            "- Python: python3 -m py_compile <file>\n"
+            "- JS/TS: node --check <file>\n"
+            "- TypeScript: tsc --noEmit\n"
+            "Mark task complete after syntax check passes."
         )
 
     def _check_injection_queue(self) -> None:
