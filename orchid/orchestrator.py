@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json as _json
 import logging
 import time
 from collections import defaultdict
@@ -299,9 +300,11 @@ class Orchestrator:
             )
             is_failure = result_text.startswith(_FAILURE_PREFIXES)
 
+            # Extract trace state (available regardless of trace_enabled)
+            _ts = getattr(stream_cb, "_trace_state", {}) if stream_cb is not None else {}
+
             # Write trace summary
-            if self._trace_writer and stream_cb is not None:
-                _ts = getattr(stream_cb, "_trace_state", {})
+            if self._trace_writer:
                 self._trace_writer.task_summary(
                     task_id=task.id,
                     status="blocked" if is_failure else "done",
@@ -321,6 +324,14 @@ class Orchestrator:
                     "delegations": delegation_count,
                 })
                 self._update_hot_memory(task, f"FAILED: {result_text}")
+                self._write_task_metrics(
+                    task=task,
+                    status="blocked",
+                    trace_state=_ts,
+                    elapsed=_task_run_elapsed,
+                    model=decision.model,
+                    result_text=result_text,
+                )
                 return {"task_id": task.id, "status": "failed", "error": result_text}
             else:
                 self.session.update_task_status(task.id, TaskStatus.DONE)
@@ -341,6 +352,13 @@ class Orchestrator:
                     task.id, task.title, task.type, result_text
                 )
                 self._update_hot_memory(task, result_text)
+                self._write_task_metrics(
+                    task=task,
+                    status="done",
+                    trace_state=_ts,
+                    elapsed=_task_run_elapsed,
+                    model=decision.model,
+                )
                 return {"task_id": task.id, "status": "done", "result": result_text, "files_written": files_written}
 
         except ProviderUnavailableError as e:
@@ -373,11 +391,13 @@ class Orchestrator:
         trace = self._trace_writer
         max_iter = cfg.get("agents.max_react_iterations", 15)
 
-        # Mutable state for trace bookkeeping
+        # Mutable state for trace bookkeeping and metrics
         _state: dict[str, Any] = {
             "completed_iters": 0,
             "action_counts": defaultdict(int),
             "iter_start": time.monotonic(),
+            "last_action": "",
+            "last_error": "",
         }
 
         if trace:
@@ -390,14 +410,20 @@ class Orchestrator:
             iteration = data.get("iter", 0)
             _state["completed_iters"] = iteration + 1
 
+            # Always track action counts, last action, and last error for metrics
+            action = data.get("action", "")
+            if action and action != "final_answer":
+                _state["action_counts"][action] += 1
+                _state["last_action"] = action
+            observation = data.get("observation", "")
+            if observation and observation.startswith("["):
+                _state["last_error"] = observation[:300]
+
             # Write trace line
             if trace:
                 now = time.monotonic()
                 elapsed = now - _state["iter_start"]
                 _state["iter_start"] = now
-                action = data.get("action", "")
-                if action and action != "final_answer":
-                    _state["action_counts"][action] += 1
                 trace.iteration(
                     task_id=task_id,
                     iter_num=iteration + 1,
@@ -406,7 +432,7 @@ class Orchestrator:
                     thought=data.get("thought", ""),
                     action=action,
                     action_input=data.get("action_input", ""),
-                    observation=data.get("observation", ""),
+                    observation=observation,
                 )
 
             # Fire progress notification every N iterations
@@ -585,3 +611,46 @@ class Orchestrator:
             self.session.hot_memory += summary_line
         else:
             self.session.hot_memory += "\n## Recent Completions\n" + summary_line
+
+    def _write_task_metrics(
+        self,
+        task: Task,
+        status: str,
+        trace_state: dict[str, Any],
+        elapsed: float,
+        model: str,
+        result_text: str = "",
+    ) -> None:
+        """Write a structured metrics record to .orchid/task_metrics.jsonl (T085)."""
+        metrics_path = self.session.project_dir / ".orchid" / "task_metrics.jsonl"
+        metrics_path.parent.mkdir(parents=True, exist_ok=True)
+
+        session_id = ""
+        if self.session._log_path:
+            session_id = Path(self.session._log_path).stem
+
+        record: dict[str, Any] = {
+            "task_id": task.id,
+            "title": task.title,
+            "status": status,
+            "iters_used": trace_state.get("completed_iters", 0),
+            "iters_max": cfg.get("agents.max_react_iterations", 15),
+            "duration_s": round(elapsed, 3),
+            "action_counts": dict(trace_state.get("action_counts", {})),
+            "model": model,
+            "session_id": session_id,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+
+        if status == "blocked":
+            record["blocker"] = {
+                "reason": result_text[:500],
+                "last_action": trace_state.get("last_action", ""),
+                "last_error": trace_state.get("last_error", ""),
+            }
+
+        try:
+            with metrics_path.open("a", encoding="utf-8") as fh:
+                fh.write(_json.dumps(record) + "\n")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to write task metrics for %s: %s", task.id, exc)

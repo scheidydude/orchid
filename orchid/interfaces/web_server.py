@@ -865,6 +865,25 @@ def create_app(
                 lines.append({"raw": line})
         return {"id": session_id, "entries": lines}
 
+    @app.get("/api/projects/{project_id}/metrics")
+    async def get_metrics(project_id: str):
+        """Return parsed task metrics from .orchid/task_metrics.jsonl (T085)."""
+        import json as _json
+        path = _get_project(project_id)
+        metrics_path = Path(path) / ".orchid" / "task_metrics.jsonl"
+        if not metrics_path.exists():
+            return []
+        records = []
+        for line in metrics_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(_json.loads(line))
+            except Exception:
+                pass
+        return records
+
     @app.post("/api/projects/{project_id}/recall")
     async def recall(project_id: str, body: RecallBody):
         path = _get_project(project_id)

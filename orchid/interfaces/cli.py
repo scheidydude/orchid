@@ -169,9 +169,24 @@ def main(
 
     _setup_logging(log_level)
 
-    # Resolve project path(s); default to "." when none provided
+    # Resolve project path(s); default to cwd when none provided
     resolved_projects = [str(_resolve_project(p)) for p in (project or ["."])]
     proj = resolved_projects[0]
+
+    # When --project is not given, validate that cwd is an Orchid project
+    _any_project_command = any([
+        status, recall is not None, search is not None, add_task, tail,
+        inject is not None, get_result is not None, phase, artifacts,
+        approve, interactive, run_task is not None, mode is not None,
+    ])
+    if project is None and _any_project_command:
+        if not (Path(proj) / ".orchid.yaml").exists():
+            console.print(
+                f"[red]No .orchid.yaml found in {proj!r}.[/red]\n"
+                "Run [bold]orchid init .[/bold] to initialise a project here, "
+                "or use [bold]--project <path>[/bold] to specify one."
+            )
+            raise typer.Exit(1)
 
     if check_providers:
         _cmd_check_providers(proj=proj)
