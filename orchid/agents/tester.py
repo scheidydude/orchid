@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from orchid.agents.base import BaseAgent
-from orchid.tools.shell import detect_environment, detect_python_runner
+from orchid.tools.shell import detect_python_runner
 
 
 class TesterAgent(BaseAgent):

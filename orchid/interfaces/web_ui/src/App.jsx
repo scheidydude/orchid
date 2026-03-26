@@ -11,10 +11,11 @@ import PlanningTab from './components/planning/PlanningTab.jsx'
 import NewProjectWizard from './components/planning/NewProjectWizard.jsx'
 import Settings from './components/Settings.jsx'
 import ProjectSettings from './components/ProjectSettings.jsx'
+import PMDashboard from './components/pm/PMDashboard.jsx'
 import { useProjects } from './hooks/useProjects.js'
 import { useAgentStream } from './hooks/useAgentStream.js'
 
-const TABS = ['Tasks', 'Planning', 'Stream', 'Decisions', 'Sessions', 'Recall', 'Memory', 'Config', 'Settings']
+const TABS = ['Tasks', 'Planning', 'PM', 'Stream', 'Decisions', 'Sessions', 'Recall', 'Memory', 'Config', 'Settings']
 
 export default function App() {
   const { projects, loading: projectsLoading, refresh: refreshProjects, newProjectIds } = useProjects()
@@ -123,7 +124,7 @@ export default function App() {
         <div className="main-content">
           {activeProject ? (
             <>
-              {activeTab !== 'Planning' && activeTab !== 'Settings' && activeTab !== 'Config' && (
+              {activeTab !== 'Planning' && activeTab !== 'Settings' && activeTab !== 'Config' && activeTab !== 'PM' && (
                 <RunControls
                   projectId={activeProject}
                   runStatus={runStatus}
@@ -154,6 +155,9 @@ export default function App() {
               <div className="panel-body" style={activeTab === 'Planning' ? { padding: 0, overflow: 'hidden' } : {}}>
                 {activeTab === 'Tasks' && (
                   <TaskBoard projectId={activeProject} runStatus={runStatus} />
+                )}
+                {activeTab === 'PM' && (
+                  <PMDashboard projectId={activeProject} />
                 )}
                 {activeTab === 'Planning' && (
                   <PlanningTab
