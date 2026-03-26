@@ -167,7 +167,7 @@ class Session:
         try:
             from orchid.providers.registry import get_registry
             from orchid.tools.models import Message, call
-            model_key = "local" if get_registry().offline_mode else "claude"
+            model_key = get_registry().resolve_name(agent_type="base")
             compressed = call(
                 messages=[
                     Message("user", (

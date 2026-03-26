@@ -5,7 +5,7 @@ import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
-from orchid.providers.anthropic_provider import AnthropicProvider
+from orchid.providers.registry import get_registry as _get_provider_registry
 
 SYSTEM_PROMPT = """You are a senior product manager and software architect helping to plan a new software project.
 
@@ -66,7 +66,7 @@ class PlanningSession:
         self.project_path = project_path
         self.history_file = Path(project_path) / '.orchid' / 'planning_history.json'
         self.history_file.parent.mkdir(parents=True, exist_ok=True)
-        self.provider = AnthropicProvider()
+        self.provider = _get_provider_registry().resolve(agent_type="product_manager")
         self.conversation = []
         self._load_history()
 

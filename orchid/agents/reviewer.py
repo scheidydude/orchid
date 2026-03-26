@@ -1,4 +1,4 @@
-"""Reviewer agent — critic and quality gate, always uses Claude."""
+"""Reviewer agent — critic and quality gate."""
 
 from __future__ import annotations
 
@@ -6,9 +6,10 @@ from orchid.agents.base import BaseAgent
 
 
 class ReviewerAgent(BaseAgent):
-    """
-    Reviews work produced by other agents.
-    Always routes to Claude for high-quality critique.
+    """Reviews work produced by other agents.
+
+    Defaults to claude (see providers.agent_defaults.reviewer in orchid.defaults.yaml).
+    Override per-project via providers.reviewer in .orchid.yaml.
     """
 
     model_key = "claude"

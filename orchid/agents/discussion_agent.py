@@ -1,8 +1,10 @@
 """DiscussionAgent — conversational requirements capture for Orchid V2.
 
-Uses the provider registry (default: claude) for a structured conversation
-to elicit project requirements. Each turn returns a DiscussionResponse with
-the agent's reply, a readiness signal, context updates, and suggested follow-ups.
+Uses the provider registry for a structured conversation to elicit project
+requirements. Defaults to claude (providers.agent_defaults.discussion); override
+per-project via providers.discussion in .orchid.yaml. Each turn returns a
+DiscussionResponse with the agent's reply, a readiness signal, context updates,
+and suggested follow-ups.
 """
 
 from __future__ import annotations
@@ -139,7 +141,7 @@ class DiscussionAgent:
         if warn and getattr(provider, "provider_type", "") not in ("anthropic",):
             logger.warning(
                 "Using local model for discussion agent — output quality may differ. "
-                "Use --provider discussion=claude for best results."
+                "Use --provider discussion=claude or set providers.discussion: claude in .orchid.yaml for best results."
             )
 
         # Build message content using provider's caching strategy:

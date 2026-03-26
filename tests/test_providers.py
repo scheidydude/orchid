@@ -265,6 +265,55 @@ def test_rollup_respects_project_provider_override():
     assert name == "local"
 
 
+def test_rollup_default_comes_from_task_type_defaults():
+    """Rollup falls through to providers.task_type_defaults.rollup (no special-case code)."""
+    def _fake_get(key, default=None):
+        if key == "providers.task_type_defaults.rollup":
+            return "claude"
+        return default
+
+    registry = _load_registry_patched()
+    with patch("orchid.config.get", side_effect=_fake_get):
+        name = registry.resolve_name("base", task_type="rollup")
+    assert name == "claude"
+
+
+def test_agent_defaults_config_driven_layer7():
+    """Layer 7 reads from providers.agent_defaults in config, not hardcoded Python only."""
+    def _fake_get(key, default=None):
+        if key == "providers.agent_defaults.orchestrator":
+            return "bedrock"
+        return default
+
+    registry = _load_registry_patched()
+    with patch("orchid.config.get", side_effect=_fake_get):
+        name = registry.resolve_name("orchestrator")
+    assert name == "bedrock"
+
+
+def test_task_type_defaults_config_driven_layer6():
+    """Layer 6 reads from providers.task_type_defaults in config, not hardcoded Python only."""
+    def _fake_get(key, default=None):
+        if key == "providers.task_type_defaults.review":
+            return "ollama"
+        return default
+
+    registry = _load_registry_patched()
+    with patch("orchid.config.get", side_effect=_fake_get):
+        name = registry.resolve_name("reviewer", task_type="review")
+    # layer 2 (providers.reviewer) returns nothing; layer 6 config should win
+    assert name == "ollama"
+
+
+def test_python_dict_fallback_when_config_missing():
+    """When config returns nothing for agent_defaults, Python dict fallback is used."""
+    registry = _load_registry_patched()
+    with patch("orchid.config.get", return_value={}):
+        assert registry.resolve_name("reviewer") == _AGENT_DEFAULTS["reviewer"]
+        assert registry.resolve_name("developer") == _AGENT_DEFAULTS["developer"]
+        assert registry.resolve_name("unknown_agent") == "local"
+
+
 def test_cli_flag_still_beats_project_config():
     """CLI --provider flag (layer 1) overrides project .orchid.yaml providers (layer 2)."""
     def _fake_get(key, default=None):
@@ -333,6 +382,158 @@ def test_orchestrator_respects_project_provider_override():
     assert kwargs["model_key"] == "ollama", (
         f"Expected model_key='ollama' (CLI override), got {kwargs['model_key']!r}"
     )
+
+
+# ── 4b. session / slack_bot / cli registry routing ────────────────────────────
+
+
+def test_session_hot_memory_compression_respects_provider_config():
+    """_maybe_compress_hot_memory uses resolve_name('base'), not hardcoded 'claude'.
+
+    When providers.base is overridden in config the compression call must use it.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from orchid.session import Session
+
+    def _cfg(key, default=None):
+        if key == "providers.base":
+            return "local"
+        if key == "memory.compression_threshold":
+            return 5  # very low so compression triggers
+        return default
+
+    session = MagicMock(spec=Session)
+    session.hot_memory = "x" * 10  # exceeds threshold of 5
+
+    with (
+        patch("orchid.config.get", side_effect=_cfg),
+        patch("orchid.tools.models.call", return_value="compressed") as mock_call,
+        patch("orchid.providers.registry.get_registry", return_value=_load_registry_patched()),
+    ):
+        # Call the real method on the real class, but with our mock session as self
+        Session._maybe_compress_hot_memory(session)
+
+    _, kwargs = mock_call.call_args
+    assert kwargs["model_key"] == "local", (
+        f"Expected 'local' from providers.base config, got {kwargs['model_key']!r}"
+    )
+
+
+def test_session_hot_memory_offline_uses_local():
+    """When registry is in offline mode, compression uses 'local'."""
+    from unittest.mock import MagicMock, patch
+
+    from orchid.session import Session
+
+    offline_registry = _load_registry_patched()
+    offline_registry.set_offline(True)
+
+    session = MagicMock(spec=Session)
+    session.hot_memory = "x" * 100
+
+    with (
+        patch("orchid.config.get", side_effect=lambda k, d=None: 5 if k == "memory.compression_threshold" else d),
+        patch("orchid.tools.models.call", return_value="compressed") as mock_call,
+        patch("orchid.providers.registry.get_registry", return_value=offline_registry),
+    ):
+        Session._maybe_compress_hot_memory(session)
+
+    _, kwargs = mock_call.call_args
+    assert kwargs["model_key"] == "local"
+
+
+def test_slack_intent_parsing_respects_provider_config():
+    """_parse_intent LLM fallback uses resolve_name('base'), not hardcoded 'claude'.
+
+    We pass a message that doesn't match any rule-based pattern so the LLM path runs.
+    """
+    from unittest.mock import MagicMock, patch
+
+    def _cfg(key, default=None):
+        if key == "providers.base":
+            return "local"
+        return default
+
+    with (
+        patch("orchid.config.get", side_effect=_cfg),
+        patch("orchid.tools.models.call", return_value='{"intent": "status", "arg": ""}') as mock_call,
+        patch("orchid.providers.registry.get_registry", return_value=_load_registry_patched()),
+    ):
+        from orchid.interfaces.slack_bot import SlackBot
+        bot = MagicMock(spec=SlackBot)
+        # Use a message that bypasses all rule-based patterns, hitting the LLM fallback
+        result = SlackBot._parse_intent(bot, "I'd like to know what's going on with the project")
+
+    assert mock_call.called, "LLM fallback was never reached (rule-based matched first)"
+    _, kwargs = mock_call.call_args
+    assert kwargs["model_key"] == "local", (
+        f"Expected 'local' from providers.base config, got {kwargs['model_key']!r}"
+    )
+
+
+def test_cli_interactive_uses_registry_default(tmp_path):
+    """_cmd_interactive with no model arg uses resolve_name('base'), not hardcoded 'claude'."""
+    from unittest.mock import MagicMock, patch
+
+    from orchid.interfaces.cli import _cmd_interactive
+
+    def _cfg(key, default=None):
+        if key == "providers.base":
+            return "local"
+        return default
+
+    mock_session = MagicMock()
+    mock_session.project_name = "test"
+    mock_session.context_block.return_value = ""
+
+    captured_model_key: list[str] = []
+
+    def _fake_agent_run(self, prompt):
+        captured_model_key.append(self.model_key)
+        return "response"
+
+    with (
+        patch("orchid.config.get", side_effect=_cfg),
+        patch("orchid.providers.registry.get_registry", return_value=_load_registry_patched()),
+        patch("orchid.interfaces.cli._make_session", return_value=mock_session),
+        patch("orchid.agents.base.BaseAgent.run", _fake_agent_run),
+        patch("orchid.interfaces.cli.Prompt.ask", side_effect=["hello", EOFError]),
+        patch("orchid.interfaces.cli.console"),
+    ):
+        _cmd_interactive(str(tmp_path))
+
+    assert captured_model_key, "Agent.run was never called"
+    assert captured_model_key[0] == "local", (
+        f"Expected model_key='local' from registry, got {captured_model_key[0]!r}"
+    )
+
+
+def test_cli_interactive_honours_explicit_model(tmp_path):
+    """_cmd_interactive with model='ollama' uses that directly without registry lookup."""
+    from unittest.mock import MagicMock, patch
+
+    from orchid.interfaces.cli import _cmd_interactive
+
+    mock_session = MagicMock()
+    mock_session.project_name = "test"
+    mock_session.context_block.return_value = ""
+
+    captured_model_key: list[str] = []
+
+    def _fake_agent_run(self, prompt):
+        captured_model_key.append(self.model_key)
+        return "response"
+
+    with (
+        patch("orchid.interfaces.cli._make_session", return_value=mock_session),
+        patch("orchid.agents.base.BaseAgent.run", _fake_agent_run),
+        patch("orchid.interfaces.cli.Prompt.ask", side_effect=["hello", EOFError]),
+        patch("orchid.interfaces.cli.console"),
+    ):
+        _cmd_interactive(str(tmp_path), model="ollama")
+
+    assert captured_model_key[0] == "ollama"
 
 
 # ── 5. AnthropicProvider ──────────────────────────────────────────────────────

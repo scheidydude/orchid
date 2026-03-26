@@ -2,7 +2,7 @@
 
 Reads: discussion history, context.md, machine profile.
 Writes: <project>/REQUIREMENTS.md and <project>/ARCHITECTURE.md.
-Provider: configurable (default: claude).
+Provider: configurable via registry (see providers.agent_defaults.product_manager in orchid.defaults.yaml).
 """
 
 from __future__ import annotations

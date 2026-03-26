@@ -30,8 +30,11 @@ def reset_registry() -> None:
 
 
 # ── Resolution defaults ───────────────────────────────────────────────────────
+# These Python dicts are emergency fallbacks only — used when the config file
+# is missing or a key is absent.  The authoritative defaults live in
+# orchid.defaults.yaml under providers.agent_defaults / providers.task_type_defaults,
+# where they can be changed without touching code.
 
-# Hardcoded agent-type → provider fallbacks (layer 5)
 _AGENT_DEFAULTS: dict[str, str] = {
     "orchestrator":    "claude",
     "reviewer":        "claude",
@@ -44,19 +47,19 @@ _AGENT_DEFAULTS: dict[str, str] = {
     "project_manager": "claude",
 }
 
-# Hardcoded task-type → provider fallbacks (used when no agent-type config found)
 _TASK_TYPE_DEFAULTS: dict[str, str] = {
-    "orchestrate": "claude",
-    "review":      "claude",
-    "critique":    "claude",
-    "plan":        "claude",
-    "synthesize":  "claude",
-    "draft":       "local",
+    "orchestrate":   "claude",
+    "review":        "claude",
+    "critique":      "claude",
+    "plan":          "claude",
+    "synthesize":    "claude",
+    "rollup":        "claude",
+    "draft":         "local",
     "code_generate": "local",
-    "summarize":   "local",
-    "search":      "local",
-    "transform":   "local",
-    "research":    "local",
+    "summarize":     "local",
+    "search":        "local",
+    "transform":     "local",
+    "research":      "local",
 }
 
 
@@ -205,8 +208,8 @@ class ProviderRegistry:
           3. Project .orchid.yaml providers.task_types.<task_type>
           4. Task model: annotation  (model:claude in tasks.md)
           5. Machine env ORCHID_<AGENT_TYPE>_PROVIDER
-          6. Hardcoded task-type default (rollup reads rollup.default_provider from config)
-          7. Hardcoded agent-type default
+          6. Config task-type default  (providers.task_type_defaults in orchid.defaults.yaml)
+          7. Config agent-type default (providers.agent_defaults in orchid.defaults.yaml)
         """
         if self._offline_mode:
             return "local"
@@ -238,14 +241,18 @@ class ProviderRegistry:
         if env_val:
             return env_val
 
-        # 6. Hardcoded task-type default
+        # 6. Config-driven task-type default (orchid.defaults.yaml providers.task_type_defaults)
         if task_type:
-            if task_type == "rollup":
-                return cfg.get("rollup.default_provider", "claude")
+            cfg_task_default = cfg.get(f"providers.task_type_defaults.{task_type}")
+            if cfg_task_default and isinstance(cfg_task_default, str):
+                return cfg_task_default
             if task_type in _TASK_TYPE_DEFAULTS:
                 return _TASK_TYPE_DEFAULTS[task_type]
 
-        # 7. Hardcoded agent-type default
+        # 7. Config-driven agent-type default (orchid.defaults.yaml providers.agent_defaults)
+        cfg_agent_default = cfg.get(f"providers.agent_defaults.{agent_type}")
+        if cfg_agent_default and isinstance(cfg_agent_default, str):
+            return cfg_agent_default
         return _AGENT_DEFAULTS.get(agent_type, "local")
 
     def resolve(

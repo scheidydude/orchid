@@ -202,9 +202,9 @@ discovery:
 
 # Rollup task type — synthesizes results from multiple completed tasks (D0037)
 rollup:
-  default_provider: claude  # can be overridden in .orchid.yaml
   max_sources: 20           # max tasks to include in one rollup
   default_output: "ROLLUP-{task_id}.md"
+  # To override the rollup provider, use providers.task_types.rollup in .orchid.yaml
 
 # Auto-review: after N code_generate tasks, insert a review task (T043)
 auto_review:
@@ -225,31 +225,53 @@ serve:
   auto_discovery: true
   agent_manager: true
 
-# Provider registry — 5-layer resolution chain
-# Layer 1: CLI --provider flag          (e.g. --provider developer=ollama)
-# Layer 2: per-agent-type config below  (providers.<agent_type>)
-# Layer 3: ORCHID_<AGENT_TYPE>_PROVIDER env var
-# Layer 4: per-task-type config         (providers.task_types.<task_type>)
-# Layer 5: hardcoded fallback           (orchestrator/reviewer→claude, rest→local)
+# Provider registry — 7-layer resolution chain
+# Layer 1: CLI --provider flag              (e.g. --provider developer=ollama)
+# Layer 2: per-agent config below           (providers.<agent_type>)
+# Layer 3: per-task-type config             (providers.task_types.<task_type>)
+# Layer 4: task model: annotation           (model:claude in tasks.md)
+# Layer 5: ORCHID_<AGENT_TYPE>_PROVIDER env var
+# Layer 6: task-type defaults below         (providers.task_type_defaults.<task_type>)
+# Layer 7: agent-type defaults below        (providers.agent_defaults.<agent_type>)
 providers:
-  # Per-agent model overrides (claude | local | auto)
-  # Set any of these in your project's .orchid.yaml to override the default.
-  # Example: use local model for all PM planning phases (no cloud API needed):
+  # ── Layer 2: Per-agent overrides ────────────────────────────────────────────
+  # Set any of these in your project's .orchid.yaml to override for that project.
+  # Example: fully-local operation with Claude only for final review:
   #   providers:
   #     discussion: local
   #     product_manager: local
   #     project_manager: local
   #     developer: local
-  #     reviewer: claude   # keep reviewer on claude for quality
-  #     orchestrator: claude
+  #     reviewer: claude
 
-  # Strategic agent defaults (V2) — override in project .orchid.yaml
-  discussion: claude
-  product_manager: claude
-  project_manager: claude
-
-  # Per-task-type overrides (uncomment to activate)
+  # ── Layer 3: Per-task-type overrides (uncomment to activate) ────────────────
   task_types: {}
+
+  # ── Layer 6: Task-type defaults (configurable; override in .orchid.yaml) ────
+  task_type_defaults:
+    orchestrate:   claude
+    review:        claude
+    critique:      claude
+    plan:          claude
+    synthesize:    claude
+    rollup:        claude
+    draft:         local
+    code_generate: local
+    summarize:     local
+    search:        local
+    transform:     local
+    research:      local
+
+  # ── Layer 7: Agent-type defaults (configurable; override in .orchid.yaml) ───
+  agent_defaults:
+    orchestrator:    claude
+    reviewer:        claude
+    developer:       local
+    researcher:      local
+    base:            local
+    discussion:      claude
+    product_manager: claude
+    project_manager: claude
 
   # Named provider instances (add new providers here)
   # All built-in providers (claude, local) are always registered automatically.

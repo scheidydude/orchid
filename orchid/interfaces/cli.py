@@ -274,7 +274,7 @@ def main(
             trace=trace,
         )
     elif mode == "interactive":
-        _cmd_interactive(proj)
+        _cmd_interactive(proj, model=code_model)
     else:
         # No flags given — show help
         console.print(ctx.get_help())
@@ -376,19 +376,22 @@ def _cmd_run_task(
         session.close(summary=f"Single task run: {task_id}")
 
 
-def _cmd_interactive(project: str, model: str = "claude") -> None:
+def _cmd_interactive(project: str, model: str | None = None) -> None:
     """Interactive chat mode."""
     session = _make_session(project)
     from orchid.agents.base import BaseAgent
+    from orchid.providers.registry import get_registry as _get_reg
+
+    resolved = model or _get_reg().resolve_name(agent_type="base")
 
     class _ChatAgent(BaseAgent):
-        model_key = model
+        model_key = resolved
 
     agent = _ChatAgent(session_context=session.context_block())
 
     console.print(Panel(
         f"[bold cyan]Orchid — Interactive Mode[/bold cyan]\n"
-        f"Project: [cyan]{session.project_name}[/cyan]  |  Model: {model}\n"
+        f"Project: [cyan]{session.project_name}[/cyan]  |  Model: {resolved}\n"
         "Type [bold]exit[/bold] or [bold]quit[/bold] to end.",
         border_style="cyan",
     ))
