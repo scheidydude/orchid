@@ -232,12 +232,18 @@ serve:
 # Layer 4: per-task-type config         (providers.task_types.<task_type>)
 # Layer 5: hardcoded fallback           (orchestrator/reviewer→claude, rest→local)
 providers:
-  # Per-agent-type overrides (uncomment to activate)
-  # orchestrator: claude
-  # reviewer: claude
-  # developer: local
-  # researcher: local
-  # Strategic agent defaults (V2)
+  # Per-agent model overrides (claude | local | auto)
+  # Set any of these in your project's .orchid.yaml to override the default.
+  # Example: use local model for all PM planning phases (no cloud API needed):
+  #   providers:
+  #     discussion: local
+  #     product_manager: local
+  #     project_manager: local
+  #     developer: local
+  #     reviewer: claude   # keep reviewer on claude for quality
+  #     orchestrator: claude
+
+  # Strategic agent defaults (V2) — override in project .orchid.yaml
   discussion: claude
   product_manager: claude
   project_manager: claude

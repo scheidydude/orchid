@@ -180,6 +180,70 @@ def test_resolve_name_offline_mode_returns_local():
     assert name == "local"
 
 
+def test_resolve_name_task_model_annotation():
+    """Task model: annotation (layer 2) beats per-agent config (layer 3)."""
+    def _fake_get(key, default=None):
+        if key == "providers.discussion":
+            return "local"
+        return default
+
+    registry = _load_registry_patched()
+    with patch("orchid.config.get", side_effect=_fake_get):
+        name = registry.resolve_name("discussion", task_model="claude")
+    assert name == "claude"
+
+
+# ── 4b. Per-agent provider overrides (T087) ───────────────────────────────────
+
+
+def test_per_agent_provider_override_discussion():
+    """providers.discussion: local in .orchid.yaml overrides the default claude."""
+    def _fake_get(key, default=None):
+        if key == "providers.discussion":
+            return "local"
+        return default
+
+    registry = _load_registry_patched()
+    with patch("orchid.config.get", side_effect=_fake_get):
+        name = registry.resolve_name("discussion")
+    assert name == "local"
+
+
+def test_per_agent_provider_override_reviewer_stays_claude():
+    """reviewer defaults to claude from _AGENT_DEFAULTS when no config override."""
+    registry = _load_registry_patched()
+    with patch("orchid.config.get", return_value={}):
+        name = registry.resolve_name("reviewer")
+    assert name == _AGENT_DEFAULTS["reviewer"]
+    assert name == "claude"
+
+
+def test_per_agent_override_beats_type_default():
+    """providers.developer: claude beats code_generate task-type default of local."""
+    def _fake_get(key, default=None):
+        if key == "providers.developer":
+            return "claude"
+        return default
+
+    registry = _load_registry_patched()
+    with patch("orchid.config.get", side_effect=_fake_get):
+        name = registry.resolve_name("developer", task_type="code_generate")
+    assert name == "claude"
+
+
+def test_cli_flag_beats_per_agent_override():
+    """CLI --provider flag (layer 1) beats providers.<agent_name> from config (layer 3)."""
+    def _fake_get(key, default=None):
+        if key == "providers.discussion":
+            return "local"
+        return default
+
+    registry = _load_registry_patched()
+    with patch("orchid.config.get", side_effect=_fake_get):
+        name = registry.resolve_name("discussion", cli_override="ollama")
+    assert name == "ollama"
+
+
 # ── 5. AnthropicProvider ──────────────────────────────────────────────────────
 
 

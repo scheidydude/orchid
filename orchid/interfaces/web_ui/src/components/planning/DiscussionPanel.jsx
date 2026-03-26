@@ -29,7 +29,7 @@ function useDiscussionWS(projectId, onMessage) {
   return wsRef
 }
 
-export default function DiscussionPanel({ projectId, onReadyToAdvance }) {
+export default function DiscussionPanel({ projectId, onReadyToAdvance, advancing = false, advanceLog = [] }) {
   const [turns, setTurns] = useState([])
   const [contextMd, setContextMd] = useState('')
   const [input, setInput] = useState('')
@@ -40,6 +40,7 @@ export default function DiscussionPanel({ projectId, onReadyToAdvance }) {
   const [error, setError] = useState(null)
   const [streamMsg, setStreamMsg] = useState('')
   const bottomRef = useRef(null)
+  const inputRef = useRef(null)
 
   // Load history on mount
   useEffect(() => {
@@ -72,6 +73,7 @@ export default function DiscussionPanel({ projectId, onReadyToAdvance }) {
       }])
       setStreamMsg('')
       setThinking(false)
+      setTimeout(() => inputRef.current?.focus(), 0)
       if (msg.data?.ready_to_advance) {
         setReadyBanner(true)
       }
@@ -80,6 +82,7 @@ export default function DiscussionPanel({ projectId, onReadyToAdvance }) {
       setError(msg.data)
       setThinking(false)
       setStreamMsg('')
+      setTimeout(() => inputRef.current?.focus(), 0)
     }
   }, [streamMsg])
 
@@ -117,6 +120,7 @@ export default function DiscussionPanel({ projectId, onReadyToAdvance }) {
 
   const useSuggestion = (s) => {
     setInput(s)
+    setTimeout(() => inputRef.current?.focus(), 0)
   }
 
   return (
@@ -150,6 +154,18 @@ export default function DiscussionPanel({ projectId, onReadyToAdvance }) {
             <div className="bubble-role">Orchid</div>
             <div className="bubble-text">
               {streamMsg || <span className="thinking-dots">thinking<span className="dots">…</span></span>}
+            </div>
+          </div>
+        )}
+
+        {advancing && advanceLog.length > 0 && (
+          <div className="discussion-bubble agent">
+            <div className="bubble-role">Orchid</div>
+            <div className="bubble-text">
+              {advanceLog.map((l, i) => (
+                <div key={i}>{l}</div>
+              ))}
+              <span className="thinking-dots">working<span className="dots">…</span></span>
             </div>
           </div>
         )}
@@ -193,18 +209,19 @@ export default function DiscussionPanel({ projectId, onReadyToAdvance }) {
           <option value="ollama">ollama</option>
         </select>
         <textarea
+          ref={inputRef}
           className="discussion-input"
-          placeholder="Describe what you want to build… (Enter to send, Shift+Enter for newline)"
+          placeholder={advancing ? 'Working…' : 'Describe what you want to build… (Enter to send, Shift+Enter for newline)'}
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
           rows={2}
-          disabled={thinking}
+          disabled={thinking || advancing}
         />
         <button
           className="primary"
           onClick={sendMessage}
-          disabled={thinking || !input.trim()}
+          disabled={thinking || advancing || !input.trim()}
         >
           Send
         </button>

@@ -13,6 +13,7 @@ class ReviewerAgent(BaseAgent):
 
     model_key = "claude"
     agent_type = "reviewer"
+    agent_name = "reviewer"
 
     def system_prompt(self) -> str:
         base = super().system_prompt()

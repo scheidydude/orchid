@@ -90,6 +90,7 @@ class DiscussionAgent:
     """
 
     agent_type = "discussion"
+    agent_name = "discussion"
 
     def __init__(
         self,
@@ -109,7 +110,7 @@ class DiscussionAgent:
         registry = get_registry()
         if self._offline:
             registry.set_offline(True)
-        return registry.resolve("discussion", cli_override=self._cli_override)
+        return registry.resolve("discussion", agent_name="discussion", cli_override=self._cli_override)
 
     def run(
         self,

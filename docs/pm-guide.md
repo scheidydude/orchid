@@ -565,6 +565,57 @@ Each summary includes:
 
 ---
 
+## Configuring AI Models Per Agent
+
+By default Orchid routes planning work (Discussion, Requirements, Planning) to Claude
+and bulk code generation to a local model. You can override this per-agent in your
+project's `.orchid.yaml` without changing any CLI flags.
+
+### Running PM Planning Locally (No Cloud API)
+
+To use a local model for all PM planning phases — useful for air-gapped environments
+or to save API costs during exploration:
+
+```yaml
+# my-project/.orchid.yaml
+providers:
+  discussion: local
+  product_manager: local
+  project_manager: local
+  developer: local
+  reviewer: claude   # keep code review on claude for quality
+```
+
+After saving `.orchid.yaml`, restart Orchid. The Discussion, Requirements, and Planning
+phases will call your local model instead of Claude.
+
+### Resolution Priority
+
+Orchid resolves the model for each agent using this priority order (highest wins):
+
+| Priority | Source | Example |
+|----------|--------|---------|
+| 1 | CLI `--provider` flag | `--provider developer=ollama` |
+| 2 | Task `model:` annotation | `` `model:claude` `` in tasks.md |
+| 3 | `.orchid.yaml` `providers.<agent>` | `providers: discussion: local` |
+| 4 | Task-type default | `code_generate` → local |
+| 5 | Agent hardcoded default | `reviewer` → claude |
+
+### Available Agent Names
+
+| Agent Name | Default | Role |
+|------------|---------|------|
+| `discussion` | claude | Requirement elicitation chat |
+| `product_manager` | claude | Generates REQUIREMENTS.md and ARCHITECTURE.md |
+| `project_manager` | claude | Generates MILESTONES.md and tasks.md |
+| `developer` | local | Writes code |
+| `reviewer` | claude | Reviews and critiques code |
+| `researcher` | local | Web search and summarization |
+| `tester` | local | Runs tests and syntax checks |
+| `orchestrator` | claude | Plans and decomposes complex tasks |
+
+---
+
 ## Support
 
 For more information:

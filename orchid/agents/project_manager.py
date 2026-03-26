@@ -264,6 +264,7 @@ class ProjectManagerAgent:
     """Generates MILESTONES.md and tasks.md from requirements and architecture."""
 
     agent_type = "project_manager"
+    agent_name = "project_manager"
 
     def __init__(
         self,
@@ -512,7 +513,7 @@ Respond with ONLY the content of tasks.md — start with `# Tasks — {project_n
             registry.set_offline(True)
 
         warn = cfg.get("lifecycle.warn_on_local_planning", True)
-        provider = registry.resolve("project_manager", cli_override=self._cli_override)
+        provider = registry.resolve("project_manager", agent_name="project_manager", cli_override=self._cli_override)
         if warn and getattr(provider, "provider_type", "") not in ("anthropic",):
             logger.warning(
                 "Using local model for ProjectManagerAgent — task quality may differ."

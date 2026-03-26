@@ -86,7 +86,7 @@ export default function PlanningTab({ projectId, runStatus, onSwitchToTasks }) {
     <div className="planning-tab">
       <PhaseIndicator currentPhase={phase} />
 
-      {advancing && (
+      {advancing && phase !== 'NEW' && phase !== 'DISCUSSING' && (
         <div className="advance-progress">
           {advanceLog.map((l, i) => (
             <div key={i} className="advance-log-entry">{l}</div>
@@ -95,14 +95,17 @@ export default function PlanningTab({ projectId, runStatus, onSwitchToTasks }) {
         </div>
       )}
 
-      {!advancing && (
+      {(phase === 'NEW' || phase === 'DISCUSSING') && (
+        <DiscussionPanel
+          projectId={projectId}
+          onReadyToAdvance={doAdvance}
+          advancing={advancing}
+          advanceLog={advanceLog}
+        />
+      )}
+
+      {!advancing && phase !== 'NEW' && phase !== 'DISCUSSING' && (
         <>
-          {(phase === 'NEW' || phase === 'DISCUSSING') && (
-            <DiscussionPanel
-              projectId={projectId}
-              onReadyToAdvance={doAdvance}
-            />
-          )}
 
           {phase === 'REQUIREMENTS' && (
             <ArtifactPanel

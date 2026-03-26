@@ -10,6 +10,7 @@ class DeveloperAgent(BaseAgent):
 
     model_key = "local"
     agent_type = "developer"
+    agent_name = "developer"
 
     # Enforce that at least one file write happens before accepting Final Answer
     _require_file_write: bool = True

@@ -292,6 +292,7 @@ class BaseAgent:
 
     model_key: str = "local"
     agent_type: str = "base"
+    agent_name: str = "base"  # maps to providers.<agent_name> in .orchid.yaml
 
     # If True, the run loop will refuse to accept a Final Answer until at least
     # one write_file, append_file, or bash call has succeeded.  DeveloperAgent sets

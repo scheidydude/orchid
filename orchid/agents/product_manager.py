@@ -116,6 +116,7 @@ class ProductManagerAgent:
     """Generates REQUIREMENTS.md and ARCHITECTURE.md from discussion history."""
 
     agent_type = "product_manager"
+    agent_name = "product_manager"
 
     def __init__(
         self,
@@ -191,7 +192,7 @@ class ProductManagerAgent:
             registry.set_offline(True)
 
         warn = cfg.get("lifecycle.warn_on_local_planning", True)
-        provider = registry.resolve("product_manager", cli_override=self._cli_override)
+        provider = registry.resolve("product_manager", agent_name="product_manager", cli_override=self._cli_override)
         if warn and getattr(provider, "provider_type", "") not in ("anthropic",):
             logger.warning(
                 "Using local model for ProductManagerAgent — document quality may differ."

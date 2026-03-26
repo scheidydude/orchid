@@ -131,7 +131,8 @@ class ProjectLifecycle:
         return bool(_VALID_TRANSITIONS.get(self.state.phase))
 
     def valid_next_phases(self) -> list[str]:
-        return sorted(_VALID_TRANSITIONS.get(self.state.phase, set()))
+        transitions = _VALID_TRANSITIONS.get(self.state.phase, set())
+        return sorted(t for t in transitions if t != self.state.phase)
 
     # ── Artifact checks ───────────────────────────────────────────────────────
 

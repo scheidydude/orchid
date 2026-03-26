@@ -206,6 +206,19 @@ class Orchestrator:
             cli_override=per_agent_override or self.cli_model_override,
             task_title=task.title,
         )
+
+        # Per-agent .orchid.yaml override (layer 3 in registry chain):
+        # beats route() defaults and heuristic, but not CLI flag or task annotation.
+        if decision.source in ("default", "heuristic"):
+            _agent_name = getattr(agent_cls, "agent_name", agent_type)
+            _per_agent_cfg = cfg.get(f"providers.{_agent_name}")
+            if _per_agent_cfg and isinstance(_per_agent_cfg, str) and _per_agent_cfg not in ("auto",):
+                decision = decision.__class__(
+                    model=_per_agent_cfg,
+                    reason=f"per-agent config providers.{_agent_name}",
+                    source="project_config",
+                )
+
         # Offline mode forces local regardless of routing
         if self.offline_mode:
             decision = decision.__class__(model="local", reason="offline mode", source="cli_flag")

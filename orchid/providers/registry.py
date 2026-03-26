@@ -192,49 +192,68 @@ class ProviderRegistry:
     def resolve_name(
         self,
         agent_type: str,
+        agent_name: str | None = None,
         task_type: str | None = None,
+        task_model: str | None = None,
         cli_override: str | None = None,
     ) -> str:
-        """Return the provider name to use, following the 5-layer priority chain."""
+        """Return the provider name to use, following the 7-layer priority chain.
+
+        Priority (highest to lowest):
+          1. CLI --provider flag
+          2. Task model: annotation  (model:claude in tasks.md)
+          3. Project .orchid.yaml providers.<agent_name>
+          4. Machine env ORCHID_<AGENT_TYPE>_PROVIDER
+          5. Project .orchid.yaml providers.task_types.<task_type>
+          6. Hardcoded task-type default
+          7. Hardcoded agent-type default
+        """
         if self._offline_mode:
             return "local"
 
         from orchid import config as cfg
 
-        # 1. CLI --provider <agent>=<provider>
+        # 1. CLI --provider flag
         if cli_override and cli_override not in ("", "auto"):
             return cli_override
 
-        # 2. Project config: providers.<agent_type>
-        proj_val = cfg.get(f"providers.{agent_type}")
+        # 2. Task model: annotation (model:claude / model:local in tasks.md)
+        if task_model and task_model not in ("", "auto"):
+            return task_model
+
+        # 3. Project config: providers.<agent_name> (agent_name falls back to agent_type)
+        _name_key = agent_name or agent_type
+        proj_val = cfg.get(f"providers.{_name_key}")
         if proj_val and isinstance(proj_val, str):
             return proj_val
 
-        # 3. Machine env: ORCHID_<AGENT_TYPE>_PROVIDER
+        # 4. Machine env: ORCHID_<AGENT_TYPE>_PROVIDER
         env_val = os.environ.get(f"ORCHID_{agent_type.upper()}_PROVIDER", "")
         if env_val:
             return env_val
 
-        # 4a. Task-type override from config
+        # 5. Project config: providers.task_types.<task_type>
         if task_type:
             task_val = cfg.get(f"providers.task_types.{task_type}")
             if task_val and isinstance(task_val, str):
                 return task_val
-            # 4b. Hardcoded task-type default
+            # 6. Hardcoded task-type default
             if task_type in _TASK_TYPE_DEFAULTS:
                 return _TASK_TYPE_DEFAULTS[task_type]
 
-        # 5. Hardcoded agent-type default
+        # 7. Hardcoded agent-type default
         return _AGENT_DEFAULTS.get(agent_type, "local")
 
     def resolve(
         self,
         agent_type: str,
+        agent_name: str | None = None,
         task_type: str | None = None,
+        task_model: str | None = None,
         cli_override: str | None = None,
     ) -> ProviderBase:
         """Resolve and return a ready ProviderBase for the given context."""
-        name = self.resolve_name(agent_type, task_type, cli_override)
+        name = self.resolve_name(agent_type, agent_name, task_type, task_model, cli_override)
         return self._get(name)
 
     def get_by_key(self, model_key: str) -> ProviderBase:

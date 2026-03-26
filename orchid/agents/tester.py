@@ -11,6 +11,7 @@ class TesterAgent(BaseAgent):
 
     model_key = "local"
     agent_type = "tester"
+    agent_name = "tester"
 
     def system_prompt(self) -> str:
         env = self.environment
