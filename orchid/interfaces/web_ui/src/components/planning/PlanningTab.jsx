@@ -51,12 +51,13 @@ export default function PlanningTab({ projectId, runStatus, onSwitchToTasks }) {
     setAdvancing(true)
     setAdvanceLog(['Starting…'])
     setError(null)
+    console.log('advance clicked, projectId=', projectId)
     fetch(`/api/projects/${projectId}/advance`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ confirm: true }),
     })
-      .then(r => r.ok ? r.json() : r.json().then(d => Promise.reject(d.detail)))
+      .then(r => { console.log('advance response:', r.status); return r.ok ? r.json() : r.json().then(d => Promise.reject(d.detail)) })
       .then(d => {
         setAdvancing(false)
         setAdvanceLog([])
@@ -86,7 +87,7 @@ export default function PlanningTab({ projectId, runStatus, onSwitchToTasks }) {
     <div className="planning-tab">
       <PhaseIndicator currentPhase={phase} />
 
-      {advancing && phase !== 'NEW' && phase !== 'DISCUSSING' && (
+      {advancing && phase !== 'NEW' && (
         <div className="advance-progress">
           {advanceLog.map((l, i) => (
             <div key={i} className="advance-log-entry">{l}</div>
@@ -104,7 +105,7 @@ export default function PlanningTab({ projectId, runStatus, onSwitchToTasks }) {
         />
       )}
 
-      {!advancing && phase !== 'NEW' && phase !== 'DISCUSSING' && (
+      {!advancing && phase !== 'NEW' && (
         <>
 
           {phase === 'REQUIREMENTS' && (

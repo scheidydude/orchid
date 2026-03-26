@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
 
+const STORAGE_KEY = 'orchid_approval_panel_collapsed'
+
 function countLines(text, prefix) {
   if (!text) return 0
   return text.split('\n').filter(l => l.startsWith(prefix)).length
@@ -17,6 +19,14 @@ export default function ApprovalPanel({ projectId, onApproved, onKeepReviewing }
   const [approving, setApproving] = useState(false)
   const [error, setError] = useState(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY)
+      return stored === null ? true : stored === 'true'
+    } catch {
+      return true
+    }
+  })
 
   useEffect(() => {
     Promise.all([
@@ -27,6 +37,12 @@ export default function ApprovalPanel({ projectId, onApproved, onKeepReviewing }
       setLifecycle(lc)
     }).catch(() => {})
   }, [projectId])
+
+  const toggleCollapsed = () => {
+    const next = !collapsed
+    setCollapsed(next)
+    try { localStorage.setItem(STORAGE_KEY, String(next)) } catch {}
+  }
 
   const reqCount = countLines(artifacts.requirements?.content, 'FR-')
   const nfrCount = countLines(artifacts.requirements?.content, 'NFR-')
@@ -71,53 +87,87 @@ export default function ApprovalPanel({ projectId, onApproved, onKeepReviewing }
 
   return (
     <div className="approval-panel">
-      <h3 style={{ marginBottom: 16 }}>Ready to Execute</h3>
-
-      <div className="approval-summary">
-        <div className="approval-item">
-          <span className="approval-check">✅</span>
-          <span>{taskCount} tasks across {milestoneCount} milestones</span>
-        </div>
-        {artifacts.requirements?.exists && (
-          <div className="approval-item">
-            <span className="approval-check">✅</span>
-            <span>REQUIREMENTS.md — {reqCount} functional, {nfrCount} non-functional requirements</span>
-          </div>
+      {/* Always-visible header row */}
+      <div className="approval-header" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: 16 }}>✅</span>
+        <span style={{ fontWeight: 600, flex: 1 }}>Ready to Execute</span>
+        {collapsed && (
+          <button
+            className="primary"
+            onClick={() => setConfirmOpen(true)}
+            disabled={approving}
+            style={{ marginRight: 4 }}
+          >
+            {approving ? 'Approving…' : 'Approve & Start'}
+          </button>
         )}
-        {artifacts.architecture?.exists && (
-          <div className="approval-item">
-            <span className="approval-check">✅</span>
-            <span>ARCHITECTURE.md{techStack ? ` — ${techStack}` : ''}</span>
-          </div>
-        )}
-        {artifacts.milestones?.exists && (
-          <div className="approval-item">
-            <span className="approval-check">✅</span>
-            <span>MILESTONES.md — {milestoneCount} phases</span>
-          </div>
-        )}
-      </div>
-
-      {error && <div className="error-msg" style={{ margin: '12px 0' }}>{error}</div>}
-
-      <div className="approval-options">
-        <label className="checkbox-label">
-          <input
-            type="checkbox"
-            checked={autoFuture}
-            onChange={e => setAutoFuture(e.target.checked)}
-          />
-          Auto-approve future gates in this project
-        </label>
-      </div>
-
-      <div className="approval-actions">
-        <button className="primary" onClick={() => setConfirmOpen(true)} disabled={approving}>
-          Approve & Start Execution
+        <button
+          className="btn-icon"
+          onClick={toggleCollapsed}
+          title={collapsed ? 'Show details' : 'Hide details'}
+          style={{ padding: '2px 8px', fontSize: 13, minWidth: 60 }}
+        >
+          {collapsed ? '▲ More' : '▼ Less'}
         </button>
-        {onKeepReviewing && (
-          <button onClick={onKeepReviewing}>Keep Reviewing</button>
-        )}
+      </div>
+
+      {/* Expandable content */}
+      <div
+        className={`approval-body${collapsed ? ' approval-body--collapsed' : ''}`}
+        style={{
+          overflow: 'hidden',
+          maxHeight: collapsed ? 0 : 500,
+          transition: 'max-height 0.25s ease',
+        }}
+      >
+        <div style={{ paddingTop: 12 }}>
+          <div className="approval-summary">
+            <div className="approval-item">
+              <span className="approval-check">✅</span>
+              <span>{taskCount} tasks across {milestoneCount} milestones</span>
+            </div>
+            {artifacts.requirements?.exists && (
+              <div className="approval-item">
+                <span className="approval-check">✅</span>
+                <span>REQUIREMENTS.md — {reqCount} functional, {nfrCount} non-functional requirements</span>
+              </div>
+            )}
+            {artifacts.architecture?.exists && (
+              <div className="approval-item">
+                <span className="approval-check">✅</span>
+                <span>ARCHITECTURE.md{techStack ? ` — ${techStack}` : ''}</span>
+              </div>
+            )}
+            {artifacts.milestones?.exists && (
+              <div className="approval-item">
+                <span className="approval-check">✅</span>
+                <span>MILESTONES.md — {milestoneCount} phases</span>
+              </div>
+            )}
+          </div>
+
+          {error && <div className="error-msg" style={{ margin: '12px 0' }}>{error}</div>}
+
+          <div className="approval-options">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={autoFuture}
+                onChange={e => setAutoFuture(e.target.checked)}
+              />
+              Auto-approve future gates in this project
+            </label>
+          </div>
+
+          <div className="approval-actions">
+            <button className="primary" onClick={() => setConfirmOpen(true)} disabled={approving}>
+              {approving ? 'Approving…' : 'Approve & Start Execution'}
+            </button>
+            {onKeepReviewing && (
+              <button onClick={onKeepReviewing}>Keep Reviewing</button>
+            )}
+          </div>
+        </div>
       </div>
 
       {confirmOpen && (
