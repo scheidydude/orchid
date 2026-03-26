@@ -199,8 +199,9 @@ class ProviderRegistry:
         task_type: str | None = None,
         task_model: str | None = None,
         cli_override: str | None = None,
+        task_title: str = "",
     ) -> str:
-        """Return the provider name to use, following the 7-layer priority chain.
+        """Return the provider name to use, following the 8-layer priority chain.
 
         Priority (highest to lowest):
           1. CLI --provider flag
@@ -208,6 +209,7 @@ class ProviderRegistry:
           3. Project .orchid.yaml providers.task_types.<task_type>
           4. Task model: annotation  (model:claude in tasks.md)
           5. Machine env ORCHID_<AGENT_TYPE>_PROVIDER
+          5b. Keyword-heuristic escalation (routing.escalation config)
           6. Config task-type default  (providers.task_type_defaults in orchid.defaults.yaml)
           7. Config agent-type default (providers.agent_defaults in orchid.defaults.yaml)
         """
@@ -241,6 +243,16 @@ class ProviderRegistry:
         if env_val:
             return env_val
 
+        # 5b. Keyword-heuristic escalation — only fires when no explicit override set above
+        if task_title:
+            escalation_cfg = cfg.get("routing.escalation", {})
+            if escalation_cfg.get("enabled", True):
+                threshold = int(escalation_cfg.get("threshold", 1))
+                keywords = escalation_cfg.get("keywords", [])
+                title_lower = task_title.lower()
+                if sum(1 for kw in keywords if kw in title_lower) >= threshold:
+                    return cfg.get("providers.agent_defaults.orchestrator", "claude")
+
         # 6. Config-driven task-type default (orchid.defaults.yaml providers.task_type_defaults)
         if task_type:
             cfg_task_default = cfg.get(f"providers.task_type_defaults.{task_type}")
@@ -262,9 +274,10 @@ class ProviderRegistry:
         task_type: str | None = None,
         task_model: str | None = None,
         cli_override: str | None = None,
+        task_title: str = "",
     ) -> ProviderBase:
         """Resolve and return a ready ProviderBase for the given context."""
-        name = self.resolve_name(agent_type, agent_name, task_type, task_model, cli_override)
+        name = self.resolve_name(agent_type, agent_name, task_type, task_model, cli_override, task_title)
         return self._get(name)
 
     def get_by_key(self, model_key: str) -> ProviderBase:

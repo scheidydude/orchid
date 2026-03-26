@@ -198,30 +198,27 @@ class Orchestrator:
 
         # Check per-agent-type CLI override first
         per_agent_override = self.cli_provider_overrides.get(agent_type)
+        _agent_name = getattr(agent_cls, "agent_name", agent_type)
 
-        # Resolve routing before execution and log the decision
-        decision = route(
+        # Resolve provider through the full registry chain — single source of truth.
+        # Replaces the old route() + manual per-agent override block, which missed
+        # providers.agent_defaults, env vars, task_type overrides, and keyword heuristics
+        # all in the same place.
+        from orchid.providers.registry import get_registry as _get_provider_registry
+        from orchid.tools.models import RouteDecision
+        _provider_name = _get_provider_registry().resolve_name(
+            agent_type=agent_type,
+            agent_name=_agent_name,
             task_type=task.type,
-            task_model_override=task.model_override,
+            task_model=task.model_override,
             cli_override=per_agent_override or self.cli_model_override,
             task_title=task.title,
         )
-
-        # Per-agent .orchid.yaml override (layer 3 in registry chain):
-        # beats route() defaults and heuristic, but not CLI flag or task annotation.
-        if decision.source in ("default", "heuristic"):
-            _agent_name = getattr(agent_cls, "agent_name", agent_type)
-            _per_agent_cfg = cfg.get(f"providers.{_agent_name}")
-            if _per_agent_cfg and isinstance(_per_agent_cfg, str) and _per_agent_cfg not in ("auto",):
-                decision = decision.__class__(
-                    model=_per_agent_cfg,
-                    reason=f"per-agent config providers.{_agent_name}",
-                    source="project_config",
-                )
+        decision = RouteDecision(model=_provider_name, reason="registry", source="registry")
 
         # Offline mode forces local regardless of routing
         if self.offline_mode:
-            decision = decision.__class__(model="local", reason="offline mode", source="cli_flag")
+            decision = RouteDecision(model="local", reason="offline mode", source="cli_flag")
 
         logger.info(
             "Routing %s → %s (reason: %s, source: %s)",

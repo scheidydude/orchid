@@ -278,6 +278,80 @@ def test_rollup_default_comes_from_task_type_defaults():
     assert name == "claude"
 
 
+def test_reviewer_project_config_overrides_type_default():
+    """providers.reviewer: local in project .orchid.yaml beats review task-type default.
+
+    Regression test: _execute_task previously only checked providers.<agent_name>
+    at layer 2, missing providers.agent_defaults.<agent_type> at layer 7.  Now both
+    code paths go through resolve_name() so all layers are always consulted.
+    """
+    # Layer 2: providers.reviewer set to "local" in project config
+    def _fake_get(key, default=None):
+        if key == "providers.reviewer":
+            return "local"
+        if key == "providers.task_type_defaults.review":
+            return "claude"   # default would be claude
+        return default
+
+    registry = _load_registry_patched()
+    with patch("orchid.config.get", side_effect=_fake_get):
+        name = registry.resolve_name("reviewer", agent_name="reviewer", task_type="review")
+    # project config (layer 2) must win over task_type_default (layer 6)
+    assert name == "local", f"Expected 'local' from providers.reviewer, got {name!r}"
+
+
+def test_reviewer_agent_defaults_config_driven_layer7():
+    """providers.agent_defaults.reviewer is read from config at layer 7 (no task_type conflict)."""
+    def _fake_get(key, default=None):
+        if key == "providers.agent_defaults.reviewer":
+            return "local"
+        return default
+
+    registry = _load_registry_patched()
+    with patch("orchid.config.get", side_effect=_fake_get):
+        # No task_type passed — layer 6 (task_type_defaults) is skipped entirely,
+        # so layer 7 (agent_defaults.reviewer) must return "local".
+        name = registry.resolve_name("reviewer", agent_name="reviewer")
+    assert name == "local", f"Expected 'local' from providers.agent_defaults.reviewer, got {name!r}"
+
+
+def test_keyword_heuristic_escalates_to_claude():
+    """Keyword heuristic (layer 5b) escalates complex task titles to claude."""
+    def _fake_get(key, default=None):
+        if key == "routing.escalation":
+            return {"enabled": True, "threshold": 1, "keywords": ["authentication"]}
+        if key == "providers.agent_defaults.orchestrator":
+            return "claude"
+        return default
+
+    registry = _load_registry_patched()
+    with patch("orchid.config.get", side_effect=_fake_get):
+        name = registry.resolve_name(
+            "developer", task_type="code_generate",
+            task_title="implement JWT authentication",
+        )
+    assert name == "claude"
+
+
+def test_keyword_heuristic_overridden_by_project_config():
+    """Project config (layer 2) beats keyword heuristic (layer 5b)."""
+    def _fake_get(key, default=None):
+        if key == "providers.developer":
+            return "local"
+        if key == "routing.escalation":
+            return {"enabled": True, "threshold": 1, "keywords": ["authentication"]}
+        return default
+
+    registry = _load_registry_patched()
+    with patch("orchid.config.get", side_effect=_fake_get):
+        name = registry.resolve_name(
+            "developer", task_type="code_generate",
+            task_title="implement JWT authentication",
+        )
+    # project config wins even over keyword escalation
+    assert name == "local"
+
+
 def test_agent_defaults_config_driven_layer7():
     """Layer 7 reads from providers.agent_defaults in config, not hardcoded Python only."""
     def _fake_get(key, default=None):
