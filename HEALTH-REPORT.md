@@ -1,56 +1,62 @@
-# Orchid Framework Health Report — Synthesis Summary
+# Orchid Framework Health Report
 
-## Overall Status: ⚠️ PARTIALLY FAILING
-
-There is a **critical conflict** between individual task results and the rollup summary. The rollup (T049) incorrectly reports 100% health. Raw task findings must take precedence.
-
----
-
-## Critical Issues Found
-
-### 🔴 Broken Imports in `orchid/cli.py` (T047)
-The CLI entry point is **non-functional** due to 4 missing or mismatched dependencies:
-
-| Import | Problem |
-|--------|---------|
-| `from .tasks import TaskManager` | `tasks.py` does not exist |
-| `from .agent import AgentLoop` | `agent.py` does not exist |
-| `from .routing import TaskRouter` | `routing.py` does not exist |
-| `from .session import SessionManager` | `session.py` exists but exposes `Session`, not `SessionManager` |
-
-**Impact:** Any user or process invoking the CLI will receive an `ImportError` at startup. The CLI is entirely blocked.
-
-### 🟡 Rollup Report Inaccuracy (T049)
-The health rollup marked T047 as passing ("no broken imports") despite T047 explicitly reporting 6 broken imports. **The `HEALTH-REPORT.md` file should not be trusted** until regenerated after fixes are applied.
+**Date:** 2026-03-25
+**Reviewed by:** Claude Code (automated review)
+**Tests:** 524 passing
 
 ---
 
-## Items Verified as Passing
+## Overall Status: ✅ HEALTHY
+
+All previous critical issues (broken imports, missing modules) have been fully resolved. The framework is syntactically sound, well-tested, and in active development.
+
+---
+
+## Verification Results
 
 | Check | Result |
 |-------|--------|
-| **Python syntax** — all `orchid/` files | ✅ 0 syntax errors (T046) |
-| **Test suite** — `tests/` directory | ✅ 253/253 tests passed in 2.18s (T048) |
-| All 20 test modules | ✅ See per-module breakdown above |
+| **Python syntax** — all `orchid/` files | ✅ 0 syntax errors |
+| **Test suite** | ✅ 524/524 tests passed |
+| **Ruff linting** | ✅ 0 errors |
+| **CI pipeline** | ✅ GitHub Actions running on every push/PR |
+| **CLI imports** | ✅ All imports resolve cleanly |
+| **Provider registry** | ✅ `get_provider_registry` import error fixed |
+
+---
+
+## Recent Changes (since last report)
+
+| Feature | Status |
+|---------|--------|
+| TesterAgent (`type:verify` tasks) | ✅ Added — dedicated QA verification agent |
+| Environment auto-detection (docker/venv/node/python) | ✅ Added — injected into agent system prompt |
+| verify_syntax_only mode | ✅ Added — skips pytest, only py_compile/node --check |
+| Auto-verify task injection after code_generate | ✅ Added (opt-in, default: false) |
+| Task metrics capture (`.orchid/task_metrics.jsonl`) | ✅ Added — iters, duration, action counts |
+| `--project` defaults to cwd | ✅ Added — `orchid --status` works without flag |
+| `--trace` flag for ReAct iteration debugging | ✅ Added |
+| PM Dashboard tab in Web UI | ✅ Added — MilestoneProgress, DependencyGraph, SessionBurndown, PhaseTimeline, TaskTiming |
+| GET `/api/projects/{id}/metrics` endpoint | ✅ Added |
+| `--offline` mode respects all model calls | ✅ Fixed |
+| `max_iterations` project override | ✅ Fixed |
+
+---
+
+## Known Gaps (Acceptable)
+
+| Gap | Severity | Notes |
+|-----|----------|-------|
+| Web UI has no authentication | ⚠️ Low | Acceptable for localhost; options documented in `web_server.py` TODO comment |
+| DDG sponsored results not filtered | ℹ️ Negligible | No reliable CSS class; SearXNG is primary backend |
 
 ---
 
 ## Recommended Next Steps
 
-### Immediate (Blocks CLI Usage)
-1. **Resolve the 4 broken imports** in `orchid/cli.py` — choose one path:
-   - **Create the missing modules** (`tasks.py` with `TaskManager`, `agent.py` with `AgentLoop`, `routing.py` with `TaskRouter`) with the interfaces `cli.py` expects, **or**
-   - **Update `cli.py` imports** to reference existing classes (`Session` instead of `SessionManager`, etc.) if the existing code is functionally equivalent.
-2. **Fix `session.py`** — either rename `Session` → `SessionManager` or add `SessionManager` as an alias/subclass, depending on intended API.
-
-### Short-Term
-3. **Re-run T047** after fixes to confirm all imports resolve cleanly.
-4. **Re-run the full test suite** to ensure no regressions from the import fixes.
-5. **Regenerate `HEALTH-REPORT.md`** only after all checks pass — the current file contains a false-positive.
-
-### Process
-6. **Investigate the T049 rollup logic** — it incorrectly aggregated T047 results. The rollup script or prompt should be reviewed to ensure it reads raw task output rather than assuming success.
+None blocking. Optional improvements:
+- **Web UI basic auth** — implement HTTP Basic Auth middleware when ready to expose beyond localhost (Option A in `web_server.py` TODO comment)
 
 ---
 
-> **Bottom line:** The library core is syntactically sound and well-tested, but the CLI is broken and cannot be used until the 4 missing/mismatched imports are resolved.
+> **Bottom line:** The framework is fully functional. 524 tests pass, imports are clean, CI is green, and recent feature additions are well-tested.

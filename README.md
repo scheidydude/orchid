@@ -124,6 +124,7 @@ webtron/
     │   ├── conversation.jsonl
     │   └── context.md
     ├── task_results.json     ← TaskResultStore (--get-result)
+    ├── task_metrics.jsonl    ← per-task timing, iterations, action counts
     └── session_logs/
 ```
 
@@ -161,7 +162,7 @@ context_files:             # extra files loaded into every agent prompt
 - [~] **T004** Skip this task `type:draft` `p3`  # skipped tasks excluded from auto runs
 ```
 
-Task types: `code_generate` `draft` `review` `summarize` `search` `plan` `critique` `synthesize` `rollup`
+Task types: `code_generate` `draft` `review` `summarize` `search` `plan` `critique` `synthesize` `rollup` `verify`
 Priorities: `p1` high · `p2` normal · `p3` low
 Status: `[ ]` TODO · `[x]` DONE · `[~]` SKIP · `[!]` BLOCKED
 
@@ -171,7 +172,7 @@ Status: `[ ]` TODO · `[x]` DONE · `[~]` SKIP · `[!]` BLOCKED
 # Core run modes
 orchid --project PATH --mode auto          run all pending tasks
 orchid --project PATH --mode interactive   chat with agent
-orchid --project PATH --status             task board + hot memory
+orchid --project PATH --status             task board + hot memory (--project defaults to cwd)
 orchid --project PATH --add-task "title"   add a task quickly
 orchid --project PATH --add-task "title" --type review --priority 1
 
@@ -207,6 +208,7 @@ orchid --project PATH --tail               tail the live session log
 orchid --project PATH --inject "text"      inject message into running agent
 orchid --project PATH --recall "query"     semantic search over memory
 orchid --project PATH --search "query"     web search
+orchid --project PATH --mode auto --trace  log each ReAct iteration for debugging
 ```
 
 ## Web UI
@@ -238,6 +240,7 @@ Health check: `GET /health` → `{"status": "ok", "projects": N}` — used by Tr
 
 ### Features
 
+- **PM Dashboard tab** — project health at a glance: MilestoneProgress, DependencyGraph (cytoscape.js DAG), SessionBurndown, PhaseTimeline, TaskTiming table from `task_metrics.jsonl`
 - **Planning tab** — V2 lifecycle panel: phase indicator, discussion chat, artifact viewer, gate approval panel, NewProject wizard
 - **Discussion history** — persistent chat history with AI PM, view previous conversations and context
 - **Discussion streaming** — real-time WebSocket feed of PM agent responses as they stream
@@ -562,11 +565,12 @@ discovery.py         auto-discovery: scan watch_dirs, watchdog inotify watcher
 agent_manager.py     per-project agent loop threads, APScheduler cron support
 
 agents/
-  base.py            ReAct loop (Reason → Act → Observe), tool dispatch
+  base.py            ReAct loop (Reason → Act → Observe), tool dispatch, env detection
   discussion_agent.py  elicits requirements via conversation (Claude, cached)
   product_manager.py   generates REQUIREMENTS.md + ARCHITECTURE.md
   project_manager.py   generates MILESTONES.md + tasks.md
   developer.py       code generation/editing (local model)
+  tester.py          QA verification: runs tests, structured output, no code writes
   researcher.py      search and summarize (local model)
   reviewer.py        critique and quality gate (Claude API)
 
@@ -604,7 +608,7 @@ providers/
 | Task type | Default model |
 |-----------|--------------|
 | `orchestrate` `review` `plan` `critique` `synthesize` `rollup` | Claude API |
-| `draft` `code_generate` `summarize` `search` `transform` | Local llama.cpp |
+| `draft` `code_generate` `summarize` `search` `transform` `verify` | Local llama.cpp |
 
 Override per-project with `model_preference: claude` in `.orchid.yaml`, or per-task with the `model:` tag.
 
@@ -631,7 +635,7 @@ caching:
 ## Development
 
 ```bash
-pytest -m "not network"   # 446 tests, no API calls required
+pytest -m "not network"   # 524 tests, no API calls required
 ruff check orchid/        # 0 errors
 ```
 

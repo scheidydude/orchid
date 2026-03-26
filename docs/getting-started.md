@@ -211,7 +211,7 @@ orchid --project ~/projects/myapp --add-task "Create product model" --type code_
 
 | Field | Values | Description |
 |-------|--------|-------------|
-| `type:` | `code_generate` `draft` `review` `summarize` `search` `plan` `critique` `synthesize` `rollup` | What kind of work |
+| `type:` | `code_generate` `draft` `review` `summarize` `search` `plan` `critique` `synthesize` `rollup` `verify` | What kind of work |
 | `p1` / `p2` / `p3` | high / normal / low | Priority |
 | `agent:` | `developer` `researcher` `reviewer` `base` | Which agent to use |
 | `needs:T001,T002` | task IDs | Dependencies (won't run until those are done) |
@@ -251,6 +251,29 @@ Skipped tasks:
 - Count as satisfied for dependency checks (tasks depending on them can proceed)
 - Remain visible in the task board for reference
 
+### Verify tasks
+
+A `verify` task runs the TesterAgent — a dedicated QA agent that runs tests and reports structured results without writing any code:
+
+```markdown
+- [ ] **T006** Verify product endpoints `type:verify` `p2` `needs:T002`
+```
+
+The TesterAgent auto-detects the project environment (docker/venv/node/python) and uses the correct test runner. Output is structured JSON:
+```json
+{"passed": true, "tests_run": 42, "failures": [], "files_checked": ["tests/test_products.py"]}
+```
+
+To automatically create a paired verify task after every `code_generate` task completes, add to `.orchid.yaml`:
+```yaml
+auto_verify: true
+```
+
+For environments without full test dependencies, `verify_syntax_only: true` runs only `py_compile` / `node --check` (no pytest/jest):
+```yaml
+verify_syntax_only: true
+```
+
 ### Rollup tasks
 
 A `rollup` task gathers the saved results from a set of completed tasks and synthesises a summary via Claude:
@@ -281,6 +304,15 @@ Use `model:local` to force local even for task types that normally use Claude:
 ## 6. Run Orchid
 
 ### Check what's pending
+
+`--project` defaults to the current directory, so if you're already inside the project:
+
+```bash
+cd ~/projects/myapp
+orchid --status     # same as orchid --project ~/projects/myapp --status
+```
+
+Or with the explicit flag:
 
 ```bash
 orchid --project ~/projects/myapp --status
@@ -315,6 +347,16 @@ orchid --project ~/projects/myapp --mode interactive
 ```
 
 Chat directly with an agent. Useful for exploration or one-off questions about your codebase.
+
+### Debug a stuck agent
+
+Add `--trace` to log every ReAct iteration's raw thought/action/observation:
+
+```bash
+orchid --project ~/projects/myapp --run-task T015 --trace
+```
+
+This is useful when an agent is looping or not calling the right tools.
 
 ---
 
@@ -382,6 +424,16 @@ Open **http://localhost:7842** in your browser.
 ```bash
 orchid web --project ~/projects/myapp
 ```
+
+### PM Dashboard Tab
+
+The **PM Dashboard tab** provides quantitative project health metrics drawn from `.orchid/task_metrics.jsonl`:
+
+- **MilestoneProgress** — task groups by milestone with completion % bars
+- **DependencyGraph** — DAG visualization with color-coded task status and critical-path highlighting
+- **SessionBurndown** — bar chart of tasks completed per session
+- **PhaseTimeline** — lifecycle phase duration visualization
+- **TaskTiming** — sortable table of all tasks sorted by duration, with iteration efficiency color coding (green = efficient, red = high iteration count)
 
 ### Planning Tab
 
@@ -605,3 +657,14 @@ A gate is waiting for human approval. Run `orchid --project PATH --approve`. To 
 
 **Discussion agent gives generic responses**
 Fill in your machine profile at `~/.config/orchid/machine-profile.yaml` — preferred stacks, infrastructure, and project root. The discussion agent uses this to ask more targeted questions.
+
+**Test agent uses wrong runner (e.g., bare `python -m pytest` in a Docker project)**
+Set the environment explicitly in `.orchid.yaml`:
+```yaml
+agents:
+  environment: docker   # docker | venv | node | python
+```
+Or use `verify_syntax_only: true` to skip test execution entirely and only check syntax.
+
+**Agent not producing output / iterating too many times**
+Run with `--trace` to see each ReAct iteration. This reveals whether the agent is miscalling tools, getting confused by tool output, or stuck in a reasoning loop.
