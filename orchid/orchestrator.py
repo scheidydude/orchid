@@ -462,7 +462,7 @@ class Orchestrator:
         return _cb
 
     def _plan_task(self, task: Task) -> str:
-        """Use Claude to produce a step-by-step plan for complex tasks."""
+        """Produce a step-by-step plan for complex tasks via the provider registry."""
         prompt = (
             f"You are orchestrating a software project. Break down this task into clear steps.\n\n"
             f"Task: {task.title}\n"
@@ -470,9 +470,14 @@ class Orchestrator:
             f"Project context:\n{self.session.context_block()[:1500]}\n\n"
             "Output a numbered list of concrete steps. Be brief."
         )
+        from orchid.providers.registry import get_registry as get_provider_registry
+        model_key = get_provider_registry().resolve_name(
+            agent_type="orchestrator",
+            cli_override=self.cli_provider_overrides.get("orchestrator") or self.cli_model_override,
+        )
         return call(
             messages=[Message("user", prompt)],
-            model_key="claude",
+            model_key=model_key,
             system="You are a software project orchestrator.",
         )
 
@@ -547,7 +552,13 @@ class Orchestrator:
             f"Task results:\n{results_text}"
         )
 
-        model_key = "local" if self.offline_mode else "claude"
+        from orchid.providers.registry import get_registry as get_provider_registry
+        model_key = get_provider_registry().resolve_name(
+            agent_type="base",
+            task_type="rollup",
+            task_model=task.model_override,
+            cli_override=self.cli_model_override,
+        )
         logger.info("Running rollup synthesis for %s with %d source tasks", task.id, len(sources))
         synthesis = call(
             messages=[Message("user", prompt)],

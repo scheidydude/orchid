@@ -181,14 +181,9 @@ def test_resolve_name_offline_mode_returns_local():
 
 
 def test_resolve_name_task_model_annotation():
-    """Task model: annotation (layer 2) beats per-agent config (layer 3)."""
-    def _fake_get(key, default=None):
-        if key == "providers.discussion":
-            return "local"
-        return default
-
+    """Task model: annotation (layer 4) is used when no project config override exists."""
     registry = _load_registry_patched()
-    with patch("orchid.config.get", side_effect=_fake_get):
+    with patch("orchid.config.get", return_value={}):
         name = registry.resolve_name("discussion", task_model="claude")
     assert name == "claude"
 
@@ -232,7 +227,7 @@ def test_per_agent_override_beats_type_default():
 
 
 def test_cli_flag_beats_per_agent_override():
-    """CLI --provider flag (layer 1) beats providers.<agent_name> from config (layer 3)."""
+    """CLI --provider flag (layer 1) beats providers.<agent_name> from config (layer 2)."""
     def _fake_get(key, default=None):
         if key == "providers.discussion":
             return "local"
@@ -242,6 +237,102 @@ def test_cli_flag_beats_per_agent_override():
     with patch("orchid.config.get", side_effect=_fake_get):
         name = registry.resolve_name("discussion", cli_override="ollama")
     assert name == "ollama"
+
+
+def test_project_config_beats_task_annotation():
+    """Project .orchid.yaml providers (layer 2) wins over task model: annotation (layer 4)."""
+    def _fake_get(key, default=None):
+        if key == "providers.reviewer":
+            return "local"
+        return default
+
+    registry = _load_registry_patched()
+    with patch("orchid.config.get", side_effect=_fake_get):
+        name = registry.resolve_name("reviewer", task_model="claude")
+    assert name == "local"
+
+
+def test_rollup_respects_project_provider_override():
+    """Rollup uses providers.task_types.rollup override if set in project config."""
+    def _fake_get(key, default=None):
+        if key == "providers.task_types.rollup":
+            return "local"
+        return default
+
+    registry = _load_registry_patched()
+    with patch("orchid.config.get", side_effect=_fake_get):
+        name = registry.resolve_name("base", task_type="rollup")
+    assert name == "local"
+
+
+def test_cli_flag_still_beats_project_config():
+    """CLI --provider flag (layer 1) overrides project .orchid.yaml providers (layer 2)."""
+    def _fake_get(key, default=None):
+        if key == "providers.orchestrator":
+            return "local"
+        return default
+
+    registry = _load_registry_patched()
+    with patch("orchid.config.get", side_effect=_fake_get):
+        name = registry.resolve_name("orchestrator", cli_override="bedrock")
+    assert name == "bedrock"
+
+
+def test_orchestrator_respects_project_provider_override():
+    """_plan_task() routes through the provider registry, not hardcoded 'claude'.
+
+    When .orchid.yaml sets providers.orchestrator: local the planning call
+    must use 'local', not 'claude'.  Also verifies that a cli_provider_overrides
+    entry for 'orchestrator' takes priority over the project config.
+    """
+    from dataclasses import dataclass, field
+    from pathlib import Path
+    from unittest.mock import MagicMock, patch
+
+    from orchid.memory.state import Task
+    from orchid.orchestrator import Orchestrator
+
+    # Minimal Task for planning
+    task = Task(id="T001", title="Build widget", description="Make a widget.")
+
+    # Minimal Session mock — only context_block() is called by _plan_task
+    mock_session = MagicMock()
+    mock_session.project_dir = Path("/tmp/fake-project")
+    mock_session.context_block.return_value = ""
+
+    def _project_cfg(key, default=None):
+        if key == "providers.orchestrator":
+            return "local"
+        return default
+
+    # Case 1: project config override — should use 'local' not 'claude'
+    with (
+        patch("orchid.config.get", side_effect=_project_cfg),
+        patch("orchid.orchestrator.call", return_value="plan text") as mock_call,
+        patch("orchid.providers.registry.get_registry", return_value=_load_registry_patched()),
+    ):
+        orch = Orchestrator(session=mock_session)
+        result = orch._plan_task(task)
+
+    assert result == "plan text"
+    _, kwargs = mock_call.call_args
+    assert kwargs["model_key"] == "local", (
+        f"Expected model_key='local' (from providers.orchestrator), got {kwargs['model_key']!r}"
+    )
+
+    # Case 2: cli_provider_overrides beats project config
+    with (
+        patch("orchid.config.get", side_effect=_project_cfg),
+        patch("orchid.orchestrator.call", return_value="plan text") as mock_call,
+        patch("orchid.providers.registry.get_registry", return_value=_load_registry_patched()),
+    ):
+        orch = Orchestrator(session=mock_session, cli_provider_overrides={"orchestrator": "ollama"})
+        orch._plan_task(task)
+
+    _, kwargs = mock_call.call_args
+    assert kwargs["model_key"] == "ollama", (
+        f"Expected model_key='ollama' (CLI override), got {kwargs['model_key']!r}"
+    )
 
 
 # ── 5. AnthropicProvider ──────────────────────────────────────────────────────
