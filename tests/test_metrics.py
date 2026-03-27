@@ -11,12 +11,10 @@ import pytest
 from typer.testing import CliRunner
 
 from orchid.interfaces.cli import app
-from orchid.tools.models import RouteDecision
 
 runner = CliRunner()
 
 _FINAL_ANSWER = "Final Answer: task complete."
-_LOCAL_ROUTE = RouteDecision(model="local", reason="test", source="test")
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -27,8 +25,7 @@ def orchid_project(tmp_path: Path) -> Path:
     """Minimal orchid project with one pending task."""
     (tmp_path / ".orchid.yaml").write_text("name: test\n", encoding="utf-8")
     (tmp_path / "tasks.md").write_text(
-        "# Tasks\n\n## TODO\n\n"
-        "- [ ] **T001** Test task `type:draft` `p1`\n",
+        "# Tasks\n\n## TODO\n\n- [ ] **T001** Test task `type:draft` `p1`\n",
         encoding="utf-8",
     )
     (tmp_path / "CLAUDE.md").write_text("# Test Project\n", encoding="utf-8")
@@ -45,9 +42,11 @@ def _run_task(project: Path, fail: bool = False) -> dict:
     session = Session(project_dir=project)
     session.load()
 
-    with patch("orchid.orchestrator.call", return_value=answer), \
-         patch("orchid.agents.base.call", return_value=answer), \
-         patch("orchid.orchestrator.route", return_value=_LOCAL_ROUTE):
+    with (
+        patch("orchid.orchestrator.call", return_value=answer),
+        patch("orchid.agents.base.call", return_value=answer),
+        patch("orchid.providers.registry.ProviderRegistry.resolve_name", return_value="local"),
+    ):
         orch = Orchestrator(session)
         result = orch.run_once()
 
@@ -151,18 +150,21 @@ def test_task_metrics_endpoint_returns_data(tmp_path: Path) -> None:
     orchid_dir.mkdir()
     metrics_file = orchid_dir / "task_metrics.jsonl"
     metrics_file.write_text(
-        json.dumps({
-            "task_id": "T001",
-            "title": "Test task",
-            "status": "done",
-            "iters_used": 3,
-            "iters_max": 15,
-            "duration_s": 1.5,
-            "action_counts": {"read_file": 2},
-            "model": "local",
-            "session_id": "session_20260325_120000",
-            "timestamp": "2026-03-25T12:00:00+00:00",
-        }) + "\n",
+        json.dumps(
+            {
+                "task_id": "T001",
+                "title": "Test task",
+                "status": "done",
+                "iters_used": 3,
+                "iters_max": 15,
+                "duration_s": 1.5,
+                "action_counts": {"read_file": 2},
+                "model": "local",
+                "session_id": "session_20260325_120000",
+                "timestamp": "2026-03-25T12:00:00+00:00",
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
 
