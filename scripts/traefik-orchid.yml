@@ -1,6 +1,6 @@
 # traefik-orchid.yml
 #
-# Traefik file-provider configuration for routing orchid.scheidy.com
+# Traefik file-provider configuration for routing orchid.your-domain.com
 # to the Orchid web server running on localhost:7842.
 #
 # Usage (bare-metal Traefik binary with file provider):
@@ -18,13 +18,13 @@
 # Prerequisites:
 #   - orchid web --project <path> running on localhost:7842
 #     (or use the orchid-web.service systemd unit)
-#   - Cloudflare DNS pointing orchid.scheidy.com to this server
+#   - Cloudflare DNS pointing orchid.your-domain.com to this server
 #   - Traefik with ACME Cloudflare DNS challenge configured
 
 http:
   routers:
     orchid:
-      rule: "Host(`orchid.scheidy.com`)"
+      rule: "Host(`orchid.your-domain.com`)"
       service: orchid
       entryPoints:
         - websecure
