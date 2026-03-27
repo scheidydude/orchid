@@ -1012,6 +1012,15 @@ def create_app(
         runner.inject(text)
         return {"injected": True}
 
+    @app.get("/api/version")
+    async def get_version():
+        try:
+            from importlib.metadata import version
+            v = version("orchid")
+        except Exception:
+            from orchid import __version__ as v
+        return {"version": v}
+
     # ── V2 lifecycle endpoints ────────────────────────────────────────────────
 
     @app.get("/api/machine-profile")

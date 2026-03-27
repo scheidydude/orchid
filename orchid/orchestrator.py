@@ -192,6 +192,12 @@ class Orchestrator:
     def _execute_task(self, task: Task) -> dict[str, Any]:
         from orchid.providers.base import ProviderUnavailableError
 
+        # Re-assert project config before every task — the global _config singleton can
+        # be overwritten by concurrent API requests (e.g. GET /api/projects polling
+        # _load_session for multiple projects). Without this, provider routing reads
+        # the wrong project's config and routes tasks to the wrong provider.
+        cfg.configure_for_project(self.session.project_dir)
+
         # Resolve agent type for per-agent-type provider overrides
         agent_cls = self._resolve_agent(task)
         agent_type = getattr(agent_cls, "agent_type", "base")
@@ -319,7 +325,7 @@ class Orchestrator:
                     task_id=task.id,
                     status="blocked" if is_failure else "done",
                     completed_iters=_ts.get("completed_iters", 0),
-                    max_iter=cfg.get("agents.max_react_iterations", 15),
+                    max_iter=cfg.get("agents.max_react_iterations", 25),
                     action_counts=dict(_ts.get("action_counts", {})),
                     elapsed=_task_run_elapsed,
                 )
@@ -399,7 +405,7 @@ class Orchestrator:
         session = self.session
         progress_interval = cfg.get("streaming.telegram_progress_interval", 3)
         trace = self._trace_writer
-        max_iter = cfg.get("agents.max_react_iterations", 15)
+        max_iter = cfg.get("agents.max_react_iterations", 25)
 
         # Mutable state for trace bookkeeping and metrics
         _state: dict[str, Any] = {
@@ -551,7 +557,7 @@ class Orchestrator:
 
         from orchid.providers.registry import get_registry as get_provider_registry
         model_key = get_provider_registry().resolve_name(
-            agent_type="base",
+            agent_type="orchestrator",
             task_type="rollup",
             task_model=task.model_override,
             cli_override=self.cli_model_override,
@@ -655,7 +661,7 @@ class Orchestrator:
             "title": task.title,
             "status": status,
             "iters_used": trace_state.get("completed_iters", 0),
-            "iters_max": cfg.get("agents.max_react_iterations", 15),
+            "iters_max": cfg.get("agents.max_react_iterations", 25),
             "duration_s": round(elapsed, 3),
             "action_counts": dict(trace_state.get("action_counts", {})),
             "model": model,

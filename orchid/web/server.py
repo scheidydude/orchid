@@ -72,6 +72,12 @@ async def run_project(project_id: str):
     runner.start(project['path'])
     return {"ok": True}
 
+@app.delete("/api/projects/{project_id}/run")
+async def stop_run(project_id: str):
+    project = _get_project(project_id)
+    runner.stop(project['path'])
+    return {"ok": True}
+
 @app.get("/api/projects/{project_id}/status")
 async def get_status(project_id: str):
     project = _get_project(project_id)
