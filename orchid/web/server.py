@@ -6,9 +6,9 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from orchid.registry import ProjectRegistry
-from orchid.runner import BackgroundRunner
 
 from orchid.planning import PlanningSession
+from orchid.runner import BackgroundRunner
 
 app = FastAPI()
 
