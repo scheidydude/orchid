@@ -49,7 +49,7 @@ The Web UI provides an intuitive wizard to get your project started:
    - **Project Type** — Choose from: AI Tool, Web App, CLI Tool, Game, or Other
 4. Click **"Create Project"**
 
-[SCREENSHOT: New Project Wizard modal showing fields for project name, description, and type selection]
+![New Project Wizard](../images/pm-guide-01.png)
 
 The wizard will:
 - Create the project directory structure
@@ -78,7 +78,7 @@ The Discussion tab is where you refine your idea through conversation:
 3. Start typing your project idea in the chat input
 4. The AI PM will ask clarifying questions and suggest improvements
 
-[SCREENSHOT: Discussion panel showing chat history with user messages and AI responses]
+![Discussion panel](../images/pm-guide-02.png)
 
 ### Tips for Effective Discussions
 
@@ -102,8 +102,7 @@ The AI Product Manager will:
 - Clarify edge cases
 - Build a shared understanding of what you want to build
 
-[SCREENSHOT: AI PM asking clarifying questions about project features]
-
+![Discussion panel](../images/pm-guide-03.png)
 ---
 
 ## Reviewing Requirements and Architecture
@@ -115,7 +114,7 @@ Once you signal you're ready, Orchid generates two critical documents:
 1. **REQUIREMENTS.md** — Detailed feature specifications
 2. **ARCHITECTURE.md** — Technical design and component structure
 
-[SCREENSHOT: Planning tab showing REQUIREMENTS.md content in a scrollable panel]
+![Planning tab showing REQUIREMENTS.md](../images/pm-guide-04.png)
 
 ### The Requirements Document
 
@@ -139,7 +138,7 @@ ARCHITECTURE.md contains:
 - **Data Models** — Key data structures
 - **API Design** — If applicable
 
-[SCREENSHOT: Architecture diagram and component breakdown in ARCHITECTURE.md]
+![Architecture diagram](../images/pm-guide-05.png)
 
 **What to Look For:**
 - Does the approach make sense?
@@ -154,8 +153,7 @@ Orchid also generates a detailed task list in `tasks.md`:
 - Dependencies between tasks are clearly marked
 - Priority levels help with sequencing
 
-[SCREENSHOT: tasks.md showing task list with IDs, titles, and dependency markers]
-
+![tasks.md](../images/pm-guide-06.png)
 ---
 
 ## Approving the Plan
@@ -168,7 +166,7 @@ Once you've reviewed the documents and are satisfied:
 2. Review the summary of what will be built
 3. Click **"Approve and Start Execution"**
 
-[SCREENSHOT: Approval panel showing project summary and Approve button]
+![Approval panel](../images/pm-guide-07.png)
 
 ### What Approval Means
 
@@ -194,7 +192,7 @@ The project phase changes from **PLANNING** to **EXECUTING**:
 
 Once execution begins, the PM Dashboard gives you real-time visibility:
 
-[SCREENSHOT: PM Dashboard showing all four visualization panels]
+![PM Dashboard](../images/pm-guide-08.png)
 
 ### 1. Milestone Progress
 
@@ -203,7 +201,7 @@ Shows completion percentage for each milestone:
 - Tasks completed vs. total per milestone
 - Estimated time to completion
 
-[SCREENSHOT: Milestone Progress panel with progress bars for each milestone]
+![Milestone Progress](../images/pm-guide-09.png)
 
 **What It Tells You:**
 - Which milestones are on track
@@ -218,7 +216,7 @@ Visualizes task dependencies:
 - Color-coded by status
 - Blocked tasks are highlighted
 
-[SCREENSHOT: Dependency Graph showing task nodes and dependency arrows]
+![Dependency Graph](../images/pm-guide-10.png)
 
 **What It Tells You:**
 - Which tasks are blocking others
@@ -232,7 +230,7 @@ Tracks work completed over time:
 - Comparison to ideal burndown
 - Velocity trends
 
-[SCREENSHOT: Session Burndown chart showing tasks completed over time]
+![Session Burndown](../images/pm-guide-11.png)
 
 **What It Tells You:**
 - Whether the project is on schedule
@@ -246,7 +244,7 @@ Shows how long tasks take:
 - Outliers (very fast or very slow tasks)
 - Historical trends
 
-[SCREENSHOT: Task Timing chart showing duration distribution]
+![Task Timing](../images/pm-guide-12.png)
 
 **What It Tells You:**
 - Which task types take longest
@@ -257,7 +255,7 @@ Shows how long tasks take:
 
 The Execution tab also shows a detailed task board:
 
-[SCREENSHOT: Task board showing task cards in columns by status]
+![Task cards](../images/pm-guide-13.png)
 
 **Features:**
 - Drag-and-drop status changes
@@ -376,8 +374,6 @@ Lists all active projects and their status:
    All milestones done
 ```
 
-[SCREENSHOT: Telegram message showing project list with status]
-
 #### `/orchid_switch <project_name>`
 
 Switches your active project for subsequent commands:
@@ -401,7 +397,6 @@ Tasks: 23 tasks across 5 milestones
 Reply APPROVE to confirm or REJECT to make changes.
 ```
 
-[SCREENSHOT: Telegram approval request with buttons]
 
 ### Slack Integration
 
