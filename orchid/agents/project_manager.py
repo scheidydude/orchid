@@ -2,7 +2,7 @@
 
 Reads: REQUIREMENTS.md, ARCHITECTURE.md, machine profile.
 Writes: <project>/MILESTONES.md and <project>/tasks.md.
-Provider: configurable (default: claude).
+Provider: configurable via registry (see providers.agent_defaults.project_manager in orchid.defaults.yaml).
 """
 
 from __future__ import annotations

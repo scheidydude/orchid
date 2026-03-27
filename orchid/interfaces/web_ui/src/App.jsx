@@ -21,6 +21,11 @@ export default function App() {
   const { projects, loading: projectsLoading, refresh: refreshProjects, newProjectIds } = useProjects()
   const [activeProject, setActiveProject] = useState(null)
   const [activeTab, setActiveTab] = useState('Tasks')
+  const [orchidVersion, setOrchidVersion] = useState('')
+
+  useEffect(() => {
+    fetch('/api/version').then(r => r.json()).then(d => setOrchidVersion(d.version)).catch(() => {})
+  }, [])
   const [showNewWizard, setShowNewWizard] = useState(false)
   const [planningBadge, setPlanningBadge] = useState(false)
   const { entries, runStatus, clear } = useAgentStream(activeProject)
@@ -118,6 +123,20 @@ export default function App() {
               newProjectIds={newProjectIds}
               onToggleActive={handleToggleActive}
             />
+          )}
+          {orchidVersion && (
+            <div style={{
+              position: 'absolute',
+              bottom: 8,
+              left: 10,
+              fontSize: 10,
+              color: 'var(--text-dim)',
+              opacity: 0.5,
+              pointerEvents: 'none',
+              letterSpacing: '0.3px',
+            }}>
+              v{orchidVersion}
+            </div>
           )}
         </nav>
 

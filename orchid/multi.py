@@ -134,7 +134,15 @@ def _install_semaphore_wrapper(
     _original = _models.call
 
     def _wrapped(messages: Any, model_key: str = "local", system: str | None = None) -> str:
-        sem = api_semaphore if model_key == "claude" else local_semaphore
+        try:
+            from orchid.providers.local import LocalProvider
+            from orchid.providers.ollama import OllamaProvider
+            from orchid.providers.registry import get_registry
+            provider = get_registry().get_by_key(model_key)
+            is_local = isinstance(provider, (LocalProvider, OllamaProvider))
+        except Exception:
+            is_local = model_key == "local"
+        sem = local_semaphore if is_local else api_semaphore
         sem.acquire()
         try:
             return _original(messages, model_key=model_key, system=system)

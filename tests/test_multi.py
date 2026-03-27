@@ -163,57 +163,127 @@ def test_notification_queue_receives_events(tmp_path):
     assert task_start["data"]["task_id"] == "T001"
 
 
-def test_api_semaphore_limits_concurrent_calls():
-    """_install_semaphore_wrapper gates Claude calls via api_semaphore and local calls via local_semaphore."""
+def _make_semaphore_tracker(sem: multiprocessing.Semaphore) -> tuple[multiprocessing.Semaphore, list[str]]:
+    """Wrap a semaphore so acquire/release calls are recorded."""
+    calls: list[str] = []
+    real_acquire = sem.acquire
+    real_release = sem.release
+
+    def _acq():
+        calls.append("acquire")
+        return real_acquire()
+
+    def _rel():
+        calls.append("release")
+        return real_release()
+
+    sem.acquire = _acq  # type: ignore[method-assign]
+    sem.release = _rel  # type: ignore[method-assign]
+    return sem, calls
+
+
+def _make_mock_registry(api_key: str = "claude", local_key: str = "local") -> MagicMock:
+    """Return a mock registry whose get_by_key() returns the right provider type."""
+    from orchid.providers.anthropic import AnthropicProvider
+    from orchid.providers.local import LocalProvider
+    from orchid.providers.ollama import OllamaProvider
+
+    api_provider = MagicMock(spec=AnthropicProvider)
+    local_provider = MagicMock(spec=LocalProvider)
+    ollama_provider = MagicMock(spec=OllamaProvider)
+
+    def _get(key: str):
+        if key == api_key:
+            return api_provider
+        if key == "ollama":
+            return ollama_provider
+        return local_provider
+
+    registry = MagicMock()
+    registry.get_by_key.side_effect = _get
+    return registry
+
+
+def test_api_semaphore_used_for_api_providers():
+    """_install_semaphore_wrapper routes API providers (claude, openai, bedrock) to api_semaphore."""
     import orchid.tools.models as _models
 
     original_call = _models.call
-    api_semaphore = multiprocessing.Semaphore(2)
-    local_semaphore = multiprocessing.Semaphore(1)
-    api_calls: list[str] = []
-    local_calls: list[str] = []
-
-    real_api_acquire = api_semaphore.acquire
-    real_api_release = api_semaphore.release
-    real_local_acquire = local_semaphore.acquire
-    real_local_release = local_semaphore.release
-
-    def _track_api_acquire():
-        api_calls.append("acquire")
-        return real_api_acquire()
-
-    def _track_api_release():
-        api_calls.append("release")
-        return real_api_release()
-
-    def _track_local_acquire():
-        local_calls.append("acquire")
-        return real_local_acquire()
-
-    def _track_local_release():
-        local_calls.append("release")
-        return real_local_release()
+    api_sem, api_calls = _make_semaphore_tracker(multiprocessing.Semaphore(2))
+    local_sem, local_calls = _make_semaphore_tracker(multiprocessing.Semaphore(1))
 
     try:
-        api_semaphore.acquire = _track_api_acquire  # type: ignore[method-assign]
-        api_semaphore.release = _track_api_release  # type: ignore[method-assign]
-        local_semaphore.acquire = _track_local_acquire  # type: ignore[method-assign]
-        local_semaphore.release = _track_local_release  # type: ignore[method-assign]
-
         from orchid.multi import _install_semaphore_wrapper
 
-        with patch.object(_models, "call", return_value="result"):
-            _install_semaphore_wrapper(api_semaphore, local_semaphore)
+        with (
+            patch.object(_models, "call", return_value="result"),
+            patch("orchid.providers.registry.get_registry", return_value=_make_mock_registry()),
+        ):
+            _install_semaphore_wrapper(api_sem, local_sem)
 
-            # Claude call should acquire/release api_semaphore, not local
             _models.call([], model_key="claude")
             assert api_calls == ["acquire", "release"]
             assert local_calls == []
 
-            # Local call should acquire/release local_semaphore, not api
             _models.call([], model_key="local")
-            assert api_calls == ["acquire", "release"]  # unchanged
+            assert api_calls == ["acquire", "release"]   # unchanged
             assert local_calls == ["acquire", "release"]
+    finally:
+        _models.call = original_call
+
+
+def test_local_semaphore_used_for_ollama():
+    """_install_semaphore_wrapper routes OllamaProvider calls to local_semaphore."""
+    import orchid.tools.models as _models
+
+    original_call = _models.call
+    api_sem, api_calls = _make_semaphore_tracker(multiprocessing.Semaphore(2))
+    local_sem, local_calls = _make_semaphore_tracker(multiprocessing.Semaphore(1))
+
+    try:
+        from orchid.multi import _install_semaphore_wrapper
+
+        with (
+            patch.object(_models, "call", return_value="result"),
+            patch("orchid.providers.registry.get_registry", return_value=_make_mock_registry()),
+        ):
+            _install_semaphore_wrapper(api_sem, local_sem)
+
+            _models.call([], model_key="ollama")
+            assert local_calls == ["acquire", "release"]
+            assert api_calls == []
+    finally:
+        _models.call = original_call
+
+
+def test_semaphore_fallback_on_registry_error():
+    """When registry lookup fails, falls back to model_key == 'local' heuristic."""
+    import orchid.tools.models as _models
+
+    original_call = _models.call
+    api_sem, api_calls = _make_semaphore_tracker(multiprocessing.Semaphore(2))
+    local_sem, local_calls = _make_semaphore_tracker(multiprocessing.Semaphore(1))
+
+    broken_registry = MagicMock()
+    broken_registry.get_by_key.side_effect = RuntimeError("registry unavailable")
+
+    try:
+        from orchid.multi import _install_semaphore_wrapper
+
+        with (
+            patch.object(_models, "call", return_value="result"),
+            patch("orchid.providers.registry.get_registry", return_value=broken_registry),
+        ):
+            _install_semaphore_wrapper(api_sem, local_sem)
+
+            # "local" → local_semaphore via fallback heuristic
+            _models.call([], model_key="local")
+            assert local_calls == ["acquire", "release"]
+            assert api_calls == []
+
+            # "claude" → api_semaphore via fallback heuristic
+            _models.call([], model_key="claude")
+            assert api_calls == ["acquire", "release"]
     finally:
         _models.call = original_call
 

@@ -549,7 +549,7 @@ class SlackBot:
                 f"Message: {message}"
             )
             from orchid.providers.registry import get_registry
-            _model_key = "local" if get_registry().offline_mode else "claude"
+            _model_key = get_registry().resolve_name(agent_type="base")
             response = call(
                 [Message("user", prompt)],
                 model_key=_model_key,

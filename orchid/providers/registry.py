@@ -30,8 +30,11 @@ def reset_registry() -> None:
 
 
 # ── Resolution defaults ───────────────────────────────────────────────────────
+# These Python dicts are emergency fallbacks only — used when the config file
+# is missing or a key is absent.  The authoritative defaults live in
+# orchid.defaults.yaml under providers.agent_defaults / providers.task_type_defaults,
+# where they can be changed without touching code.
 
-# Hardcoded agent-type → provider fallbacks (layer 5)
 _AGENT_DEFAULTS: dict[str, str] = {
     "orchestrator":    "claude",
     "reviewer":        "claude",
@@ -44,19 +47,19 @@ _AGENT_DEFAULTS: dict[str, str] = {
     "project_manager": "claude",
 }
 
-# Hardcoded task-type → provider fallbacks (used when no agent-type config found)
 _TASK_TYPE_DEFAULTS: dict[str, str] = {
-    "orchestrate": "claude",
-    "review":      "claude",
-    "critique":    "claude",
-    "plan":        "claude",
-    "synthesize":  "claude",
-    "draft":       "local",
+    "orchestrate":   "claude",
+    "review":        "claude",
+    "critique":      "claude",
+    "plan":          "claude",
+    "synthesize":    "claude",
+    "rollup":        "claude",
+    "draft":         "local",
     "code_generate": "local",
-    "summarize":   "local",
-    "search":      "local",
-    "transform":   "local",
-    "research":    "local",
+    "summarize":     "local",
+    "search":        "local",
+    "transform":     "local",
+    "research":      "local",
 }
 
 
@@ -196,17 +199,19 @@ class ProviderRegistry:
         task_type: str | None = None,
         task_model: str | None = None,
         cli_override: str | None = None,
+        task_title: str = "",
     ) -> str:
-        """Return the provider name to use, following the 7-layer priority chain.
+        """Return the provider name to use, following the 8-layer priority chain.
 
         Priority (highest to lowest):
           1. CLI --provider flag
-          2. Task model: annotation  (model:claude in tasks.md)
-          3. Project .orchid.yaml providers.<agent_name>
-          4. Machine env ORCHID_<AGENT_TYPE>_PROVIDER
-          5. Project .orchid.yaml providers.task_types.<task_type>
-          6. Hardcoded task-type default
-          7. Hardcoded agent-type default
+          2. Project .orchid.yaml providers.<agent_name>  ← project policy wins
+          3. Project .orchid.yaml providers.task_types.<task_type>
+          4. Task model: annotation  (model:claude in tasks.md)
+          5. Machine env ORCHID_<AGENT_TYPE>_PROVIDER
+          5b. Keyword-heuristic escalation (routing.escalation config)
+          6. Config task-type default  (providers.task_type_defaults in orchid.defaults.yaml)
+          7. Config agent-type default (providers.agent_defaults in orchid.defaults.yaml)
         """
         if self._offline_mode:
             return "local"
@@ -217,31 +222,49 @@ class ProviderRegistry:
         if cli_override and cli_override not in ("", "auto"):
             return cli_override
 
-        # 2. Task model: annotation (model:claude / model:local in tasks.md)
-        if task_model and task_model not in ("", "auto"):
-            return task_model
-
-        # 3. Project config: providers.<agent_name> (agent_name falls back to agent_type)
+        # 2. Project config: providers.<agent_name> (agent_name falls back to agent_type)
         _name_key = agent_name or agent_type
         proj_val = cfg.get(f"providers.{_name_key}")
         if proj_val and isinstance(proj_val, str):
             return proj_val
 
-        # 4. Machine env: ORCHID_<AGENT_TYPE>_PROVIDER
-        env_val = os.environ.get(f"ORCHID_{agent_type.upper()}_PROVIDER", "")
-        if env_val:
-            return env_val
-
-        # 5. Project config: providers.task_types.<task_type>
+        # 3. Project config: providers.task_types.<task_type>
         if task_type:
             task_val = cfg.get(f"providers.task_types.{task_type}")
             if task_val and isinstance(task_val, str):
                 return task_val
-            # 6. Hardcoded task-type default
+
+        # 4. Task model: annotation (model:claude / model:local in tasks.md)
+        if task_model and task_model not in ("", "auto"):
+            return task_model
+
+        # 5. Machine env: ORCHID_<AGENT_TYPE>_PROVIDER
+        env_val = os.environ.get(f"ORCHID_{agent_type.upper()}_PROVIDER", "")
+        if env_val:
+            return env_val
+
+        # 5b. Keyword-heuristic escalation — only fires when no explicit override set above
+        if task_title:
+            escalation_cfg = cfg.get("routing.escalation", {})
+            if escalation_cfg.get("enabled", True):
+                threshold = int(escalation_cfg.get("threshold", 1))
+                keywords = escalation_cfg.get("keywords", [])
+                title_lower = task_title.lower()
+                if sum(1 for kw in keywords if kw in title_lower) >= threshold:
+                    return cfg.get("providers.agent_defaults.orchestrator", "claude")
+
+        # 6. Config-driven task-type default (orchid.defaults.yaml providers.task_type_defaults)
+        if task_type:
+            cfg_task_default = cfg.get(f"providers.task_type_defaults.{task_type}")
+            if cfg_task_default and isinstance(cfg_task_default, str):
+                return cfg_task_default
             if task_type in _TASK_TYPE_DEFAULTS:
                 return _TASK_TYPE_DEFAULTS[task_type]
 
-        # 7. Hardcoded agent-type default
+        # 7. Config-driven agent-type default (orchid.defaults.yaml providers.agent_defaults)
+        cfg_agent_default = cfg.get(f"providers.agent_defaults.{agent_type}")
+        if cfg_agent_default and isinstance(cfg_agent_default, str):
+            return cfg_agent_default
         return _AGENT_DEFAULTS.get(agent_type, "local")
 
     def resolve(
@@ -251,9 +274,10 @@ class ProviderRegistry:
         task_type: str | None = None,
         task_model: str | None = None,
         cli_override: str | None = None,
+        task_title: str = "",
     ) -> ProviderBase:
         """Resolve and return a ready ProviderBase for the given context."""
-        name = self.resolve_name(agent_type, agent_name, task_type, task_model, cli_override)
+        name = self.resolve_name(agent_type, agent_name, task_type, task_model, cli_override, task_title)
         return self._get(name)
 
     def get_by_key(self, model_key: str) -> ProviderBase:

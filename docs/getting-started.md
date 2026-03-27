@@ -8,8 +8,8 @@ Orchid is an AI agent orchestration tool. You install it once and point it at an
 
 - Python 3.12+
 - [uv](https://github.com/astral-sh/uv) package manager
-- An Anthropic API key (for planning, discussion, review, and critique tasks)
-- Optionally: [llama.cpp](https://github.com/ggerganov/llama.cpp) running locally on port 8080 (for code generation and drafting without the API)
+- Optionally: an Anthropic API key — used by default for planning, discussion, review, and critique agents. All agents can be redirected to a local model via `providers.agent_defaults` in `.orchid.yaml`; no API key is required for fully-local operation.
+- Optionally: [llama.cpp](https://github.com/ggerganov/llama.cpp) running locally on port 8080 (for code generation, drafting, and any agent overridden to `local`)
 
 ---
 

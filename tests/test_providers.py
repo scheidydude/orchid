@@ -181,14 +181,9 @@ def test_resolve_name_offline_mode_returns_local():
 
 
 def test_resolve_name_task_model_annotation():
-    """Task model: annotation (layer 2) beats per-agent config (layer 3)."""
-    def _fake_get(key, default=None):
-        if key == "providers.discussion":
-            return "local"
-        return default
-
+    """Task model: annotation (layer 4) is used when no project config override exists."""
     registry = _load_registry_patched()
-    with patch("orchid.config.get", side_effect=_fake_get):
+    with patch("orchid.config.get", return_value={}):
         name = registry.resolve_name("discussion", task_model="claude")
     assert name == "claude"
 
@@ -232,7 +227,7 @@ def test_per_agent_override_beats_type_default():
 
 
 def test_cli_flag_beats_per_agent_override():
-    """CLI --provider flag (layer 1) beats providers.<agent_name> from config (layer 3)."""
+    """CLI --provider flag (layer 1) beats providers.<agent_name> from config (layer 2)."""
     def _fake_get(key, default=None):
         if key == "providers.discussion":
             return "local"
@@ -242,6 +237,377 @@ def test_cli_flag_beats_per_agent_override():
     with patch("orchid.config.get", side_effect=_fake_get):
         name = registry.resolve_name("discussion", cli_override="ollama")
     assert name == "ollama"
+
+
+def test_project_config_beats_task_annotation():
+    """Project .orchid.yaml providers (layer 2) wins over task model: annotation (layer 4)."""
+    def _fake_get(key, default=None):
+        if key == "providers.reviewer":
+            return "local"
+        return default
+
+    registry = _load_registry_patched()
+    with patch("orchid.config.get", side_effect=_fake_get):
+        name = registry.resolve_name("reviewer", task_model="claude")
+    assert name == "local"
+
+
+def test_rollup_respects_project_provider_override():
+    """Rollup uses providers.task_types.rollup override if set in project config."""
+    def _fake_get(key, default=None):
+        if key == "providers.task_types.rollup":
+            return "local"
+        return default
+
+    registry = _load_registry_patched()
+    with patch("orchid.config.get", side_effect=_fake_get):
+        name = registry.resolve_name("base", task_type="rollup")
+    assert name == "local"
+
+
+def test_rollup_default_comes_from_task_type_defaults():
+    """Rollup falls through to providers.task_type_defaults.rollup (no special-case code)."""
+    def _fake_get(key, default=None):
+        if key == "providers.task_type_defaults.rollup":
+            return "claude"
+        return default
+
+    registry = _load_registry_patched()
+    with patch("orchid.config.get", side_effect=_fake_get):
+        name = registry.resolve_name("base", task_type="rollup")
+    assert name == "claude"
+
+
+def test_reviewer_project_config_overrides_type_default():
+    """providers.reviewer: local in project .orchid.yaml beats review task-type default.
+
+    Regression test: _execute_task previously only checked providers.<agent_name>
+    at layer 2, missing providers.agent_defaults.<agent_type> at layer 7.  Now both
+    code paths go through resolve_name() so all layers are always consulted.
+    """
+    # Layer 2: providers.reviewer set to "local" in project config
+    def _fake_get(key, default=None):
+        if key == "providers.reviewer":
+            return "local"
+        if key == "providers.task_type_defaults.review":
+            return "claude"   # default would be claude
+        return default
+
+    registry = _load_registry_patched()
+    with patch("orchid.config.get", side_effect=_fake_get):
+        name = registry.resolve_name("reviewer", agent_name="reviewer", task_type="review")
+    # project config (layer 2) must win over task_type_default (layer 6)
+    assert name == "local", f"Expected 'local' from providers.reviewer, got {name!r}"
+
+
+def test_reviewer_agent_defaults_config_driven_layer7():
+    """providers.agent_defaults.reviewer is read from config at layer 7 (no task_type conflict)."""
+    def _fake_get(key, default=None):
+        if key == "providers.agent_defaults.reviewer":
+            return "local"
+        return default
+
+    registry = _load_registry_patched()
+    with patch("orchid.config.get", side_effect=_fake_get):
+        # No task_type passed — layer 6 (task_type_defaults) is skipped entirely,
+        # so layer 7 (agent_defaults.reviewer) must return "local".
+        name = registry.resolve_name("reviewer", agent_name="reviewer")
+    assert name == "local", f"Expected 'local' from providers.agent_defaults.reviewer, got {name!r}"
+
+
+def test_keyword_heuristic_escalates_to_claude():
+    """Keyword heuristic (layer 5b) escalates complex task titles to claude."""
+    def _fake_get(key, default=None):
+        if key == "routing.escalation":
+            return {"enabled": True, "threshold": 1, "keywords": ["authentication"]}
+        if key == "providers.agent_defaults.orchestrator":
+            return "claude"
+        return default
+
+    registry = _load_registry_patched()
+    with patch("orchid.config.get", side_effect=_fake_get):
+        name = registry.resolve_name(
+            "developer", task_type="code_generate",
+            task_title="implement JWT authentication",
+        )
+    assert name == "claude"
+
+
+def test_keyword_heuristic_overridden_by_project_config():
+    """Project config (layer 2) beats keyword heuristic (layer 5b)."""
+    def _fake_get(key, default=None):
+        if key == "providers.developer":
+            return "local"
+        if key == "routing.escalation":
+            return {"enabled": True, "threshold": 1, "keywords": ["authentication"]}
+        return default
+
+    registry = _load_registry_patched()
+    with patch("orchid.config.get", side_effect=_fake_get):
+        name = registry.resolve_name(
+            "developer", task_type="code_generate",
+            task_title="implement JWT authentication",
+        )
+    # project config wins even over keyword escalation
+    assert name == "local"
+
+
+def test_agent_defaults_config_driven_layer7():
+    """Layer 7 reads from providers.agent_defaults in config, not hardcoded Python only."""
+    def _fake_get(key, default=None):
+        if key == "providers.agent_defaults.orchestrator":
+            return "bedrock"
+        return default
+
+    registry = _load_registry_patched()
+    with patch("orchid.config.get", side_effect=_fake_get):
+        name = registry.resolve_name("orchestrator")
+    assert name == "bedrock"
+
+
+def test_task_type_defaults_config_driven_layer6():
+    """Layer 6 reads from providers.task_type_defaults in config, not hardcoded Python only."""
+    def _fake_get(key, default=None):
+        if key == "providers.task_type_defaults.review":
+            return "ollama"
+        return default
+
+    registry = _load_registry_patched()
+    with patch("orchid.config.get", side_effect=_fake_get):
+        name = registry.resolve_name("reviewer", task_type="review")
+    # layer 2 (providers.reviewer) returns nothing; layer 6 config should win
+    assert name == "ollama"
+
+
+def test_python_dict_fallback_when_config_missing():
+    """When config returns nothing for agent_defaults, Python dict fallback is used."""
+    registry = _load_registry_patched()
+    with patch("orchid.config.get", return_value={}):
+        assert registry.resolve_name("reviewer") == _AGENT_DEFAULTS["reviewer"]
+        assert registry.resolve_name("developer") == _AGENT_DEFAULTS["developer"]
+        assert registry.resolve_name("unknown_agent") == "local"
+
+
+def test_cli_flag_still_beats_project_config():
+    """CLI --provider flag (layer 1) overrides project .orchid.yaml providers (layer 2)."""
+    def _fake_get(key, default=None):
+        if key == "providers.orchestrator":
+            return "local"
+        return default
+
+    registry = _load_registry_patched()
+    with patch("orchid.config.get", side_effect=_fake_get):
+        name = registry.resolve_name("orchestrator", cli_override="bedrock")
+    assert name == "bedrock"
+
+
+def test_orchestrator_respects_project_provider_override():
+    """_plan_task() routes through the provider registry, not hardcoded 'claude'.
+
+    When .orchid.yaml sets providers.orchestrator: local the planning call
+    must use 'local', not 'claude'.  Also verifies that a cli_provider_overrides
+    entry for 'orchestrator' takes priority over the project config.
+    """
+    from dataclasses import dataclass, field
+    from pathlib import Path
+    from unittest.mock import MagicMock, patch
+
+    from orchid.memory.state import Task
+    from orchid.orchestrator import Orchestrator
+
+    # Minimal Task for planning
+    task = Task(id="T001", title="Build widget", description="Make a widget.")
+
+    # Minimal Session mock — only context_block() is called by _plan_task
+    mock_session = MagicMock()
+    mock_session.project_dir = Path("/tmp/fake-project")
+    mock_session.context_block.return_value = ""
+
+    def _project_cfg(key, default=None):
+        if key == "providers.orchestrator":
+            return "local"
+        return default
+
+    # Case 1: project config override — should use 'local' not 'claude'
+    with (
+        patch("orchid.config.get", side_effect=_project_cfg),
+        patch("orchid.orchestrator.call", return_value="plan text") as mock_call,
+        patch("orchid.providers.registry.get_registry", return_value=_load_registry_patched()),
+    ):
+        orch = Orchestrator(session=mock_session)
+        result = orch._plan_task(task)
+
+    assert result == "plan text"
+    _, kwargs = mock_call.call_args
+    assert kwargs["model_key"] == "local", (
+        f"Expected model_key='local' (from providers.orchestrator), got {kwargs['model_key']!r}"
+    )
+
+    # Case 2: cli_provider_overrides beats project config
+    with (
+        patch("orchid.config.get", side_effect=_project_cfg),
+        patch("orchid.orchestrator.call", return_value="plan text") as mock_call,
+        patch("orchid.providers.registry.get_registry", return_value=_load_registry_patched()),
+    ):
+        orch = Orchestrator(session=mock_session, cli_provider_overrides={"orchestrator": "ollama"})
+        orch._plan_task(task)
+
+    _, kwargs = mock_call.call_args
+    assert kwargs["model_key"] == "ollama", (
+        f"Expected model_key='ollama' (CLI override), got {kwargs['model_key']!r}"
+    )
+
+
+# ── 4b. session / slack_bot / cli registry routing ────────────────────────────
+
+
+def test_session_hot_memory_compression_respects_provider_config():
+    """_maybe_compress_hot_memory uses resolve_name('base'), not hardcoded 'claude'.
+
+    When providers.base is overridden in config the compression call must use it.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from orchid.session import Session
+
+    def _cfg(key, default=None):
+        if key == "providers.base":
+            return "local"
+        if key == "memory.compression_threshold":
+            return 5  # very low so compression triggers
+        return default
+
+    session = MagicMock(spec=Session)
+    session.hot_memory = "x" * 10  # exceeds threshold of 5
+
+    with (
+        patch("orchid.config.get", side_effect=_cfg),
+        patch("orchid.tools.models.call", return_value="compressed") as mock_call,
+        patch("orchid.providers.registry.get_registry", return_value=_load_registry_patched()),
+    ):
+        # Call the real method on the real class, but with our mock session as self
+        Session._maybe_compress_hot_memory(session)
+
+    _, kwargs = mock_call.call_args
+    assert kwargs["model_key"] == "local", (
+        f"Expected 'local' from providers.base config, got {kwargs['model_key']!r}"
+    )
+
+
+def test_session_hot_memory_offline_uses_local():
+    """When registry is in offline mode, compression uses 'local'."""
+    from unittest.mock import MagicMock, patch
+
+    from orchid.session import Session
+
+    offline_registry = _load_registry_patched()
+    offline_registry.set_offline(True)
+
+    session = MagicMock(spec=Session)
+    session.hot_memory = "x" * 100
+
+    with (
+        patch("orchid.config.get", side_effect=lambda k, d=None: 5 if k == "memory.compression_threshold" else d),
+        patch("orchid.tools.models.call", return_value="compressed") as mock_call,
+        patch("orchid.providers.registry.get_registry", return_value=offline_registry),
+    ):
+        Session._maybe_compress_hot_memory(session)
+
+    _, kwargs = mock_call.call_args
+    assert kwargs["model_key"] == "local"
+
+
+def test_slack_intent_parsing_respects_provider_config():
+    """_parse_intent LLM fallback uses resolve_name('base'), not hardcoded 'claude'.
+
+    We pass a message that doesn't match any rule-based pattern so the LLM path runs.
+    """
+    from unittest.mock import MagicMock, patch
+
+    def _cfg(key, default=None):
+        if key == "providers.base":
+            return "local"
+        return default
+
+    with (
+        patch("orchid.config.get", side_effect=_cfg),
+        patch("orchid.tools.models.call", return_value='{"intent": "status", "arg": ""}') as mock_call,
+        patch("orchid.providers.registry.get_registry", return_value=_load_registry_patched()),
+    ):
+        from orchid.interfaces.slack_bot import SlackBot
+        bot = MagicMock(spec=SlackBot)
+        # Use a message that bypasses all rule-based patterns, hitting the LLM fallback
+        result = SlackBot._parse_intent(bot, "I'd like to know what's going on with the project")
+
+    assert mock_call.called, "LLM fallback was never reached (rule-based matched first)"
+    _, kwargs = mock_call.call_args
+    assert kwargs["model_key"] == "local", (
+        f"Expected 'local' from providers.base config, got {kwargs['model_key']!r}"
+    )
+
+
+def test_cli_interactive_uses_registry_default(tmp_path):
+    """_cmd_interactive with no model arg uses resolve_name('base'), not hardcoded 'claude'."""
+    from unittest.mock import MagicMock, patch
+
+    from orchid.interfaces.cli import _cmd_interactive
+
+    def _cfg(key, default=None):
+        if key == "providers.base":
+            return "local"
+        return default
+
+    mock_session = MagicMock()
+    mock_session.project_name = "test"
+    mock_session.context_block.return_value = ""
+
+    captured_model_key: list[str] = []
+
+    def _fake_agent_run(self, prompt):
+        captured_model_key.append(self.model_key)
+        return "response"
+
+    with (
+        patch("orchid.config.get", side_effect=_cfg),
+        patch("orchid.providers.registry.get_registry", return_value=_load_registry_patched()),
+        patch("orchid.interfaces.cli._make_session", return_value=mock_session),
+        patch("orchid.agents.base.BaseAgent.run", _fake_agent_run),
+        patch("orchid.interfaces.cli.Prompt.ask", side_effect=["hello", EOFError]),
+        patch("orchid.interfaces.cli.console"),
+    ):
+        _cmd_interactive(str(tmp_path))
+
+    assert captured_model_key, "Agent.run was never called"
+    assert captured_model_key[0] == "local", (
+        f"Expected model_key='local' from registry, got {captured_model_key[0]!r}"
+    )
+
+
+def test_cli_interactive_honours_explicit_model(tmp_path):
+    """_cmd_interactive with model='ollama' uses that directly without registry lookup."""
+    from unittest.mock import MagicMock, patch
+
+    from orchid.interfaces.cli import _cmd_interactive
+
+    mock_session = MagicMock()
+    mock_session.project_name = "test"
+    mock_session.context_block.return_value = ""
+
+    captured_model_key: list[str] = []
+
+    def _fake_agent_run(self, prompt):
+        captured_model_key.append(self.model_key)
+        return "response"
+
+    with (
+        patch("orchid.interfaces.cli._make_session", return_value=mock_session),
+        patch("orchid.agents.base.BaseAgent.run", _fake_agent_run),
+        patch("orchid.interfaces.cli.Prompt.ask", side_effect=["hello", EOFError]),
+        patch("orchid.interfaces.cli.console"),
+    ):
+        _cmd_interactive(str(tmp_path), model="ollama")
+
+    assert captured_model_key[0] == "ollama"
 
 
 # ── 5. AnthropicProvider ──────────────────────────────────────────────────────

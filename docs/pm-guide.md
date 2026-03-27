@@ -15,7 +15,8 @@ A comprehensive walkthrough of the idea-to-execution pipeline in Orchid V2.
 7. [Understanding Task Statuses](#understanding-task-statuses)
 8. [Mobile Monitoring with Telegram and Slack](#mobile-monitoring-with-telegram-and-slack)
 9. [Reading Milestone Summaries](#reading-milestone-summaries)
-10. [Glossary of Terms](#glossary-of-terms)
+10. [Configuring Fully-Local Operation](#configuring-fully-local-operation)
+11. [Glossary of Terms](#glossary-of-terms)
 
 ---
 
@@ -473,6 +474,190 @@ Each summary includes:
 
 ---
 
+## Configuring Fully-Local Operation
+
+Orchid V2 supports running with fully-local AI models for maximum privacy and zero API costs. You can configure per-agent model routing via your project's `.orchid.yaml` file.
+
+### Understanding Provider Resolution Order
+
+When Orchid needs to select a model for an agent, it checks sources in this priority order (highest priority first):
+
+| Priority | Source | Example |
+|----------|--------|---------|
+| **1** | CLI `--provider` flag | `--provider developer=ollama` |
+| **2** | `.orchid.yaml` project config | `providers: developer: local` |
+| **3** | Task `model:` annotation | `` `model:claude` `` in tasks.md |
+| **4** | Task-type default | `code_generate` → local |
+| **5** | Agent hardcoded default | `reviewer` → claude |
+
+**Key Takeaway:** CLI flags always win, followed by your `.orchid.yaml` configuration, then task-level annotations, then built-in defaults.
+
+### Example: All-Local PM Planning with Claude for Final Review
+
+This configuration uses local models for all planning and development work, reserving Claude only for final code review:
+
+```yaml
+# my-project/.orchid.yaml
+providers:
+  # PM Planning phases — all local
+  discussion: local
+  product_manager: local
+  project_manager: local
+  
+  # Development — local
+  developer: local
+  
+  # Code review — Claude for quality
+  reviewer: claude
+  
+  # Supporting agents — local
+  researcher: local
+  tester: local
+  orchestrator: local
+```
+
+**What This Does:**
+- Discussion chat runs on your local model (no API calls)
+- REQUIREMENTS.md generation uses local model
+- ARCHITECTURE.md generation uses local model
+- All code generation uses local model
+- Final code review still uses Claude for highest quality
+
+**Benefits:**
+- ✅ Zero API costs during exploration and development
+- ✅ Works in air-gapped environments
+- ✅ Full privacy — no data leaves your machine during planning
+- ✅ Still gets Claude's quality for critical code review
+
+### Example: Fully Local (No Cloud Dependencies)
+
+For completely offline operation with no cloud API calls:
+
+```yaml
+# my-project/.orchid.yaml
+providers:
+  discussion: local
+  product_manager: local
+  project_manager: local
+  developer: local
+  reviewer: local
+  researcher: local
+  tester: local
+  orchestrator: local
+```
+
+**Note:** When running fully local, ensure your local model provider (e.g., Ollama, LM Studio) is running and accessible.
+
+### Example: Hybrid Development Workflow
+
+Use Claude for planning (better reasoning) and local for code generation (faster, cheaper):
+
+```yaml
+# my-project/.orchid.yaml
+providers:
+  # Planning — Claude for better reasoning
+  discussion: claude
+  product_manager: claude
+  project_manager: claude
+  
+  # Development — local for speed and cost
+  developer: local
+  reviewer: local
+  researcher: local
+  tester: local
+  orchestrator: local
+```
+
+### Overriding at Runtime with CLI Flags
+
+You can override `.orchid.yaml` settings temporarily with CLI flags:
+
+```bash
+# Override developer to use ollama specifically
+orchid --project . --provider developer=ollama
+
+# Override multiple agents
+orchid --project . --provider developer=local --provider reviewer=claude
+
+# Full offline mode (overrides everything to local)
+orchid --project . --offline
+```
+
+**CLI flags take precedence over `.orchid.yaml`**, so use them for one-off experiments without changing your config file.
+
+### Task-Level Model Annotations
+
+You can also specify a model per-task in `tasks.md`:
+
+```markdown
+- [ ] **T001** Implement login feature `type:code_generate` `p1` `model:claude`
+- [ ] **T002** Write documentation `type:draft` `p2` `model:local`
+```
+
+This is useful for:
+- Critical tasks that need Claude's quality
+- Simple tasks that can use local models
+- Fine-grained control without changing `.orchid.yaml`
+
+**Resolution:** Task annotations are checked after `.orchid.yaml` but before task-type defaults.
+
+### Configuring Local Model Providers
+
+Orchid supports several local model backends. Configure them in your global `~/.orchid.yaml`:
+
+```yaml
+# ~/.orchid.yaml (global configuration)
+providers:
+  local:
+    type: ollama
+    model: llama3.2
+    base_url: http://localhost:11434
+```
+
+Or for LM Studio:
+
+```yaml
+providers:
+  local:
+    type: lmstudio
+    model: llama-3.2
+    base_url: http://localhost:1234
+```
+
+**Available Local Providers:**
+- **ollama** — Run Ollama models locally
+- **lmstudio** — Use LM Studio server
+- **vllm** — High-performance local inference
+
+### Verifying Your Configuration
+
+After updating `.orchid.yaml`, verify the configuration:
+
+```bash
+# Check which models will be used
+orchid --check-providers --project .
+
+# Start in offline mode to test local-only operation
+orchid --project . --offline
+```
+
+### Troubleshooting
+
+**"No provider found for agent X"**
+- Ensure the agent name is correct in `.orchid.yaml`
+- Check that the provider (e.g., `local`, `claude`) is configured
+
+**"Local model not responding"**
+- Verify your local model server is running
+- Check `base_url` matches your server address
+- Test with `curl http://localhost:11434` (for Ollama)
+
+**"CLI flag not taking effect"**
+- Remember: CLI flags override `.orchid.yaml`
+- Use `--provider agent_name=model_name` format
+
+---
+
 ## Glossary of Terms
 
 ### Task Types
@@ -557,57 +742,7 @@ Each summary includes:
 | Check project status | Web UI Execution tab or `/orchid_projects` |
 | Approve a plan | Web UI Approval tab or `/orchid_approve` |
 | View milestone summary | Read `MILESTONE-N.md` files |
-
----
-
-## Configuring AI Models Per Agent
-
-By default Orchid routes planning work (Discussion, Requirements, Planning) to Claude
-and bulk code generation to a local model. You can override this per-agent in your
-project's `.orchid.yaml` without changing any CLI flags.
-
-### Running PM Planning Locally (No Cloud API)
-
-To use a local model for all PM planning phases — useful for air-gapped environments
-or to save API costs during exploration:
-
-```yaml
-# my-project/.orchid.yaml
-providers:
-  discussion: local
-  product_manager: local
-  project_manager: local
-  developer: local
-  reviewer: claude   # keep code review on claude for quality
-```
-
-After saving `.orchid.yaml`, restart Orchid. The Discussion, Requirements, and Planning
-phases will call your local model instead of Claude.
-
-### Resolution Priority
-
-Orchid resolves the model for each agent using this priority order (highest wins):
-
-| Priority | Source | Example |
-|----------|--------|---------|
-| 1 | CLI `--provider` flag | `--provider developer=ollama` |
-| 2 | Task `model:` annotation | `` `model:claude` `` in tasks.md |
-| 3 | `.orchid.yaml` `providers.<agent>` | `providers: discussion: local` |
-| 4 | Task-type default | `code_generate` → local |
-| 5 | Agent hardcoded default | `reviewer` → claude |
-
-### Available Agent Names
-
-| Agent Name | Default | Role |
-|------------|---------|------|
-| `discussion` | claude | Requirement elicitation chat |
-| `product_manager` | claude | Generates REQUIREMENTS.md and ARCHITECTURE.md |
-| `project_manager` | claude | Generates MILESTONES.md and tasks.md |
-| `developer` | local | Writes code |
-| `reviewer` | claude | Reviews and critiques code |
-| `researcher` | local | Web search and summarization |
-| `tester` | local | Runs tests and syntax checks |
-| `orchestrator` | claude | Plans and decomposes complex tasks |
+| Configure local models | Edit `.orchid.yaml` providers section |
 
 ---
 

@@ -192,36 +192,39 @@ class Orchestrator:
     def _execute_task(self, task: Task) -> dict[str, Any]:
         from orchid.providers.base import ProviderUnavailableError
 
+        # Re-assert project config before every task — the global _config singleton can
+        # be overwritten by concurrent API requests (e.g. GET /api/projects polling
+        # _load_session for multiple projects). Without this, provider routing reads
+        # the wrong project's config and routes tasks to the wrong provider.
+        cfg.configure_for_project(self.session.project_dir)
+
         # Resolve agent type for per-agent-type provider overrides
         agent_cls = self._resolve_agent(task)
         agent_type = getattr(agent_cls, "agent_type", "base")
 
         # Check per-agent-type CLI override first
         per_agent_override = self.cli_provider_overrides.get(agent_type)
+        _agent_name = getattr(agent_cls, "agent_name", agent_type)
 
-        # Resolve routing before execution and log the decision
-        decision = route(
+        # Resolve provider through the full registry chain — single source of truth.
+        # Replaces the old route() + manual per-agent override block, which missed
+        # providers.agent_defaults, env vars, task_type overrides, and keyword heuristics
+        # all in the same place.
+        from orchid.providers.registry import get_registry as _get_provider_registry
+        from orchid.tools.models import RouteDecision
+        _provider_name = _get_provider_registry().resolve_name(
+            agent_type=agent_type,
+            agent_name=_agent_name,
             task_type=task.type,
-            task_model_override=task.model_override,
+            task_model=task.model_override,
             cli_override=per_agent_override or self.cli_model_override,
             task_title=task.title,
         )
-
-        # Per-agent .orchid.yaml override (layer 3 in registry chain):
-        # beats route() defaults and heuristic, but not CLI flag or task annotation.
-        if decision.source in ("default", "heuristic"):
-            _agent_name = getattr(agent_cls, "agent_name", agent_type)
-            _per_agent_cfg = cfg.get(f"providers.{_agent_name}")
-            if _per_agent_cfg and isinstance(_per_agent_cfg, str) and _per_agent_cfg not in ("auto",):
-                decision = decision.__class__(
-                    model=_per_agent_cfg,
-                    reason=f"per-agent config providers.{_agent_name}",
-                    source="project_config",
-                )
+        decision = RouteDecision(model=_provider_name, reason="registry", source="registry")
 
         # Offline mode forces local regardless of routing
         if self.offline_mode:
-            decision = decision.__class__(model="local", reason="offline mode", source="cli_flag")
+            decision = RouteDecision(model="local", reason="offline mode", source="cli_flag")
 
         logger.info(
             "Routing %s → %s (reason: %s, source: %s)",
@@ -322,7 +325,7 @@ class Orchestrator:
                     task_id=task.id,
                     status="blocked" if is_failure else "done",
                     completed_iters=_ts.get("completed_iters", 0),
-                    max_iter=cfg.get("agents.max_react_iterations", 15),
+                    max_iter=cfg.get("agents.max_react_iterations", 25),
                     action_counts=dict(_ts.get("action_counts", {})),
                     elapsed=_task_run_elapsed,
                 )
@@ -402,7 +405,7 @@ class Orchestrator:
         session = self.session
         progress_interval = cfg.get("streaming.telegram_progress_interval", 3)
         trace = self._trace_writer
-        max_iter = cfg.get("agents.max_react_iterations", 15)
+        max_iter = cfg.get("agents.max_react_iterations", 25)
 
         # Mutable state for trace bookkeeping and metrics
         _state: dict[str, Any] = {
@@ -462,7 +465,7 @@ class Orchestrator:
         return _cb
 
     def _plan_task(self, task: Task) -> str:
-        """Use Claude to produce a step-by-step plan for complex tasks."""
+        """Produce a step-by-step plan for complex tasks via the provider registry."""
         prompt = (
             f"You are orchestrating a software project. Break down this task into clear steps.\n\n"
             f"Task: {task.title}\n"
@@ -470,9 +473,14 @@ class Orchestrator:
             f"Project context:\n{self.session.context_block()[:1500]}\n\n"
             "Output a numbered list of concrete steps. Be brief."
         )
+        from orchid.providers.registry import get_registry as get_provider_registry
+        model_key = get_provider_registry().resolve_name(
+            agent_type="orchestrator",
+            cli_override=self.cli_provider_overrides.get("orchestrator") or self.cli_model_override,
+        )
         return call(
             messages=[Message("user", prompt)],
-            model_key="claude",
+            model_key=model_key,
             system="You are a software project orchestrator.",
         )
 
@@ -547,7 +555,13 @@ class Orchestrator:
             f"Task results:\n{results_text}"
         )
 
-        model_key = "local" if self.offline_mode else "claude"
+        from orchid.providers.registry import get_registry as get_provider_registry
+        model_key = get_provider_registry().resolve_name(
+            agent_type="orchestrator",
+            task_type="rollup",
+            task_model=task.model_override,
+            cli_override=self.cli_model_override,
+        )
         logger.info("Running rollup synthesis for %s with %d source tasks", task.id, len(sources))
         synthesis = call(
             messages=[Message("user", prompt)],
@@ -647,7 +661,7 @@ class Orchestrator:
             "title": task.title,
             "status": status,
             "iters_used": trace_state.get("completed_iters", 0),
-            "iters_max": cfg.get("agents.max_react_iterations", 15),
+            "iters_max": cfg.get("agents.max_react_iterations", 25),
             "duration_s": round(elapsed, 3),
             "action_counts": dict(trace_state.get("action_counts", {})),
             "model": model,
