@@ -43,12 +43,11 @@ class StdioMCPClient(MCPClient):
             stderr=subprocess.PIPE,
             text=True,
         )
-        self._send_request("initialize", {
+        response = self._send_request("initialize", {
             "protocolVersion": "2024-11-05",
             "capabilities": {},
             "clientInfo": {"name": "orchid", "version": "0.1.0"},
         })
-        response = self._read_response()
         if response.get("error"):
             self.disconnect()
             raise MCPClientError(

@@ -20,20 +20,18 @@ class TestStdioMCPClient(unittest.TestCase):
         mock_proc.stdout = MagicMock()
         mock_popen.return_value = mock_proc
 
-        # connect() calls _read_response() TWICE for initialize (lines 46+51),
-        # then _send_request for notifications/initialized (line 58),
-        # then _read_notification (line 59), then list_tools (line 60).
-        # Total = 5 readline calls during connect().
+        # connect() calls _send_request("initialize") [1 read],
+        # _send_request("notifications/initialized") [1 read],
+        # _read_notification() [1 read], list_tools [1 read].
+        # Total = 4 readline calls during connect().
         mock_proc.stdout.readline.side_effect = [
-            # 1st: initialize response (from _send_request in _read_response)
+            # 1st: initialize response (from _send_request)
             '{"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2024-11-05"}}',
-            # 2nd: initialize response (from the extra _read_response call on line 51)
-            '{"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2024-11-05"}}',
-            # 3rd: notifications/initialized response
+            # 2nd: notifications/initialized response
             '{"jsonrpc": "2.0", "id": 2}',
-            # 4th: notification (no id)
+            # 3rd: notification (no id) — consumed by _read_notification
             '{"jsonrpc": "2.0", "method": "notifications/initialized"}',
-            # 5th: tools/list response
+            # 4th: tools/list response
             '{"jsonrpc": "2.0", "id": 3, "result": {"tools": [{"name": "echo", "description": "Echoes a message", "inputSchema": {"type": "object"}}]}}',
         ]
 
@@ -70,10 +68,7 @@ class TestStdioMCPClient(unittest.TestCase):
         mock_proc.stdout = MagicMock()
         mock_popen.return_value = mock_proc
 
-        # connect() calls _read_response() twice for initialize:
-        # 1st from _send_request, 2nd from the extra call on line 51.
         mock_proc.stdout.readline.side_effect = [
-            '{"jsonrpc": "2.0", "id": 1, "error": {"message": "bad protocol", "code": -32600}}',
             '{"jsonrpc": "2.0", "id": 1, "error": {"message": "bad protocol", "code": -32600}}',
         ]
 
@@ -107,19 +102,17 @@ class TestStdioMCPClient(unittest.TestCase):
         mock_proc.stdout = MagicMock()
         mock_popen.return_value = mock_proc
 
-        # connect() needs 5 readline calls, then call_tool needs 1 more
+        # connect() needs 4 readline calls, then call_tool needs 1 more
         mock_proc.stdout.readline.side_effect = [
             # 1st: initialize response (from _send_request)
             '{"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2024-11-05"}}',
-            # 2nd: initialize response (from extra _read_response on line 51)
-            '{"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2024-11-05"}}',
-            # 3rd: notifications/initialized response
+            # 2nd: notifications/initialized response
             '{"jsonrpc": "2.0", "id": 2}',
-            # 4th: notification (no id)
+            # 3rd: notification (no id) — consumed by _read_notification
             '{"jsonrpc": "2.0", "method": "notifications/initialized"}',
-            # 5th: tools/list response (empty)
+            # 4th: tools/list response (empty)
             '{"jsonrpc": "2.0", "id": 3, "result": {"tools": []}}',
-            # 6th: tools/call response
+            # 5th: tools/call response
             '{"jsonrpc": "2.0", "id": 4, "result": {"content": [{"text": "hello world"}], "isError": false}}',
         ]
 

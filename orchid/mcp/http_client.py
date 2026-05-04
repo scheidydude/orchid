@@ -45,11 +45,17 @@ class HTTPMCPClient(MCPClient):
             headers={**self._headers, "Content-Type": "application/json"},
             timeout=self._timeout,
         )
-        self._send_request("initialize", {
+        response = self._send_request("initialize", {
             "protocolVersion": "2024-11-05",
             "capabilities": {},
             "clientInfo": {"name": "orchid", "version": "0.1.0"},
         })
+        if response.get("error"):
+            self.disconnect()
+            raise MCPClientError(
+                f"Initialisation failed: {response['error'].get('message')}",
+                response["error"].get("code", -1),
+            )
         self._send_request("notifications/initialized", {})
         self._tools = self.list_tools()
 

@@ -40,11 +40,11 @@ def rewind_session(
     session = Session(project_dir=project_dir)
     session.load()
 
-    # Restore tasks — keep only tasks that existed before the checkpoint
+    # Restore tasks — keep only tasks that existed at checkpoint time
     checkpoint_task_ids = {t.get("id", "") for t in checkpoint.tasks}
     session.tasks = [
         t for t in session.tasks
-        if t.id in checkpoint_task_ids or t.status == TaskStatus.TODO
+        if t.id in checkpoint_task_ids
     ]
     # Re-assign task statuses from checkpoint
     task_status_map: dict[str, TaskStatus] = {}
@@ -69,6 +69,9 @@ def rewind_session(
 
     # Restore extra context
     session.extra_context = checkpoint.extra_context
+
+    # Restore cache stats
+    session.cache_stats = checkpoint.cache_stats
 
     logger.info(
         "Session rewound to checkpoint %s (task=%s, %d tasks)",
