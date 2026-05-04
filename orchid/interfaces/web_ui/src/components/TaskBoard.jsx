@@ -86,8 +86,8 @@ export default function TaskBoard({ projectId, runStatus }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-        <div style={{ display: 'flex', gap: 4 }}>
+      <div className="task-board-toolbar">
+        <div className="task-filter-bar">
           {['active', 'done', 'skipped', 'all'].map(f => {
             const count = tasks.filter(t => {
               if (f === 'active') return ['TODO', 'IN_PROGRESS', 'BLOCKED'].includes(t.status)

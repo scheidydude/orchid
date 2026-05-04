@@ -102,7 +102,7 @@ export default function Settings() {
               />
             </div>
             {error && <div className="error-msg">{error}</div>}
-            <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+            <div className="settings-form-actions">
               <button className="primary" onClick={save} disabled={saving}>
                 {saving ? 'Saving…' : 'Save'}
               </button>

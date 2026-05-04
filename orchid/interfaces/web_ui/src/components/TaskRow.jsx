@@ -18,7 +18,7 @@ export default function TaskRow({ task, onStatusChange, onRunTask, running }) {
   return (
     <div className={`task-row ${expanded ? 'expanded' : ''}`} onClick={() => setExpanded(x => !x)}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div className="task-row-header" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <span className="task-id">{task.id}</span>
           <span className={`task-status-badge status-${task.status}`}>{task.status.replace('_', ' ')}</span>
           <span className="task-title">{task.title}</span>

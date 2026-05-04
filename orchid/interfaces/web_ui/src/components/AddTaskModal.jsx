@@ -47,7 +47,7 @@ export default function AddTaskModal({ projectId, onClose, onCreated }) {
             <label>Title *</label>
             <input autoFocus value={form.title} onChange={e => set('title', e.target.value)} placeholder="Task description..." />
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div className="modal-grid-2col">
             <div className="modal-field">
               <label>Type</label>
               <select value={form.type} onChange={e => set('type', e.target.value)}>
@@ -63,7 +63,7 @@ export default function AddTaskModal({ projectId, onClose, onCreated }) {
               </select>
             </div>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div className="modal-grid-2col">
             <div className="modal-field">
               <label>Depends on (comma-separated)</label>
               <input value={form.depends_on} onChange={e => set('depends_on', e.target.value)} placeholder="T001,T002" />

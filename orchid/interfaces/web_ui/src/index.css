@@ -718,6 +718,21 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
   color: var(--text);
 }
 
+/* ── Phase 3 component classes (desktop base) ───────────────────────────── */
+
+/* Task board toolbar */
+.task-board-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.task-filter-bar    { display: flex; gap: 4px; }
+
+/* Task row header row (id + badge + title + run btn) */
+.task-row-header { display: flex; gap: 8px; align-items: center; }
+
+/* AddTask modal — 2-column grid */
+.modal-grid-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+/* Settings form action buttons row */
+.settings-form-actions { display: flex; gap: 8px; margin-top: 12px; }
+
 /* ── Sidebar drawer & hamburger (base — hidden on desktop) ──────────────── */
 
 .hamburger-btn {
@@ -838,4 +853,34 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 
   /* Recall form */
   .recall-form { flex-wrap: wrap; }
+
+  /* 16px inputs — prevents iOS Safari auto-zoom on focus */
+  input, select, textarea { font-size: 16px; }
+
+  /* Touch targets — 44px minimum */
+  .project-item  { min-height: 44px; }
+  .task-row      { min-height: 48px; }
+  .run-controls button { min-height: 44px; }
+  button.primary, button.danger { min-height: 44px; }
+
+  /* Task row header — wrap id/badge onto own line when narrow */
+  .task-row-header { flex-wrap: wrap; }
+  .task-row-header .task-title { min-width: 0; word-break: break-word; }
+
+  /* AddTask modal grid — single column */
+  .modal-grid-2col { grid-template-columns: 1fr; }
+
+  /* Modal actions — stack full-width, primary on top */
+  .modal-actions { flex-direction: column-reverse; gap: 8px; }
+  .modal-actions button { min-height: 44px; width: 100%; }
+
+  /* Filter bar — wrap if needed */
+  .task-filter-bar { flex-wrap: wrap; }
+
+  /* Agent stream — smooth momentum scroll on iOS */
+  .agent-stream { -webkit-overflow-scrolling: touch; }
+
+  /* Settings form actions — stack vertically */
+  .settings-form-actions { flex-direction: column; }
+  .settings-form-actions button { min-height: 44px; width: 100%; }
 }
