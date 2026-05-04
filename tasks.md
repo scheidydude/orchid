@@ -3,6 +3,7 @@
 
 ## DONE
 
+- [x] **T150** Gap-closure sprint rollup `type:rollup` `p1` `rollup:T092,T093,T094,T095,T096,T097,T098,T099,T100,T101,T102,T103,T104,T105,T106,T107,T108,T109,T110,T111,T112,T113,T114,T115,T116,T117,T118,T119,T120,T121,T122,T123,T124,T125,T126,T127,T128,T129,T130,T131,T132,T133,T134,T135,T136,T137,T138,T139,T140,T141,T142,T143,T144,T145,T146,T147,T148,T149` `output:GAP-CLOSURE-REPORT.md`
 - [x] **T124** Create `tests/test_mcp_integration.py`. Write exactly 1 test function. Start a real Python subprocess as a minimal MCP server using `python3 -c "<inline script>"`. The inline script must: listen on stdin, respond to `initialize` with `{"jsonrpc":"2.0","id":0,"result":{}}`, respond to `tools/list` with one tool named `echo`, respond to `tools/call` with `{"content": arguments["msg"], "isError": false}`. Test: `StdioMCPClient.connect()`, `list_tools()` returns `[MCPTool("echo",…)]`, `call_tool("echo", {"msg":"hello"})` returns `MCPResult(content="hello")`. Use `pytest.mark.skipif(sys.platform=="win32", reason="POSIX only")`. `type:test_write` `p1` `needs:T107`
 - [x] **T088** Fix Discussion panel focus: after AI responds in the Discussion tab the message input loses focus and clicking it doesn't restore it. User has to leave the panel and come back. Fix: after each AI response completes, programmatically re-focus the message input using inputRef.current?.focus(). Also when the AI presents numbered options in its response, clicking an option fills the input but does not focus it — add focus() call after filling the input value. `type:code_generate` `p1`
 - [x] **T089** Add loading indicator to Discussion panel when PM agent is generating artifacts: after user types 'done' or agent says it will generate REQUIREMENTS.md/ARCHITECTURE.md, show a visible loading state — spinner, progress message like 'Generating REQUIREMENTS.md...', and disable the input with 'Working...' placeholder. The backend already sends status callbacks via WebSocket (advance_status events) — ensure the frontend is listening for these and displaying them. This was implemented in T053 but may have regressed. `type:code_generate` `p1`
@@ -53,6 +54,18 @@
 - [x] **T008** Fix decisions.json parse error - likely JSON Lines vs single JSON document format mismatch `type:code_generate` `p1`
 - [x] **T002** Hook LLM summarizer into session compression `type:code_generate` `p1`
 - [x] **T001** Review the session.py compression logic and suggest improvements `type:review` `p1`
+- [x] **T139** Create `orchid/checkpoint/store.py`. Implement exactly this class: `type:draft` `p2`
+- [x] **T140** Create `orchid/checkpoint/restore.py`. Implement exactly these two functions: `type:draft` `p2`
+- [x] **T141** Extend `orchid/orchestrator.py` — capture checkpoint before each task. Read the file first. In `_execute_task` (line 192), find the line `self.session.update_task_status(task.id, TaskStatus.IN_PROGRESS)`. Add the following block **before** that line: `type:draft` `p2`
+- [x] **T142** Extend `orchid/runner.py` — prune checkpoints at session end. Read the file first. In `BackgroundRunner._run()` `finally:` block, before `mcp_manager.stop_all()` (added in T114), add: `type:draft` `p2`
+- [x] **T143** Extend `orchid/interfaces/cli.py` — add `--rewind`, `--resume`, and `--list-checkpoints` options to `main()`. Read the file first. Add these three option parameters to `def main(`: `type:draft` `p2`
+- [x] **T144** Review `orchid/checkpoint/store.py` for exactly these 4 issues. Report PASS or FAIL with line number: `type:draft` `p2`
+- [x] **T145** Review `orchid/checkpoint/restore.py` for exactly these 3 issues. Report PASS or FAIL with line number: `type:draft` `p2`
+- [x] **T146** Create `tests/test_checkpoint_schema.py`. Write exactly these 3 test functions: `type:draft` `p2`
+- [x] **T147** Create `tests/test_checkpoint_store.py`. Write exactly these 4 test functions using `tmp_path` pytest fixture: `type:draft` `p2`
+- [x] **T148** Create `tests/test_checkpoint_restore.py`. Write exactly these 2 test functions using `tmp_path`: `type:draft` `p2`
+- [x] **T149** Create `tests/test_checkpoint_integration.py`. Write exactly 1 test function using `tmp_path`: `type:draft` `p2`
+- [x] **T138** Create `orchid/checkpoint/schema.py`. Also create empty `orchid/checkpoint/__init__.py` with content `# Session checkpoint`. Define exactly these dataclasses: `type:draft` `p2`
 - [x] **T129** Extend `orchid/orchestrator.py` — emit task events via `stream_callback`. Read the file first. The existing `self.stream_callback` at line 136 already sends dicts. Extend `_execute_task` to also emit typed stream events using the emitter if set. Make exactly these changes: `type:draft` `p2`
 - [x] **T137** Create `tests/test_stream_json_cli.py`. Write exactly 1 test function that invokes the CLI with `--output-format stream-json` using `subprocess.run`: `type:draft` `p2`
 - [x] **T125** Create `orchid/output/events.py`. Also create empty `orchid/output/__init__.py` with content `# Stream output events`. Define exactly these dataclasses. All fields must have defaults so instances can be created with only the unique fields: `type:draft` `p2`

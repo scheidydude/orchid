@@ -272,6 +272,21 @@ class Orchestrator:
         )
 
         logger.info("Executing task %s: %s [type=%s model=%s]", task.id, task.title, task.type, decision.model)
+        # T141: Capture checkpoint before task execution for rewind/resume support
+        try:
+            from orchid.checkpoint.store import CheckpointStore
+            _checkpoint_store = CheckpointStore(self.session.project_dir)
+            _checkpoint_store.save(
+                tasks=[t.to_dict() for t in self.session.tasks],
+                hot_memory=self.session.hot_memory,
+                decisions=self.session.decisions,
+                delegations=self.session.delegations,
+                task_id=task.id,
+                description=f"Pre-execution checkpoint for {task.id}",
+            )
+        except Exception as _cp_exc:  # noqa: BLE001
+            logger.warning("Checkpoint capture failed for %s: %s", task.id, _cp_exc)
+
         self.session.update_task_status(task.id, TaskStatus.IN_PROGRESS)
         # Persist IN_PROGRESS immediately so web UI shows correct status during execution
         from orchid.memory.state import save_tasks

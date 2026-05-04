@@ -167,6 +167,25 @@ def main(
         False, "--trace",
         help="Write per-iteration ReAct trace to <project>/.orchid/trace.log.",
     ),
+    rewind: str | None = typer.Option(
+        None, "--rewind",
+        metavar="CHECKPOINT_ID",
+        help="Restore session state from a saved checkpoint. The session is overwritten"
+             " with the checkpoint contents (tasks, hot memory, decisions, delegations)."
+             "Use --list-checkpoints to see available IDs. The session is NOT persisted"
+             "to disk — run --mode auto or --interactive after rewinding to continue.",
+    ),
+    resume: str | None = typer.Option(
+        None, "--resume",
+        metavar="CHECKPOINT_ID",
+        help="Restore session state from a checkpoint AND auto-approve the current gate"
+             "to advance to the next phase. Combines --rewind and --approve behaviour."
+             "Use --list-checkpoints to see available IDs.",
+    ),
+    list_checkpoints: bool = typer.Option(
+        False, "--list-checkpoints",
+        help="List all saved checkpoints for the project with IDs, timestamps, and task IDs.",
+    ),
 ) -> None:
     if ctx.invoked_subcommand:
         return
@@ -182,6 +201,7 @@ def main(
         status, recall is not None, search is not None, add_task, tail,
         inject is not None, get_result is not None, phase, artifacts,
         approve, interactive, run_task is not None, mode is not None,
+        rewind is not None, resume is not None, list_checkpoints,
     ])
     if project is None and _any_project_command:
         if not (Path(proj) / ".orchid.yaml").exists():
@@ -258,6 +278,18 @@ def main(
 
     if run_task is not None:
         _cmd_run_task(proj, run_task, code_model=code_model, offline=offline, trace=trace)
+        return
+
+    if list_checkpoints:
+        _cmd_list_checkpoints(proj)
+        return
+
+    if rewind is not None:
+        _cmd_rewind(proj, rewind)
+        return
+
+    if resume is not None:
+        _cmd_resume(proj, resume)
         return
 
     # Parse --provider agent=provider pairs
@@ -866,6 +898,108 @@ def _cmd_approve(project: str, auto: bool = False) -> None:
     except ValueError as exc:
         console.print(f"[red]Error: {exc}[/red]")
         raise typer.Exit(1)
+
+
+
+def _cmd_list_checkpoints(project: str) -> None:
+    """List all saved checkpoints for the project."""
+    from orchid.checkpoint.restore import list_checkpoints
+    from rich.markup import escape
+    from rich.table import Table
+
+    entries = list_checkpoints(project)
+    if not entries:
+        console.print('[yellow]No checkpoints found for this project.[/yellow]')
+        return
+
+    table = Table(title='Saved Checkpoints', show_lines=True)
+    table.add_column('ID', style='cyan', no_wrap=True)
+    table.add_column('Task', style='dim')
+    table.add_column('Created', style='dim')
+    table.add_column('Size', justify='right')
+
+    for e in entries:
+        ts = e.created_at[:19].replace('T', ' ') if e.created_at else ''
+        size_str = f'{e.size_bytes:,} B' if e.size_bytes else '-'
+        task_str = escape(e.task_id) if e.task_id else '-'
+        table.add_row(e.checkpoint_id, task_str, ts, size_str)
+
+    console.print(table)
+    console.print(f'[dim]{len(entries)} checkpoint(s) total. Use --rewind <ID> to restore.[/dim]')
+
+
+def _cmd_rewind(project: str, checkpoint_id: str) -> None:
+    """Restore session state from a checkpoint."""
+    from rich.markup import escape
+    from orchid.checkpoint.restore import rewind_session
+
+    console.print(Panel(
+        f'[bold]Rewinding session to checkpoint:[/bold] [cyan]{escape(checkpoint_id)}[/cyan]',
+        border_style='yellow',
+    ))
+
+    result = rewind_session(project, checkpoint_id)
+    if result is None:
+        console.print(f'[red]Checkpoint {checkpoint_id} not found.[/red]')
+        console.print('[dim]Run --list-checkpoints to see available IDs.[/dim]')
+        raise typer.Exit(1)
+
+    console.print(f'[green]✓[/green] Rewound to checkpoint {checkpoint_id} (task={result.metadata.task_id})')
+    console.print(f'[dim]Session state restored. Run --mode auto or --interactive to continue.[/dim]')
+
+
+def _cmd_resume(project: str, checkpoint_id: str) -> None:
+    """Restore session from a checkpoint AND auto-approve the current gate."""
+    from rich.markup import escape
+    from orchid.checkpoint.restore import rewind_session
+    from orchid.gates import GateStatus, GateSystem
+    from orchid.lifecycle import ProjectLifecycle
+
+    console.print(Panel(
+        f'[bold]Resuming session from checkpoint:[/bold] [cyan]{escape(checkpoint_id)}[/cyan]',
+        border_style='yellow',
+    ))
+
+    result = rewind_session(project, checkpoint_id)
+    if result is None:
+        console.print(f'[red]Checkpoint {checkpoint_id} not found.[/red]')
+        console.print('[dim]Run --list-checkpoints to see available IDs.[/dim]')
+        raise typer.Exit(1)
+
+    console.print(f'[green]✓[/green] Rewound to checkpoint {checkpoint_id} (task={result.metadata.task_id})')
+
+    # Auto-approve the current gate
+    proj_path = _resolve_project(project)
+    lc = ProjectLifecycle.load(proj_path)
+    current = lc.current_phase()
+    next_phases = [p for p in lc.valid_next_phases() if p != 'DISCUSSING']
+
+    if not next_phases:
+        console.print(f'[yellow]No non-discussion transitions available from {current}.[/yellow]')
+        raise typer.Exit(1)
+
+    gates = GateSystem(lc)
+    to_phase = next_phases[0]
+    gate_status = gates.check_gate(to_phase)
+    if gate_status == GateStatus.BLOCKED:
+        console.print(
+            f"[red]Gate BLOCKED — prerequisites not met for {current} → {to_phase}.[/red]\n"
+            f"Run [bold]orchid --project {project} --artifacts[/bold] to see what is missing."
+        )
+        raise typer.Exit(1)
+
+    gates.approve(to_phase)
+
+    try:
+        lc.advance(to_phase)
+        console.print(
+            f'[green]✓[/green] Approved. Phase advanced: [cyan]{current}[/cyan] → [bold cyan]{to_phase}[/bold cyan]'
+        )
+    except ValueError as exc:
+        console.print(f'[red]Error: {exc}[/red]')
+        raise typer.Exit(1)
+
+    console.print('[dim]Session resumed. Run --mode auto or --interactive to continue.[/dim]')
 
 
 def _cmd_interactive_planning(

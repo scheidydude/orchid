@@ -128,6 +128,14 @@ class BackgroundRunner:
             except NameError:
                 pass
 
+            # Prune old checkpoints at session end
+            from orchid.checkpoint.store import CheckpointStore
+            try:
+                store = CheckpointStore(project_path)
+                store.prune(keep=5)
+            except Exception:  # noqa: BLE001
+                logger.warning("Checkpoint pruning failed for %s", project_path)
+
         # Emit session end event
         duration_s = time.monotonic() - session_start_ts
         emitter.emit(SessionEndEvent(
