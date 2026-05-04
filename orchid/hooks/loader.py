@@ -7,10 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import re
 from pathlib import Path
-from typing import Any
 
 from orchid.hooks.events import HookEvent
 from orchid.hooks.registry import HookRegistry
@@ -378,7 +375,6 @@ class HookLoader:
         """Create a handler for an HTTP hook."""
         def handler(event: HookEvent) -> dict:
             """Make HTTP request with event data."""
-            import json
 
             # Substitute event data into URL and payload
             url = self._substitute_vars(hook.url, event)

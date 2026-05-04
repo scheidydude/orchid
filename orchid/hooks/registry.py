@@ -7,8 +7,9 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from orchid.hooks.events import HookEvent
 
@@ -162,12 +163,12 @@ class HookRegistry:
 
         return hook_result
 
-    def _execute_handler(self, handler: "HookHandler", event: HookEvent) -> Any:
+    def _execute_handler(self, handler: HookHandler, event: HookEvent) -> Any:
         """Execute a handler synchronously."""
         return handler.handler(event)
 
     def _execute_handler_with_timeout(
-        self, handler: "HookHandler", event: HookEvent, timeout: int
+        self, handler: HookHandler, event: HookEvent, timeout: int
     ) -> Any:
         """Execute a handler with timeout."""
         import concurrent.futures
@@ -183,7 +184,7 @@ class HookRegistry:
                 )
                 raise
 
-    def get_handlers_for_event(self, event_type: str) -> list["HookHandler"]:
+    def get_handlers_for_event(self, event_type: str) -> list[HookHandler]:
         """Get all handlers registered for an event type."""
         return self._handlers.get(event_type, [])
 

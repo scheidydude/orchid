@@ -7,7 +7,7 @@ Supports both file-based and in-memory (list) sinks.
 
 import json
 import sys
-from typing import Any, List, Optional, TextIO
+from typing import Any, TextIO
 
 from orchid.output.emitter import EmitterProtocol
 
@@ -27,7 +27,7 @@ class NDJSONEmitter(EmitterProtocol):
 
     def __init__(
         self,
-        out: Optional[TextIO] = None,
+        out: TextIO | None = None,
         flush: bool = True,
     ) -> None:
         self._out: TextIO = out or sys.stdout
@@ -61,7 +61,7 @@ class NDJSONBufferEmitter(EmitterProtocol):
     """
 
     def __init__(self) -> None:
-        self._buffer: List[str] = []
+        self._buffer: list[str] = []
 
     def emit(self, event: Any) -> None:
         """Append one NDJSON line to the in-memory buffer."""
@@ -71,11 +71,11 @@ class NDJSONBufferEmitter(EmitterProtocol):
         """No-op — the buffer is discarded when the emitter is garbage-collected."""
         pass
 
-    def get_lines(self) -> List[str]:
+    def get_lines(self) -> list[str]:
         """Return all collected NDJSON lines."""
         return list(self._buffer)
 
-    def get_json_objects(self) -> List[Any]:
+    def get_json_objects(self) -> list[Any]:
         """Return all collected events parsed back to Python objects."""
         return [json.loads(line) for line in self._buffer]
 

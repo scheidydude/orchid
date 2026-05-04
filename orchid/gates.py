@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from enum import Enum
 
 from orchid import config as cfg
-from orchid.hooks.events import HookEvent, PHASE_TRANSITION
+from orchid.hooks.events import PHASE_TRANSITION, HookEvent
 from orchid.lifecycle import ProjectLifecycle
 
 logger = logging.getLogger(__name__)

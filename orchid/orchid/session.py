@@ -175,7 +175,7 @@ class Session:
             return
 
         try:
-            from orchid.hooks.events import HookEvent, SESSION_START
+            from orchid.hooks.events import SESSION_START, HookEvent
             event = HookEvent(
                 event_type=SESSION_START,
                 data={
@@ -196,7 +196,7 @@ class Session:
             return
 
         try:
-            from orchid.hooks.events import HookEvent, SESSION_END
+            from orchid.hooks.events import SESSION_END, HookEvent
             ended_at = datetime.now(UTC)
             duration = (ended_at - self.started_at).total_seconds()
             

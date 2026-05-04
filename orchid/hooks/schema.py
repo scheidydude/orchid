@@ -15,7 +15,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-
 # ── Constants ────────────────────────────────────────────────────────────────
 
 VALID_EVENT_TYPES = [
@@ -358,7 +357,7 @@ class HooksConfigSchema(BaseModel):
     )
 
     @model_validator(mode="after")
-    def validate_hook_sections(self) -> "HooksConfigSchema":
+    def validate_hook_sections(self) -> HooksConfigSchema:
         """Validate all hook sections have valid hook configurations."""
         sections = ["tasks", "phases", "agent", "session"]
         for section in sections:

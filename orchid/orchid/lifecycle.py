@@ -190,7 +190,7 @@ class ProjectLifecycle:
             return
 
         try:
-            from orchid.hooks.events import HookEvent, PHASE_TRANSITION
+            from orchid.hooks.events import PHASE_TRANSITION, HookEvent
             event = HookEvent(
                 event_type=PHASE_TRANSITION,
                 data={
@@ -210,7 +210,7 @@ class ProjectLifecycle:
             return
 
         try:
-            from orchid.hooks.events import HookEvent, PHASE_ENTER
+            from orchid.hooks.events import PHASE_ENTER, HookEvent
             event = HookEvent(
                 event_type=PHASE_ENTER,
                 data={

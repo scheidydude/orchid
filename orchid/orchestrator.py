@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from orchid import config as cfg
-from orchid.hooks.events import HookEvent, TASK_START, TASK_COMPLETE, TASK_FAILED, AGENT_ACTION, AGENT_OBSERVATION
+from orchid.hooks.events import AGENT_ACTION, AGENT_OBSERVATION, TASK_COMPLETE, TASK_FAILED, TASK_START, HookEvent
 from orchid.hooks.registry import HookRegistry
 from orchid.memory.state import Task, TaskResultStore, TaskStatus
 from orchid.output.emitter import EmitterProtocol, NullEmitter

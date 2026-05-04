@@ -9,7 +9,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-
 # ── Event Type Constants ─────────────────────────────────────────────────────
 
 # Agent ReAct loop events (T095)
@@ -63,7 +62,7 @@ class HookEvent:
 
     def __post_init__(self):
         if not self.timestamp:
-            from datetime import datetime, UTC
+            from datetime import UTC, datetime
             self.timestamp = datetime.now(UTC).isoformat()
 
     @classmethod
@@ -163,7 +162,7 @@ class HookEvent:
         )
 
     @classmethod
-    def pre_tool_use_event(cls, tool: str, input_data: Any, task_id: str = "") -> "HookEvent":
+    def pre_tool_use_event(cls, tool: str, input_data: Any, task_id: str = "") -> HookEvent:
         """Create a PRE_TOOL_USE event."""
         return cls(
             event_type=PRE_TOOL_USE,
@@ -172,7 +171,7 @@ class HookEvent:
         )
 
     @classmethod
-    def post_tool_use_event(cls, tool: str, input_data: Any, output: str, task_id: str = "") -> "HookEvent":
+    def post_tool_use_event(cls, tool: str, input_data: Any, output: str, task_id: str = "") -> HookEvent:
         """Create a POST_TOOL_USE event."""
         return cls(
             event_type=POST_TOOL_USE,
@@ -181,7 +180,7 @@ class HookEvent:
         )
 
     @classmethod
-    def delegation_start_event(cls, agent_type: str, task: str, depth: int, task_id: str = "") -> "HookEvent":
+    def delegation_start_event(cls, agent_type: str, task: str, depth: int, task_id: str = "") -> HookEvent:
         """Create a DELEGATION_START event."""
         return cls(
             event_type=DELEGATION_START,
@@ -190,7 +189,7 @@ class HookEvent:
         )
 
     @classmethod
-    def delegation_end_event(cls, agent_type: str, result: str, depth: int, task_id: str = "") -> "HookEvent":
+    def delegation_end_event(cls, agent_type: str, result: str, depth: int, task_id: str = "") -> HookEvent:
         """Create a DELEGATION_END event."""
         return cls(
             event_type=DELEGATION_END,

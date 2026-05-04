@@ -5,9 +5,8 @@ Sends each event as a single JSON message over a WebSocket connection.
 Supports both live (async websockets) and in-memory (list) sinks.
 """
 
-import asyncio
 import json
-from typing import Any, List, Optional
+from typing import Any
 
 
 class WSBufferEmitter:
@@ -18,7 +17,7 @@ class WSBufferEmitter:
     """
 
     def __init__(self) -> None:
-        self._buffer: List[str] = []
+        self._buffer: list[str] = []
 
     def emit(self, event: Any) -> None:
         """Append one event as a JSON string to the in-memory buffer."""
@@ -28,11 +27,11 @@ class WSBufferEmitter:
         """No-op — the buffer is discarded when the emitter is garbage-collected."""
         pass
 
-    def get_messages(self) -> List[str]:
+    def get_messages(self) -> list[str]:
         """Return all collected JSON message strings."""
         return list(self._buffer)
 
-    def get_json_objects(self) -> List[Any]:
+    def get_json_objects(self) -> list[Any]:
         """Return all collected events parsed back to Python objects."""
         return [json.loads(msg) for msg in self._buffer]
 

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from orchid import config as cfg
-from orchid.hooks.events import HookEvent, SESSION_START, SESSION_END
+from orchid.hooks.events import SESSION_END, SESSION_START, HookEvent
 from orchid.hooks.registry import HookRegistry
 from orchid.memory import state as mem_state
 from orchid.memory.decisions import load_decisions

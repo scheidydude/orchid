@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
 
 from orchid.checkpoint.schema import Checkpoint, CheckpointEntry
 from orchid.checkpoint.store import CheckpointStore

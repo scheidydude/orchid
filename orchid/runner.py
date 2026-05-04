@@ -69,8 +69,8 @@ class BackgroundRunner:
     # ── Internal ────────────────────────────────────────────────────────────────
 
     def _run(self, project_path: str, state: _ProjectState) -> None:
-        from orchid.memory.state import TaskStatus
         from orchid.mcp.manager import MCPManager
+        from orchid.memory.state import TaskStatus
         from orchid.orchestrator import Orchestrator
         from orchid.output.emitter import NullEmitter
         from orchid.output.events import SessionEndEvent, SessionStartEvent

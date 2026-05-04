@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from orchid import config as cfg
-from orchid.hooks.events import HookEvent, POST_TOOL_USE, PRE_TOOL_USE
+from orchid.hooks.events import HookEvent
 from orchid.hooks.registry import HookRegistry
 from orchid.tools.models import Message, call
 

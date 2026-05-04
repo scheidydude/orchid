@@ -37,66 +37,66 @@ Usage:
 """
 
 from orchid.hooks.events import (
-    HookEvent,
+    AGENT_ACTION,
+    AGENT_FINAL_ANSWER,
+    AGENT_ITER_END,
     # Agent ReAct loop events
     AGENT_ITER_START,
-    AGENT_ITER_END,
-    AGENT_ACTION,
     AGENT_OBSERVATION,
     AGENT_THOUGHT,
-    AGENT_FINAL_ANSWER,
-    PRE_TOOL_USE,
-    POST_TOOL_USE,
-    DELEGATION_START,
     DELEGATION_END,
-    # Task lifecycle events
-    TASK_START,
-    TASK_END,
-    TASK_COMPLETE,
-    TASK_FAILED,
-    TASK_BLOCKED,
-    TASK_SKIPPED,
-    TASK_STATUS_CHANGE,
-    # Session and phase transition events
-    SESSION_START,
-    SESSION_END,
-    PHASE_TRANSITION,
-    PHASE_ENTER,
-    PHASE_EXIT,
+    DELEGATION_START,
+    HOOK_ERROR,
     # Hook system events
     HOOK_REGISTERED,
     HOOK_UNREGISTERED,
-    HOOK_ERROR,
+    PHASE_ENTER,
+    PHASE_EXIT,
+    PHASE_TRANSITION,
+    POST_TOOL_USE,
+    PRE_TOOL_USE,
+    SESSION_END,
+    # Session and phase transition events
+    SESSION_START,
+    TASK_BLOCKED,
+    TASK_COMPLETE,
+    TASK_END,
+    TASK_FAILED,
+    TASK_SKIPPED,
+    # Task lifecycle events
+    TASK_START,
+    TASK_STATUS_CHANGE,
+    DelegationContext,
+    HookEvent,
+    PhaseTransitionContext,
+    PostToolUseContext,
     # Typed context dataclasses
     PreToolUseContext,
-    PostToolUseContext,
-    TaskStartContext,
-    TaskEndContext,
-    SessionStartContext,
     SessionEndContext,
-    PhaseTransitionContext,
-    DelegationContext,
+    SessionStartContext,
+    TaskEndContext,
+    TaskStartContext,
 )
-from orchid.hooks.loader import HookLoadError, HookLoader
+from orchid.hooks.loader import HookLoader, HookLoadError
 from orchid.hooks.registry import HookRegistry, HookResult
-from orchid.hooks.types import HookCategory, HookExecutionMode, ShellHook, HTTPHook, PythonHook
 from orchid.hooks.schema import (
-    # Schema classes
-    HooksConfigSchema,
-    ShellHookSchema,
-    HTTPHookSchema,
-    PythonHookSchema,
+    BUILTIN_SHELL_ALLOWLIST,
     # Constants
     VALID_EVENT_TYPES,
-    VALID_HOOK_TYPES,
     VALID_EXECUTION_MODES,
-    BUILTIN_SHELL_ALLOWLIST,
+    VALID_HOOK_TYPES,
+    # Schema classes
+    HooksConfigSchema,
+    HTTPHookSchema,
+    PythonHookSchema,
+    ShellHookSchema,
+    get_schema_documentation,
+    validate_hook,
     # Validation functions
     validate_hooks_config,
-    validate_hook,
     validate_shell_command,
-    get_schema_documentation,
 )
+from orchid.hooks.types import HookCategory, HookExecutionMode, HTTPHook, PythonHook, ShellHook
 
 
 def orchid_hook(event: str):

@@ -28,8 +28,8 @@ from pathlib import Path
 import typer
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
 from rich.syntax import Syntax
+from rich.table import Table
 
 console = Console()
 
@@ -50,7 +50,7 @@ def register_hooks_cli(parent_app: typer.Typer) -> None:
     ) -> None:
         """List all configured hooks for a project."""
         from orchid import config as cfg
-        from orchid.hooks.schema import VALID_EVENT_TYPES, VALID_HOOK_TYPES, VALID_EXECUTION_MODES
+        from orchid.hooks.schema import VALID_HOOK_TYPES
         
         proj_path = Path(project).expanduser().resolve()
         
@@ -534,7 +534,8 @@ def register_hooks_cli(parent_app: typer.Typer) -> None:
     ) -> None:
         """Add a new hook to the project configuration."""
         import yaml
-        from orchid.hooks.schema import VALID_EVENT_TYPES, VALID_HOOK_TYPES, VALID_EXECUTION_MODES
+
+        from orchid.hooks.schema import VALID_EVENT_TYPES, VALID_EXECUTION_MODES, VALID_HOOK_TYPES
         
         proj_path = Path(project).expanduser().resolve()
         config_path = proj_path / ".orchid.yaml"
@@ -565,7 +566,7 @@ def register_hooks_cli(parent_app: typer.Typer) -> None:
         
         if section not in ["tasks", "phases", "agent", "session"]:
             console.print(f"[red]Unknown section: {section}[/red]")
-            console.print(f"[dim]Valid sections: tasks, phases, agent, session[/dim]")
+            console.print("[dim]Valid sections: tasks, phases, agent, session[/dim]")
             raise typer.Exit(1)
         
         # Validate type-specific requirements
@@ -582,7 +583,7 @@ def register_hooks_cli(parent_app: typer.Typer) -> None:
             raise typer.Exit(1)
         
         # Load existing config
-        with open(config_path, "r") as f:
+        with open(config_path) as f:
             config = yaml.safe_load(f) or {}
         
         # Ensure hooks section exists
@@ -651,11 +652,11 @@ def register_hooks_cli(parent_app: typer.Typer) -> None:
             raise typer.Exit(1)
         
         # Load config
-        with open(config_path, "r") as f:
+        with open(config_path) as f:
             config = yaml.safe_load(f) or {}
         
         if "hooks" not in config:
-            console.print(f"[yellow]No hooks configured[/yellow]")
+            console.print("[yellow]No hooks configured[/yellow]")
             raise typer.Exit(1)
         
         hooks = config["hooks"]

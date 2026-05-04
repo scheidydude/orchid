@@ -903,9 +903,10 @@ def _cmd_approve(project: str, auto: bool = False) -> None:
 
 def _cmd_list_checkpoints(project: str) -> None:
     """List all saved checkpoints for the project."""
-    from orchid.checkpoint.restore import list_checkpoints
     from rich.markup import escape
     from rich.table import Table
+
+    from orchid.checkpoint.restore import list_checkpoints
 
     entries = list_checkpoints(project)
     if not entries:
@@ -931,6 +932,7 @@ def _cmd_list_checkpoints(project: str) -> None:
 def _cmd_rewind(project: str, checkpoint_id: str) -> None:
     """Restore session state from a checkpoint."""
     from rich.markup import escape
+
     from orchid.checkpoint.restore import rewind_session
 
     console.print(Panel(
@@ -945,12 +947,13 @@ def _cmd_rewind(project: str, checkpoint_id: str) -> None:
         raise typer.Exit(1)
 
     console.print(f'[green]✓[/green] Rewound to checkpoint {checkpoint_id} (task={result.metadata.task_id})')
-    console.print(f'[dim]Session state restored. Run --mode auto or --interactive to continue.[/dim]')
+    console.print('[dim]Session state restored. Run --mode auto or --interactive to continue.[/dim]')
 
 
 def _cmd_resume(project: str, checkpoint_id: str) -> None:
     """Restore session from a checkpoint AND auto-approve the current gate."""
     from rich.markup import escape
+
     from orchid.checkpoint.restore import rewind_session
     from orchid.gates import GateStatus, GateSystem
     from orchid.lifecycle import ProjectLifecycle

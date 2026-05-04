@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from orchid.mcp.client import MCPClient, MCPClientError
+from orchid.mcp.client import MCPClient
 from orchid.mcp.types import MCPResult, MCPTool
 
 

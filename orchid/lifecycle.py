@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from orchid.hooks.events import HookEvent, PHASE_TRANSITION, PHASE_ENTER, PHASE_EXIT
+from orchid.hooks.events import PHASE_ENTER, PHASE_EXIT, PHASE_TRANSITION, HookEvent
 
 logger = logging.getLogger(__name__)
 
@@ -65,8 +65,8 @@ class ProjectLifecycle:
     def _load_hooks(self) -> None:
         """Load hook registry for phase transition events."""
         try:
-            from orchid.hooks.registry import HookRegistry
             from orchid.hooks.loader import HookLoader
+            from orchid.hooks.registry import HookRegistry
             self._hook_registry = HookRegistry()
             loader = HookLoader(self.project_dir)
             count = loader.load()
