@@ -14,14 +14,23 @@ import ProjectSettings from './components/ProjectSettings.jsx'
 import PMDashboard from './components/pm/PMDashboard.jsx'
 import { useProjects } from './hooks/useProjects.js'
 import { useAgentStream } from './hooks/useAgentStream.js'
+import { useMediaQuery } from './hooks/useMediaQuery.js'
 
 const TABS = ['Tasks', 'Planning', 'PM', 'Stream', 'Decisions', 'Sessions', 'Recall', 'Memory', 'Config', 'Settings']
+
+const TAB_SHORT = {
+  Tasks: 'Tasks', Planning: 'Plan', PM: 'PM', Stream: 'Live',
+  Decisions: 'Dec', Sessions: 'Hist', Recall: 'Recall',
+  Memory: 'Mem', Config: 'Cfg', Settings: 'Set',
+}
 
 export default function App() {
   const { projects, loading: projectsLoading, refresh: refreshProjects, newProjectIds } = useProjects()
   const [activeProject, setActiveProject] = useState(null)
   const [activeTab, setActiveTab] = useState('Tasks')
   const [orchidVersion, setOrchidVersion] = useState('')
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const isMobile = useMediaQuery('(max-width: 768px)')
 
   useEffect(() => {
     fetch('/api/version').then(r => r.json()).then(d => setOrchidVersion(d.version)).catch(() => {})
@@ -43,6 +52,7 @@ export default function App() {
     setActiveProject(id)
     setActiveTab('Tasks')
     setPlanningBadge(false)
+    setDrawerOpen(false)
   }
 
   const handleRunChange = () => refreshProjects()
@@ -73,6 +83,15 @@ export default function App() {
   return (
     <>
       <header className="app-header">
+        {isMobile && (
+          <button
+            className="hamburger-btn"
+            onClick={() => setDrawerOpen(o => !o)}
+            aria-label="Open project list"
+          >
+            ☰
+          </button>
+        )}
         <span className="logo">🌸 Orchid</span>
         {activeProjectData && (
           <>
@@ -98,7 +117,7 @@ export default function App() {
           </>
         )}
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+          <span className="header-project-count" style={{ fontSize: 11, color: 'var(--text-dim)' }}>
             {projects.length} project{projects.length !== 1 ? 's' : ''}
           </span>
           <button
@@ -106,13 +125,17 @@ export default function App() {
             style={{ fontSize: 12, padding: '5px 12px' }}
             onClick={() => setShowNewWizard(true)}
           >
-            + New Project
+            <span className="new-project-label">+ New Project</span>
+            <span className="new-project-short">+</span>
           </button>
         </span>
       </header>
 
       <div className="app-body">
-        <nav className="sidebar">
+        {isMobile && drawerOpen && (
+          <div className="sidebar-backdrop" onClick={() => setDrawerOpen(false)} />
+        )}
+        <nav className={`sidebar${isMobile && drawerOpen ? ' drawer-open' : ''}`}>
           {projectsLoading ? (
             <div className="loading" style={{ padding: '16px' }}>Loading…</div>
           ) : (
@@ -157,7 +180,7 @@ export default function App() {
                     className={`panel-tab ${activeTab === tab ? 'active' : ''}`}
                     onClick={() => setActiveTab(tab)}
                   >
-                    {tab}
+                    {isMobile ? TAB_SHORT[tab] : tab}
                     {tab === 'Stream' && entries.length > 0 && (
                       <span style={{ marginLeft: 5, fontSize: 10, background: 'var(--accent)', color: '#fff', borderRadius: 8, padding: '0 5px' }}>
                         {entries.length}
