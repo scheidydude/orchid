@@ -1,12 +1,16 @@
 """Tests for orchid.mcp.http_client — HTTPMCPClient using respx to mock httpx."""
 
+import json
 import unittest
 
-import respx
 import httpx
+import respx
 
 from orchid.mcp.http_client import HTTPMCPClient
 from orchid.mcp.types import MCPResult, MCPTool
+
+_INIT_RESP = httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2024-11-05"}})
+_NOTIF_RESP = httpx.Response(200, json={"jsonrpc": "2.0", "id": 2, "result": {}})
 
 
 class TestHTTPMCPClient(unittest.TestCase):
@@ -16,38 +20,14 @@ class TestHTTPMCPClient(unittest.TestCase):
     def test_connect_success(self):
         """connect() sends initialize, notifications/initialized, and
         tools/list requests, then caches the tool list."""
-        # Route 1: initialize
-        respx.post("").mock(
-            return_value=httpx.Response(200, json={
-                "jsonrpc": "2.0",
-                "id": 1,
-                "result": {"protocolVersion": "2024-11-05"},
-            })
-        )
-        # Route 2: notifications/initialized
-        respx.post("").mock(
-            return_value=httpx.Response(200, json={
-                "jsonrpc": "2.0",
-                "id": 2,
-                "result": {},
-            })
-        )
-        # Route 3: tools/list
-        respx.post("").mock(
-            return_value=httpx.Response(200, json={
-                "jsonrpc": "2.0",
-                "id": 3,
-                "result": {
-                    "tools": [
-                        {
-                            "name": "echo",
-                            "description": "Echoes a message",
-                            "inputSchema": {"type": "object"},
-                        }
-                    ]
-                },
-            })
-        )
+        tools_resp = httpx.Response(200, json={
+            "jsonrpc": "2.0",
+            "id": 3,
+            "result": {
+                "tools": [{"name": "echo", "description": "Echoes a message", "inputSchema": {"type": "object"}}]
+            },
+        })
+        respx.post("").mock(side_effect=[_INIT_RESP, _NOTIF_RESP, tools_resp])
 
         client = HTTPMCPClient(url="http://localhost:8080/mcp")
         client.connect()
@@ -66,41 +46,13 @@ class TestHTTPMCPClient(unittest.TestCase):
     def test_call_tool_success(self):
         """call_tool() sends a tools/call request and returns an MCPResult
         with content assembled from the response."""
-        # initialize
-        respx.post("").mock(
-            return_value=httpx.Response(200, json={
-                "jsonrpc": "2.0",
-                "id": 1,
-                "result": {"protocolVersion": "2024-11-05"},
-            })
-        )
-        # notifications/initialized
-        respx.post("").mock(
-            return_value=httpx.Response(200, json={
-                "jsonrpc": "2.0",
-                "id": 2,
-                "result": {},
-            })
-        )
-        # tools/list (empty)
-        respx.post("").mock(
-            return_value=httpx.Response(200, json={
-                "jsonrpc": "2.0",
-                "id": 3,
-                "result": {"tools": []},
-            })
-        )
-        # tools/call
-        respx.post("").mock(
-            return_value=httpx.Response(200, json={
-                "jsonrpc": "2.0",
-                "id": 4,
-                "result": {
-                    "content": [{"text": "hello world"}],
-                    "isError": False,
-                },
-            })
-        )
+        call_resp = httpx.Response(200, json={
+            "jsonrpc": "2.0",
+            "id": 4,
+            "result": {"content": [{"text": "hello world"}], "isError": False},
+        })
+        empty_tools = httpx.Response(200, json={"jsonrpc": "2.0", "id": 3, "result": {"tools": []}})
+        respx.post("").mock(side_effect=[_INIT_RESP, _NOTIF_RESP, empty_tools, call_resp])
 
         client = HTTPMCPClient(url="http://localhost:8080/mcp")
         client.connect()
@@ -112,7 +64,7 @@ class TestHTTPMCPClient(unittest.TestCase):
 
         # Verify the tools/call request body
         call_request = respx.mock.calls[-1].request
-        body = call_request.json()
+        body = json.loads(call_request.content)
         self.assertEqual(body["method"], "tools/call")
         self.assertEqual(body["params"]["name"], "echo")
         self.assertEqual(body["params"]["arguments"]["msg"], "hello")
@@ -123,41 +75,13 @@ class TestHTTPMCPClient(unittest.TestCase):
         error field in the JSON-RPC response."""
         from orchid.mcp.client import MCPClientError
 
-        # initialize
-        respx.post("").mock(
-            return_value=httpx.Response(200, json={
-                "jsonrpc": "2.0",
-                "id": 1,
-                "result": {"protocolVersion": "2024-11-05"},
-            })
-        )
-        # notifications/initialized
-        respx.post("").mock(
-            return_value=httpx.Response(200, json={
-                "jsonrpc": "2.0",
-                "id": 2,
-                "result": {},
-            })
-        )
-        # tools/list (empty)
-        respx.post("").mock(
-            return_value=httpx.Response(200, json={
-                "jsonrpc": "2.0",
-                "id": 3,
-                "result": {"tools": []},
-            })
-        )
-        # tools/call with error
-        respx.post("").mock(
-            return_value=httpx.Response(200, json={
-                "jsonrpc": "2.0",
-                "id": 4,
-                "error": {
-                    "message": "Tool not found",
-                    "code": -32601,
-                },
-            })
-        )
+        error_resp = httpx.Response(200, json={
+            "jsonrpc": "2.0",
+            "id": 4,
+            "error": {"message": "Tool not found", "code": -32601},
+        })
+        empty_tools = httpx.Response(200, json={"jsonrpc": "2.0", "id": 3, "result": {"tools": []}})
+        respx.post("").mock(side_effect=[_INIT_RESP, _NOTIF_RESP, empty_tools, error_resp])
 
         client = HTTPMCPClient(url="http://localhost:8080/mcp")
         client.connect()
