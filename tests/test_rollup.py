@@ -218,6 +218,9 @@ def _make_orchestrator(tmp_path: Path, tasks: list[Task]) -> MagicMock:
     orch.stream_callback = None
     # Initialize hook registry (normally done in __init__)
     orch._hook_registry = HookRegistry()
+    # Initialize stream emitter (normally done in __init__)
+    from orchid.output.emitter import NullEmitter
+    orch._stream_emitter = NullEmitter()
     return orch
 
 

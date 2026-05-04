@@ -15,6 +15,15 @@ from orchid import config as cfg
 from orchid.hooks.events import HookEvent, TASK_START, TASK_COMPLETE, TASK_FAILED, AGENT_ACTION, AGENT_OBSERVATION
 from orchid.hooks.registry import HookRegistry
 from orchid.memory.state import Task, TaskResultStore, TaskStatus
+from orchid.output.emitter import EmitterProtocol, NullEmitter
+from orchid.output.events import (
+    AgentThoughtEvent,
+    TaskCompleteEvent,
+    TaskFailEvent,
+    TaskStartEvent,
+    ToolResultEvent,
+    ToolUseEvent,
+)
 from orchid.session import Session
 from orchid.tools.models import Message, call
 
@@ -131,6 +140,7 @@ class Orchestrator:
         cli_provider_overrides: dict[str, str] | None = None,
         offline_mode: bool = False,
         trace_enabled: bool = False,
+        stream_emitter: EmitterProtocol | None = None,
     ):
         self.session = session
         self.registry = _get_registry()
@@ -140,6 +150,10 @@ class Orchestrator:
         self.cli_model_override = cli_model_override
         self.cli_provider_overrides: dict[str, str] = cli_provider_overrides or {}
         self.offline_mode = offline_mode
+        # Optional stream emitter for typed events
+        self._stream_emitter: EmitterProtocol = (
+            stream_emitter if stream_emitter is not None else NullEmitter()
+        )
         # Apply offline mode to provider registry
         if offline_mode:
             from orchid.providers.registry import get_registry as get_provider_registry
@@ -273,6 +287,14 @@ class Orchestrator:
         # T096: Fire task_start hook
         self._fire_task_start_hook(task, decision.model)
 
+        # Emit typed TaskStartEvent via stream emitter
+        self._stream_emitter.emit(TaskStartEvent(
+            session_id=getattr(self.session, "_log_path", None) and str(self.session._log_path.stem) or self.session.project_name,
+            task_id=task.id,
+            task_title=task.title,
+            task_type=task.type,
+        ))
+
         try:
             # Rollup tasks are synthesised by the orchestrator directly — no agent dispatch
             if task.type == "rollup":
@@ -394,6 +416,12 @@ class Orchestrator:
                 )
                 # T096: Fire task_failed hook
                 self._fire_task_failed_hook(task, result_text)
+                # Emit typed TaskFailEvent via stream emitter
+                self._stream_emitter.emit(TaskFailEvent(
+                    session_id=getattr(self.session, "_log_path", None) and str(self.session._log_path.stem) or self.session.project_name,
+                    task_id=task.id,
+                    error=result_text[:500],
+                ))
                 return {"task_id": task.id, "status": "failed", "error": result_text}
             else:
                 self.session.update_task_status(task.id, TaskStatus.DONE)
@@ -423,6 +451,13 @@ class Orchestrator:
                 )
                 # T096: Fire task_complete hook
                 self._fire_task_complete_hook(task, result_text, files_written)
+                # Emit typed TaskCompleteEvent via stream emitter
+                self._stream_emitter.emit(TaskCompleteEvent(
+                    session_id=getattr(self.session, "_log_path", None) and str(self.session._log_path.stem) or self.session.project_name,
+                    task_id=task.id,
+                    duration_s=_task_run_elapsed,
+                    iterations=_ts.get("completed_iters", 0),
+                ))
                 return {"task_id": task.id, "status": "done", "result": result_text, "files_written": files_written}
 
         except ProviderUnavailableError as e:
@@ -439,6 +474,12 @@ class Orchestrator:
                 })
             # T096: Fire task_failed hook
             self._fire_task_failed_hook(task, error_msg)
+            # Emit typed TaskFailEvent via stream emitter
+            self._stream_emitter.emit(TaskFailEvent(
+                session_id=getattr(self.session, "_log_path", None) and str(self.session._log_path.stem) or self.session.project_name,
+                task_id=task.id,
+                error=error_msg,
+            ))
             return {"task_id": task.id, "status": "error", "error": error_msg}
 
         except Exception as e:
@@ -447,6 +488,12 @@ class Orchestrator:
             self.session.log_event("task_error", {"task_id": task.id, "error": str(e)})
             # T096: Fire task_failed hook
             self._fire_task_failed_hook(task, str(e))
+            # Emit typed TaskFailEvent via stream emitter
+            self._stream_emitter.emit(TaskFailEvent(
+                session_id=getattr(self.session, "_log_path", None) and str(self.session._log_path.stem) or self.session.project_name,
+                task_id=task.id,
+                error=str(e)[:500],
+            ))
             return {"task_id": task.id, "status": "error", "error": str(e)}
 
     # T096: Task lifecycle hook methods
@@ -578,6 +625,31 @@ class Orchestrator:
                     observation=observation,
                 )
 
+            # Emit typed events via stream emitter
+            thought = data.get("thought", "")
+            if thought and iteration == 0:
+                self._stream_emitter.emit(AgentThoughtEvent(
+                    session_id=getattr(session, "_log_path", None) and str(session._log_path.stem) or session.project_name,
+                    task_id=task_id,
+                    thought=thought[:500],
+                ))
+
+            if action and action != "final_answer":
+                self._stream_emitter.emit(ToolUseEvent(
+                    session_id=getattr(session, "_log_path", None) and str(session._log_path.stem) or session.project_name,
+                    task_id=task_id,
+                    tool=action,
+                    input_summary=data.get("action_input", "")[:300],
+                ))
+
+            if observation:
+                self._stream_emitter.emit(ToolResultEvent(
+                    session_id=getattr(session, "_log_path", None) and str(session._log_path.stem) or session.project_name,
+                    task_id=task_id,
+                    tool=action,
+                    output_summary=observation[:300],
+                ))
+
             # Fire progress notification every N iterations
             if outer_stream is not None:
                 if iteration > 0 and iteration % progress_interval == 0:
@@ -658,6 +730,12 @@ class Orchestrator:
             self.session.log_event("task_failed", {"task_id": task.id, "reason": msg})
             # T096: Fire task_failed hook
             self._fire_task_failed_hook(task, msg)
+            # Emit typed TaskFailEvent via stream emitter
+            self._stream_emitter.emit(TaskFailEvent(
+                session_id=getattr(self.session, "_log_path", None) and str(self.session._log_path.stem) or self.session.project_name,
+                task_id=task.id,
+                error=msg,
+            ))
             return {"task_id": task.id, "status": "failed", "error": msg}
 
         # Check all sources are DONE
@@ -671,6 +749,12 @@ class Orchestrator:
             self.session.log_event("task_failed", {"task_id": task.id, "reason": msg})
             # T096: Fire task_failed hook
             self._fire_task_failed_hook(task, msg)
+            # Emit typed TaskFailEvent via stream emitter
+            self._stream_emitter.emit(TaskFailEvent(
+                session_id=getattr(self.session, "_log_path", None) and str(self.session._log_path.stem) or self.session.project_name,
+                task_id=task.id,
+                error=msg,
+            ))
             return {"task_id": task.id, "status": "blocked", "error": msg}
 
         # Gather stored results
@@ -732,6 +816,13 @@ class Orchestrator:
         self._update_hot_memory(task, result_msg)
         # T096: Fire task_complete hook
         self._fire_task_complete_hook(task, result_msg, [output_filename])
+        # Emit typed TaskCompleteEvent via stream emitter
+        self._stream_emitter.emit(TaskCompleteEvent(
+            session_id=getattr(self.session, "_log_path", None) and str(self.session._log_path.stem) or self.session.project_name,
+            task_id=task.id,
+            duration_s=0.0,
+            iterations=0,
+        ))
 
         return {
             "task_id": task.id,

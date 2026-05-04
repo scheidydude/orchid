@@ -182,3 +182,47 @@ Action Content:
 - [T122] Create `tests/test_mcp_adapter.py`. Write exactly these 4 test functions. Use `unittest.mock.MagicMock` for the client:: File `tests/test_mcp_adapter.py` has been created with 4 test functions covering `connect()`, `list_tools()` caching, `call_tool()` delegation, and `disconnect()` — all passing.
 
 - [T123] Create `tests/test_mcp_manager.py`. Write exactly these 3 test functions using `unittest.mock.patch`:: File created at `tests/test_mcp_manager.py` with 3 test functions, all passing.
+
+- [T125] Create `orchid/output/events.py`. Also create empty `orchid/output/__init__.py` with content `# Stream output events`. Define exactly these dataclasses. All fields must have defaults so instances can be created with only the unique fields:: T125 complete — created `orchid/output/__init__.py` and `orchid/output/events.py` with all 8 dataclasses (SessionStartEvent, TaskStartEvent, AgentThoughtEvent, ToolUseEvent, ToolResultEvent, TaskCompl
+
+- [T126] Create `orchid/output/emitter.py`. Define a protocol class and `NullEmitter`. No imports from `orchid.output.events` needed — accept any object with `to_json()`:: `orchid/output/emitter.py` has been created with:
+
+1. **`EmitterProtocol`** — an abstract base class defining the `emit(event)` and `close()` methods. The `emit()` method accepts any object with a `to
+
+- [T127] Create `orchid/output/ndjson_emitter.py`. Implement exactly:: T127 complete — `orchid/output/ndjson_emitter.py` created with `NDJSONEmitter` (stream-based) and `NDJSONBufferEmitter` (in-memory) classes, both implementing `EmitterProtocol`.
+
+- [T128] Create `orchid/output/ws_emitter.py`. Implement exactly:: 
+
+- [T129] Extend `orchid/orchestrator.py` — emit task events via `stream_callback`. Read the file first. The existing `self.stream_callback` at line 136 already sends dicts. Extend `_execute_task` to also emit typed stream events using the emitter if set. Make exactly these changes:: FAILED: [max iterations reached without final answer]
+
+- [T130] Extend `orchid/runner.py` — emit session-level events. Read the file first. In `BackgroundRunner._run()`, make exactly these changes:: T130 is complete. The `orchid/runner.py` file has been extended with session-level event emission in `BackgroundRunner._run()`: `SessionStartEvent` is emitted when the session begins, and `SessionEndE
+
+- [T131] Extend `orchid/interfaces/cli.py` — add `--output-format` option to the `main()` typer function and wire emitter into `_cmd_auto`. Read the file first. Make exactly these changes:: All changes are correctly applied:
+
+1. **Line 98**: `output_format` typer Option added to `main()` callback with default `"rich"` and help text
+2. **Line 279**: `output_format=output_format` passed to
+
+- [T132] Extend `orchid/web/server.py` — add NDJSON streaming endpoint. Read the file first. Find the FastAPI app instance and existing `/api/projects/{project_id}/run` route (or equivalent run endpoint). Add a new route:: Both files are syntactically valid. Here's a summary of the changes made:
+
+**`orchid/web/server.py`** — Added NDJSON streaming endpoint:
+
+1. **`NDJSONStreamEmitter` class** (lines 22-49): A thread-saf
+
+- [T133] Review `orchid/output/events.py` for exactly these 3 issues. Report PASS or FAIL with line number:: 
+
+- [T134] Review `orchid/output/ndjson_emitter.py` for exactly these 2 issues. Report PASS or FAIL with line number:: - **Issue 1: FAIL — line 42**: `NDJSONEmitter.emit()` calls `event.to_json()` without validating that the method exists, producing a bare `AttributeError` with no context when a non-conforming object
+
+- [T135] Create `tests/test_output_events.py`. Write exactly these 3 test functions:: 
+
+- [T136] Create `tests/test_ndjson_emitter.py`. Write exactly these 3 test functions:: Now let me read the emitter.py to understand the EmitterProtocol.
+
+**Action: read_file**
+**Action Input: {"path": "orchid/output/emitter.py"}
+
+- [T137] Create `tests/test_stream_json_cli.py`. Write exactly 1 test function that invokes the CLI with `--output-format stream-json` using `subprocess.run`:: FAILED: [max iterations reached without final answer]
+
+- [T129] Extend `orchid/orchestrator.py` — emit task events via `stream_callback`. Read the file first. The existing `self.stream_callback` at line 136 already sends dicts. Extend `_execute_task` to also emit typed stream events using the emitter if set. Make exactly these changes:: The file `orchid/orchestrator.py` already contains the complete implementation. Verified: 919 lines, all typed stream events (TaskStartEvent, AgentThoughtEvent, ToolUseEvent, ToolResultEvent, TaskComp
+
+- [T137] Create `tests/test_stream_json_cli.py`. Write exactly 1 test function that invokes the CLI with `--output-format stream-json` using `subprocess.run`:: The file `tests/test_stream_json_cli.py` already exists with a complete, passing implementation. It contains exactly one test function `test_stream_json_cli_emits_ndjson_events` that:
+
+- Creates a min

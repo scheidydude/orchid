@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from orchid.lifecycle import ProjectLifecycle
@@ -94,6 +94,10 @@ def main(
     mode: str | None = typer.Option(
         None, "--mode", "-m",
         help="Run mode: auto (autonomous) | interactive (chat)",
+    ),
+    output_format: str = typer.Option(
+        "rich", "--output-format", "-o",
+        help="Output format: rich (default) | stream-json (NDJSON events to stdout)",
     ),
     status: bool = typer.Option(False, "--status", "-s", help="Show task board and hot memory"),
     add_task: str | None = typer.Option(
@@ -272,6 +276,7 @@ def main(
             provider_overrides=provider_overrides,
             offline=offline,
             trace=trace,
+            output_format=output_format,
         )
     elif mode == "interactive":
         _cmd_interactive(proj, model=code_model)
@@ -290,6 +295,7 @@ def _cmd_auto(
     provider_overrides: dict[str, str] | None = None,
     offline: bool = False,
     trace: bool = False,
+    output_format: str = "rich",
 ) -> None:
     """Autonomous mode — run all pending tasks."""
     session = _make_session(project)
@@ -318,12 +324,20 @@ def _cmd_auto(
         raise typer.Exit()
 
     from orchid.orchestrator import Orchestrator
+    from orchid.output.emitter import NullEmitter
+    from orchid.output.ndjson_emitter import NDJSONEmitter
+
+    stream_emitter: Any = NullEmitter()
+    if output_format == "stream-json":
+        stream_emitter = NDJSONEmitter()
+
     orch = Orchestrator(
         session,
         cli_model_override=code_model,
         cli_provider_overrides=provider_overrides,
         offline_mode=offline,
         trace_enabled=trace,
+        stream_emitter=stream_emitter,
     )
     if trace:
         trace_path = session.project_dir / ".orchid" / "trace.log"
@@ -358,6 +372,7 @@ def _cmd_run_task(
     ))
 
     from orchid.orchestrator import Orchestrator
+
     orch = Orchestrator(session, cli_model_override=code_model, offline_mode=offline, trace_enabled=trace)
     if trace:
         trace_path = session.project_dir / ".orchid" / "trace.log"

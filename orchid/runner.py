@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
@@ -52,7 +53,7 @@ class BackgroundRunner:
             if not state or not state.future or state.future.done():
                 return False
             state.cancel_event.set()
-        return True
+        return False
 
     def get_status(self, project_path: str) -> dict[str, Any]:
         with self._lock:
@@ -68,23 +69,42 @@ class BackgroundRunner:
     # ── Internal ────────────────────────────────────────────────────────────────
 
     def _run(self, project_path: str, state: _ProjectState) -> None:
+        from orchid.memory.state import TaskStatus
+        from orchid.mcp.manager import MCPManager
+        from orchid.orchestrator import Orchestrator
+        from orchid.output.emitter import NullEmitter
+        from orchid.output.events import SessionEndEvent, SessionStartEvent
+        from orchid.session import Session
+
+        session = Session(project_dir=project_path)
+        session.load()
+        orch = Orchestrator(session)
+
+        mcp = MCPManager()
+        mcp.discover_servers()
         try:
-            from orchid.memory.state import TaskStatus
-            from orchid.mcp.manager import MCPManager
-            from orchid.orchestrator import Orchestrator
-            from orchid.session import Session
+            mcp.connect()
+        except Exception:
+            logger.warning("MCP server connection failed for %s", project_path)
 
-            session = Session(project_dir=project_path)
-            session.load()
-            orch = Orchestrator(session)
+        # Session-level stream emitter
+        emitter = NullEmitter()
+        session_start_ts = time.monotonic()
 
-            mcp = MCPManager()
-            mcp.discover_servers()
-            try:
-                mcp.connect()
-            except Exception:
-                logger.warning("MCP server connection failed for %s", project_path)
+        # Try to wire into the web-stream emitter if one is registered
+        from orchid.web.server import _stream_emitters
+        web_emitter = _stream_emitters.get(project_path)
+        if web_emitter is not None:
+            emitter = web_emitter
 
+        # Emit session start event
+        emitter.emit(SessionStartEvent(
+            session_id=session.project_name,
+            project=project_path,
+            mode="auto",
+        ))
+
+        try:
             while not state.cancel_event.is_set():
                 task = session.next_task()
                 if task is None:
@@ -107,3 +127,12 @@ class BackgroundRunner:
                 mcp.disconnect()
             except NameError:
                 pass
+
+        # Emit session end event
+        duration_s = time.monotonic() - session_start_ts
+        emitter.emit(SessionEndEvent(
+            session_id=session.project_name,
+            task_count=state.tasks_done,
+            duration_s=round(duration_s, 2),
+        ))
+        emitter.close()
