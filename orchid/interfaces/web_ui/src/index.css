@@ -717,3 +717,90 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
   max-height: 300px;
   color: var(--text);
 }
+
+/* ── Mobile Responsive (≤768px) ─────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  /* Overflow guard */
+  body, #root { overflow-x: hidden; max-width: 100vw; }
+
+  /* Header shrink */
+  .app-header { padding: 8px 12px; gap: 8px; }
+  .app-header .logo { font-size: 16px; }
+  .project-path { display: none; }
+
+  /* Sidebar → horizontal scrolling strip */
+  .app-body { flex-direction: column; }
+  .sidebar {
+    width: 100%;
+    height: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 4px 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    scrollbar-width: none;
+  }
+  .sidebar::-webkit-scrollbar { display: none; }
+
+  /* Project items lay out horizontally */
+  .project-item {
+    border-left: none;
+    border-bottom: 3px solid transparent;
+    padding: 6px 14px;
+    white-space: nowrap;
+    flex-shrink: 0;
+    min-width: 0;
+  }
+  .project-item.active {
+    border-left-color: transparent;
+    border-bottom-color: var(--accent);
+  }
+  /* Hide noisy detail in compact strip */
+  .project-counts { display: none; }
+  .project-group-header { display: none; }
+
+  /* Tab bar — horizontal scroll, no wrap */
+  .panel-tabs {
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding: 8px 12px 0;
+    gap: 2px;
+  }
+  .panel-tabs::-webkit-scrollbar { display: none; }
+  .panel-tab { flex-shrink: 0; font-size: 12px; padding: 5px 10px; }
+
+  /* Panel body full width, reduced padding */
+  .panel-body { padding: 8px; }
+
+  /* Run controls — allow wrapping on small screens */
+  .run-controls { flex-wrap: wrap; gap: 8px; padding: 8px 12px; }
+  .run-controls select { width: auto; max-width: 100%; }
+
+  /* Modal — full screen on mobile */
+  .modal { width: 100%; max-width: 100vw; border-radius: 0; padding: 16px; }
+  .modal-overlay { align-items: flex-end; }
+
+  /* Wizard modal */
+  .wizard-modal { width: 100%; }
+
+  /* Approval panel — no fixed max-width */
+  .approval-panel { padding: 12px; max-width: 100%; }
+
+  /* Settings — full width */
+  .settings-panel { padding: 12px; max-width: 100%; }
+  .project-settings-panel { padding: 12px; max-width: 100%; }
+
+  /* Discussion input — stack vertically on very narrow */
+  .discussion-input-row { gap: 6px; padding: 8px 12px; }
+  .provider-select { width: 70px; }
+
+  /* Recall form */
+  .recall-form { flex-wrap: wrap; }
+}
