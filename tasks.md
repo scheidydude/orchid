@@ -1,6 +1,516 @@
 # Tasks
 
 
+## TODO
+
+## Feature 2: MCP Adapter Layer
+
+Close gap: *Claude Code supports hundreds of MCP servers. Orchid has no MCP support.*  
+Design decisions (resolved here, not left to agent):
+- All clients are **synchronous** (`subprocess.Popen` + `httpx.Client`) to match Orchid's sync architecture.
+- Tool names namespaced `mcp__<server_name>__<tool_name>`.
+- Tools injected into `BaseAgent` via existing `register_tool(name, fn)` at line 332 of `orchid/agents/base.py`.
+- Config read from `orchid/config.py`'s dict-based `get()` system — no new dataclass needed.
+- MCP wiring entry point: `orchid/runner.py` `BackgroundRunner._run()` and `orchid/interfaces/cli.py` `_cmd_auto()`.
+
+### Code Generation
+
+- [ ] **T105** Create `orchid/mcp/types.py`. Also create empty `orchid/mcp/__init__.py` with content `# MCP adapter layer`. Define exactly these three dataclasses and nothing else:
+  ```python
+  from dataclasses import dataclass, field
+
+  @dataclass
+  class MCPToolParam:
+      name: str
+      type: str        # one of: "string" "integer" "boolean" "object" "array"
+      description: str
+      required: bool = True
+
+  @dataclass
+  class MCPTool:
+      name: str
+      description: str
+      params: list["MCPToolParam"] = field(default_factory=list)
+
+  @dataclass
+  class MCPResult:
+      content: str
+      is_error: bool = False
+  ```
+  `type:code_generate` `p1`
+
+- [ ] **T106** Create `orchid/mcp/client.py`. Define exactly one ABC and one exception class:
+  ```python
+  from abc import ABC, abstractmethod
+  from typing import Any
+  from orchid.mcp.types import MCPTool, MCPResult
+
+  class MCPClientError(Exception):
+      pass
+
+  class MCPClient(ABC):
+      @abstractmethod
+      def connect(self) -> None: ...
+
+      @abstractmethod
+      def disconnect(self) -> None: ...
+
+      @abstractmethod
+      def list_tools(self) -> list[MCPTool]: ...
+
+      @abstractmethod
+      def call_tool(self, name: str, arguments: dict[str, Any]) -> MCPResult: ...
+  ```
+  `type:code_generate` `p1` `needs:T105`
+
+- [ ] **T107** Create `orchid/mcp/stdio_client.py`. Implement exactly this class using `subprocess.Popen`:
+  ```python
+  import json, subprocess, time
+  from typing import Any
+  from orchid.mcp.client import MCPClient, MCPClientError
+  from orchid.mcp.types import MCPTool, MCPToolParam, MCPResult
+
+  class StdioMCPClient(MCPClient):
+      def __init__(self, command: str, args: list[str],
+                   env: dict[str, str] | None = None, timeout: float = 30.0): ...
+      # Stores: self._command, self._args, self._env, self._timeout,
+      #         self._process (subprocess.Popen | None), self._req_id (int = 0)
+
+      def connect(self) -> None: ...
+      # subprocess.Popen([self._command, *self._args], env={**os.environ, **(self._env or {})},
+      #   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+      # Sends initialize JSON-RPC: {"jsonrpc":"2.0","method":"initialize","id":0,
+      #   "params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"orchid","version":"1.0"}}}
+      # Reads response via _recv(). Raises MCPClientError if process fails to start.
+
+      def disconnect(self) -> None: ...
+      # Sends {"jsonrpc":"2.0","method":"shutdown","id":<n>,"params":{}}, reads response.
+      # Calls self._process.terminate(), waits up to 5s with self._process.wait(timeout=5),
+      # then self._process.kill() if still alive. Sets self._process = None.
+
+      def list_tools(self) -> list[MCPTool]: ...
+      # Calls _send("tools/list", {}). Parses result["tools"] list.
+      # Each tool dict has "name", "description", optionally "inputSchema".
+      # Returns list[MCPTool]. If inputSchema has "properties", parse into MCPToolParam list.
+
+      def call_tool(self, name: str, arguments: dict[str, Any]) -> MCPResult: ...
+      # Calls _send("tools/call", {"name": name, "arguments": arguments}).
+      # If result has "isError": True -> return MCPResult(content=str(result.get("content","")), is_error=True)
+      # Else -> return MCPResult(content=str(result.get("content", "")))
+
+      def _send(self, method: str, params: dict[str, Any]) -> dict[str, Any]: ...
+      # self._req_id += 1. Builds msg = {"jsonrpc":"2.0","method":method,"id":self._req_id,"params":params}.
+      # Writes json.dumps(msg).encode() + b"\n" to self._process.stdin. Flushes.
+      # Calls _recv(). If response has "error" key -> raise MCPClientError(response["error"]["message"]).
+      # Returns response["result"].
+
+      def _recv(self) -> dict[str, Any]: ...
+      # Sets self._process.stdout timeout via select or reads with deadline using time.time().
+      # Reads one line from self._process.stdout. If empty -> raise MCPClientError("server exited").
+      # Returns json.loads(line).
+      # Implement timeout: use select.select([self._process.stdout], [], [], self._timeout)
+      # before reading. If no data -> raise MCPClientError("timeout waiting for server response").
+  ```
+  `type:code_generate` `p1` `needs:T106`
+
+- [ ] **T108** Create `orchid/mcp/http_client.py`. Implement exactly this class using `httpx.Client` (sync):
+  ```python
+  import httpx
+  from typing import Any
+  from orchid.mcp.client import MCPClient, MCPClientError
+  from orchid.mcp.types import MCPTool, MCPToolParam, MCPResult
+
+  class HttpMCPClient(MCPClient):
+      def __init__(self, url: str, headers: dict[str, str] | None = None,
+                   timeout: float = 30.0): ...
+      # Stores: self._base_url = url.rstrip("/"), self._headers = headers or {},
+      #         self._timeout = timeout, self._client (httpx.Client | None)
+
+      def connect(self) -> None: ...
+      # self._client = httpx.Client(follow_redirects=False, timeout=self._timeout,
+      #                              headers=self._headers)
+      # Sends GET self._base_url + "/health" (ignore 404 — only fail on connection error).
+      # Wraps httpx.ConnectError -> MCPClientError("cannot connect to " + self._base_url).
+
+      def disconnect(self) -> None: ...
+      # self._client.close(). Sets self._client = None.
+
+      def list_tools(self) -> list[MCPTool]: ...
+      # Calls _post("/tools/list", {}). Parses response["tools"] -> list[MCPTool].
+      # Same MCPToolParam parsing as StdioMCPClient.list_tools().
+
+      def call_tool(self, name: str, arguments: dict[str, Any]) -> MCPResult: ...
+      # Calls _post("/tools/call", {"name": name, "arguments": arguments}).
+      # If response.get("isError") -> MCPResult(content=str(response.get("content","")), is_error=True)
+      # Else -> MCPResult(content=str(response.get("content", "")))
+
+      def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]: ...
+      # self._client.post(self._base_url + path, json=body).
+      # Catches httpx.TimeoutException -> raise MCPClientError("timeout").
+      # If response.status_code != 200 -> raise MCPClientError(f"HTTP {response.status_code}: {response.text[:200]}").
+      # Returns response.json().
+  ```
+  `type:code_generate` `p1` `needs:T106`
+
+- [ ] **T109** Create `orchid/mcp/adapter.py`. Implement exactly this class:
+  ```python
+  from orchid.mcp.client import MCPClient
+  from orchid.mcp.types import MCPTool, MCPResult
+
+  _MAX_DESC = 200  # truncate tool descriptions to prevent prompt injection
+
+  class MCPToolAdapter:
+      def __init__(self, server_name: str, client: MCPClient,
+                   allowed_tools: list[str] | None = None): ...
+      # Stores: self._server_name, self._client, self._allowed_tools, self._tools: list[MCPTool] = []
+
+      def load_tools(self) -> None: ...
+      # self._tools = self.filter_tools(self._client.list_tools())
+
+      def get_tool_names(self) -> list[str]: ...
+      # return [f"mcp__{self._server_name}__{t.name}" for t in self._tools]
+
+      def get_tools_for_prompt(self) -> str: ...
+      # return "\n".join(
+      #   f"mcp__{self._server_name}__{t.name}: {t.description[:_MAX_DESC]}"
+      #   for t in self._tools
+      # )
+
+      def is_mcp_action(self, action_name: str) -> bool: ...
+      # return action_name.startswith(f"mcp__{self._server_name}__")
+
+      def execute(self, action_name: str, arguments: dict) -> str: ...
+      # tool_name = action_name[len(f"mcp__{self._server_name}__"):]
+      # result = self._client.call_tool(tool_name, arguments)
+      # return f"[ERROR: {result.content}]" if result.is_error else result.content
+
+      def filter_tools(self, tools: list[MCPTool]) -> list[MCPTool]: ...
+      # if self._allowed_tools is None: return tools
+      # return [t for t in tools if t.name in self._allowed_tools]
+
+      def as_tool_fn(self, tool_name: str):
+      # Returns a callable suitable for BaseAgent.register_tool().
+      # Signature: def _fn(args: dict) -> str
+      # Calls self.execute(f"mcp__{self._server_name}__{tool_name}", args)
+      # Catches MCPClientError -> returns f"[ERROR: {e}]"
+          ...
+  ```
+  `type:code_generate` `p1` `needs:T107,T108`
+
+- [ ] **T110** Create `orchid/mcp/manager.py`. Implement exactly this class. It is fully synchronous:
+  ```python
+  import logging, time
+  from orchid.mcp.adapter import MCPToolAdapter
+  from orchid.mcp.client import MCPClientError
+
+  logger = logging.getLogger(__name__)
+
+  class MCPManager:
+      def __init__(self, project_config: dict): ...
+      # project_config is the dict from orchid.config.configure_for_project().
+      # self._server_configs: list[dict] = project_config.get("mcp_servers") or []
+      # self._adapters: list[MCPToolAdapter] = []
+
+      def start_all(self) -> None: ...
+      # For each cfg in self._server_configs where cfg.get("enabled", True) is True:
+      #   Build client: if cfg["kind"] == "stdio" -> StdioMCPClient(cfg["command"], cfg.get("args",[]), cfg.get("env"))
+      #                 if cfg["kind"] == "http"  -> HttpMCPClient(cfg["url"], cfg.get("headers"))
+      #   adapter = MCPToolAdapter(cfg["name"], client, cfg.get("allowed_tools"))
+      #   if _start_with_retry(adapter): self._adapters.append(adapter)
+
+      def stop_all(self) -> None: ...
+      # For each adapter in self._adapters: adapter._client.disconnect() (catch and log exceptions).
+      # self._adapters.clear()
+
+      def get_adapters(self) -> list[MCPToolAdapter]: ...
+      # return self._adapters
+
+      def get_tools_prompt_block(self) -> str: ...
+      # lines = [a.get_tools_for_prompt() for a in self._adapters if a.get_tool_names()]
+      # if not lines: return ""
+      # return "\n## MCP Tools\n" + "\n".join(lines) + "\n"
+
+      def execute_mcp_action(self, action_name: str, arguments: dict) -> str | None: ...
+      # for adapter in self._adapters:
+      #   if adapter.is_mcp_action(action_name): return adapter.execute(action_name, arguments)
+      # return None
+
+      def inject_into_agent(self, agent) -> None: ...
+      # Calls agent.register_tool(namespaced_name, adapter.as_tool_fn(tool_name))
+      # for each adapter in self._adapters, for each tool_name in adapter._tools.
+      # Also appends manager.get_tools_prompt_block() to agent.session_context.
+
+      def _start_with_retry(self, adapter: MCPToolAdapter, max_retries: int = 3) -> bool: ...
+      # Tries adapter._client.connect() then adapter.load_tools().
+      # On MCPClientError: waits 1s, 2s, 4s between retries (time.sleep(2**attempt)).
+      # Logs warning on each failure. Returns True on success, False after all retries.
+  ```
+  `type:code_generate` `p1` `needs:T109`
+
+- [ ] **T111** Extend `orchid/orchid.defaults.yaml` — append MCP servers section. Read the file first to find its end. Append exactly this block at the bottom of the file:
+  ```yaml
+
+  # MCP server integrations (Model Context Protocol)
+  # Orchid connects to MCP servers and exposes their tools to agents as ReAct actions.
+  # Tool names are namespaced: mcp__<name>__<tool_name>
+  mcp_servers: []
+  # Example stdio server (npx-based):
+  # mcp_servers:
+  #   - name: github
+  #     kind: stdio
+  #     command: npx
+  #     args: ["-y", "@modelcontextprotocol/server-github"]
+  #     env:
+  #       GITHUB_PERSONAL_ACCESS_TOKEN: ""
+  #     enabled: false
+  #     allowed_tools: null    # null = all tools; list restricts e.g. ["create_issue"]
+  # Example HTTP server:
+  #   - name: myserver
+  #     kind: http
+  #     url: "http://localhost:8090"
+  #     enabled: false
+  #     allowed_tools: null
+  ```
+  `type:code_generate` `p1`
+
+- [ ] **T112** Extend `orchid/config.py` — add one helper function. Read the file first. Append after the last function in the file:
+  ```python
+  def get_mcp_servers(project_config: dict) -> list[dict]:
+      """Return normalised list of mcp_server dicts from a merged project config.
+
+      Fills missing keys with defaults so callers never need to check key existence.
+      """
+      raw = project_config.get("mcp_servers") or []
+      result = []
+      for s in raw:
+          result.append({
+              "name":          s["name"],
+              "kind":          s.get("kind", "stdio"),
+              "command":       s.get("command", ""),
+              "args":          s.get("args", []),
+              "env":           s.get("env", {}),
+              "url":           s.get("url", ""),
+              "headers":       s.get("headers", {}),
+              "enabled":       s.get("enabled", True),
+              "allowed_tools": s.get("allowed_tools", None),
+          })
+      return result
+  ```
+  `type:code_generate` `p1`
+
+- [ ] **T113** Extend `orchid/orchestrator.py` — wire `MCPManager` into task execution. Read the file first. Make exactly two changes:
+  1. In `Orchestrator.__init__` (line 115), add parameter `mcp_manager=None` after `trace_enabled: bool = False`. Add `self.mcp_manager = mcp_manager` in the body.
+  2. In `Orchestrator._execute_task` (line 192), find where agent is constructed (search for `agent = agent_cls(`). After that agent construction line, add:
+     ```python
+     if self.mcp_manager:
+         self.mcp_manager.inject_into_agent(agent)
+     ```
+  Add import at top of file (inside the method using TYPE_CHECKING guard to avoid circular import):
+  ```python
+  # at top of _execute_task, alongside other local imports:
+  from orchid.mcp.manager import MCPManager  # noqa: F401 — type hint only
+  ```
+  `type:code_generate` `p1` `needs:T110`
+
+- [ ] **T114** Extend `orchid/runner.py` — create and teardown `MCPManager` around the run loop. Read the file first. In `BackgroundRunner._run()` (line 70), make exactly these two changes:
+  1. After `session.load()` (line 77) and before `orch = Orchestrator(session)` (line 78), add:
+     ```python
+     from orchid.config import configure_for_project
+     from orchid.mcp.manager import MCPManager
+     proj_cfg = configure_for_project(project_path)
+     mcp_manager = MCPManager(proj_cfg)
+     mcp_manager.start_all()
+     ```
+  2. Change `orch = Orchestrator(session)` to `orch = Orchestrator(session, mcp_manager=mcp_manager)`.
+  3. In the `finally:` block (line 97), before `state.current_task = None`, add:
+     ```python
+     mcp_manager.stop_all()
+     ```
+  `type:code_generate` `p1` `needs:T113`
+
+- [ ] **T115** Extend `orchid/interfaces/cli.py` — add `mcp` Typer sub-app with two commands. Read the file first. Find the pattern where sub-apps are registered (search for `app.add_typer`). Add a new sub-app with these two commands:
+  ```python
+  mcp_app = typer.Typer(name="mcp", help="Manage MCP server integrations.")
+  app.add_typer(mcp_app)
+
+  @mcp_app.command("list")
+  def _cmd_mcp_list(project: str = typer.Option(".", "--project", "-p")):
+      """List all configured MCP servers and their discovered tools."""
+      from orchid.config import configure_for_project
+      from orchid.mcp.manager import MCPManager
+      proj_cfg = configure_for_project(project)
+      mgr = MCPManager(proj_cfg)
+      mgr.start_all()
+      for adapter in mgr.get_adapters():
+          names = adapter.get_tool_names()
+          typer.echo(f"{adapter._server_name}: {len(names)} tools")
+          for n in names:
+              typer.echo(f"  {n}")
+      mgr.stop_all()
+
+  @mcp_app.command("test")
+  def _cmd_mcp_test(
+      server_name: str = typer.Argument(..., help="Server name from .orchid.yaml"),
+      project: str = typer.Option(".", "--project", "-p"),
+  ):
+      """Connect to one MCP server, list its tools, and disconnect."""
+      from orchid.config import configure_for_project
+      from orchid.mcp.manager import MCPManager
+      from orchid.mcp.client import MCPClientError
+      proj_cfg = configure_for_project(project)
+      mgr = MCPManager(proj_cfg)
+      # Only start the named server: filter _server_configs
+      mgr._server_configs = [c for c in mgr._server_configs if c["name"] == server_name]
+      if not mgr._server_configs:
+          typer.echo(f"No server named '{server_name}' in .orchid.yaml", err=True)
+          raise typer.Exit(1)
+      mgr.start_all()
+      if not mgr.get_adapters():
+          typer.echo(f"Failed to connect to '{server_name}'", err=True)
+          raise typer.Exit(1)
+      for adapter in mgr.get_adapters():
+          typer.echo(adapter.get_tools_for_prompt())
+      mgr.stop_all()
+  ```
+  `type:code_generate` `p2` `needs:T110`
+
+### Review
+
+- [ ] **T116** Review `orchid/mcp/stdio_client.py` for exactly these 4 issues. For each, report PASS or FAIL with the line number:
+  1. `_recv()` — does it use `select.select` with `self._timeout` before reading stdout? FAIL if it calls `readline()` without any timeout.
+  2. `disconnect()` — does it call `self._process.wait(timeout=5)` and then `self._process.kill()` if `wait` raises `subprocess.TimeoutExpired`?
+  3. `connect()` — does it merge env vars with `{**os.environ, **(self._env or {})}` so the subprocess inherits PATH?
+  4. `_send()` — does it call `self._process.stdin.flush()` after writing the JSON line?
+  `type:review` `p1` `needs:T107`
+
+- [ ] **T117** Review `orchid/mcp/http_client.py` for exactly these 4 issues. For each, report PASS or FAIL with the line number:
+  1. `_post()` — is `httpx.Client` created with `follow_redirects=False`?
+  2. `_post()` — does it catch `httpx.TimeoutException` and re-raise as `MCPClientError("timeout")`?
+  3. `_post()` — on non-200 status, does the `MCPClientError` message include both the status code and the first 200 chars of the response body?
+  4. `connect()` — does it wrap `httpx.ConnectError` and re-raise as `MCPClientError`?
+  `type:review` `p1` `needs:T108`
+
+- [ ] **T118** Review `orchid/mcp/adapter.py` for exactly these 3 issues. For each, report PASS or FAIL with the line number:
+  1. `get_tools_for_prompt()` — is description sliced to `[:_MAX_DESC]` (200 chars) before inclusion in the prompt string?
+  2. `execute()` — when `MCPResult.is_error` is True, does the returned string start with `"[ERROR: "` so agents can detect failures?
+  3. `load_tools()` — does it call `filter_tools()` before storing to `self._tools`, ensuring `self._tools` only ever contains allowed tools?
+  `type:review` `p1` `needs:T109`
+
+### Testing
+
+- [ ] **T119** Create `tests/test_mcp_types.py`. Write exactly these 3 test functions, no fixtures needed:
+  ```python
+  def test_mcp_tool_default_params_empty():
+      from orchid.mcp.types import MCPTool
+      t = MCPTool(name="x", description="y")
+      assert t.params == []
+
+  def test_mcp_result_not_error_by_default():
+      from orchid.mcp.types import MCPResult
+      r = MCPResult(content="ok")
+      assert r.is_error is False
+
+  def test_mcp_tool_param_required_default():
+      from orchid.mcp.types import MCPToolParam
+      p = MCPToolParam(name="p", type="string", description="d")
+      assert p.required is True
+  ```
+  `type:test_write` `p1` `needs:T105`
+
+- [ ] **T120** Create `tests/test_mcp_stdio_client.py`. Write exactly these 4 test functions using `unittest.mock.patch`:
+  ```python
+  # test_list_tools_parses_jsonrpc_response:
+  #   Mock subprocess.Popen so stdout.readline() returns the bytes of this JSON line:
+  #   {"jsonrpc":"2.0","id":1,"result":{}}   (initialize response)
+  #   then {"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"echo","description":"echoes"}]}}
+  #   Call client.connect() then client.list_tools().
+  #   Assert result == [MCPTool(name="echo", description="echoes")]
+
+  # test_call_tool_sends_correct_jsonrpc:
+  #   Capture bytes written to mock stdin.
+  #   Call client.call_tool("echo", {"msg": "hi"}).
+  #   Parse the written JSON. Assert method=="tools/call", params=={"name":"echo","arguments":{"msg":"hi"}}.
+
+  # test_server_exit_raises_mcp_client_error:
+  #   Mock stdout.readline() returns b"" (EOF).
+  #   Call client._recv(). Assert raises MCPClientError.
+
+  # test_disconnect_terminates_process:
+  #   After connect(), call disconnect().
+  #   Assert mock_process.terminate() was called.
+  ```
+  `type:test_write` `p1` `needs:T107`
+
+- [ ] **T121** Create `tests/test_mcp_http_client.py`. Write exactly these 3 test functions using `respx` to mock httpx:
+  ```python
+  # test_list_tools_parses_response:
+  #   Mock POST /tools/list -> 200 {"tools":[{"name":"search","description":"web search"}]}
+  #   Call client.connect() then client.list_tools().
+  #   Assert result == [MCPTool(name="search", description="web search")]
+
+  # test_call_tool_sends_correct_body:
+  #   Mock POST /tools/call -> 200 {"content":"result","isError":false}
+  #   Capture request body. Call client.call_tool("search", {"q": "python"}).
+  #   Assert request body == {"name": "search", "arguments": {"q": "python"}}.
+
+  # test_non_200_raises_mcp_client_error:
+  #   Mock POST /tools/list -> 500 "Internal error"
+  #   Call client.list_tools(). Assert raises MCPClientError with "HTTP 500" in str(exc).
+  ```
+  `type:test_write` `p1` `needs:T108`
+
+- [ ] **T122** Create `tests/test_mcp_adapter.py`. Write exactly these 4 test functions. Use `unittest.mock.MagicMock` for the client:
+  ```python
+  # test_tool_names_are_namespaced:
+  #   mock_client.list_tools.return_value = [MCPTool("issues", "list issues")]
+  #   adapter = MCPToolAdapter("gh", mock_client)
+  #   adapter.load_tools()
+  #   assert adapter.get_tool_names() == ["mcp__gh__issues"]
+
+  # test_allowed_tools_filter:
+  #   mock_client.list_tools.return_value = [MCPTool("issues","x"), MCPTool("pulls","y")]
+  #   adapter = MCPToolAdapter("gh", mock_client, allowed_tools=["issues"])
+  #   adapter.load_tools()
+  #   assert adapter.get_tool_names() == ["mcp__gh__issues"]
+
+  # test_execute_returns_content:
+  #   mock_client.call_tool.return_value = MCPResult(content="42 results")
+  #   result = adapter.execute("mcp__gh__issues", {})
+  #   assert result == "42 results"
+
+  # test_execute_error_is_prefixed:
+  #   mock_client.call_tool.return_value = MCPResult(content="not found", is_error=True)
+  #   result = adapter.execute("mcp__gh__issues", {})
+  #   assert result.startswith("[ERROR: ")
+  ```
+  `type:test_write` `p1` `needs:T109`
+
+- [ ] **T123** Create `tests/test_mcp_manager.py`. Write exactly these 3 test functions using `unittest.mock.patch`:
+  ```python
+  # test_disabled_server_is_skipped:
+  #   project_config = {"mcp_servers": [{"name":"gh","kind":"stdio","command":"npx",
+  #     "args":[],"enabled":False,"allowed_tools":None}]}
+  #   mgr = MCPManager(project_config)
+  #   mgr.start_all()
+  #   assert mgr.get_adapters() == []
+
+  # test_start_all_populates_adapters:
+  #   Patch StdioMCPClient.connect and StdioMCPClient.list_tools (returns [MCPTool("t","d")]).
+  #   project_config = {"mcp_servers": [{"name":"test","kind":"stdio","command":"echo",
+  #     "args":[],"enabled":True,"allowed_tools":None}]}
+  #   mgr = MCPManager(project_config)
+  #   mgr.start_all()
+  #   assert len(mgr.get_adapters()) == 1
+
+  # test_execute_mcp_action_routes_correctly:
+  #   Two adapters: "gh" (tools: ["issues"]) and "jira" (tools: ["ticket"]).
+  #   Call mgr.execute_mcp_action("mcp__gh__issues", {}).
+  #   Assert gh adapter._client.call_tool was called; jira adapter._client.call_tool was NOT called.
+  ```
+  `type:test_write` `p1` `needs:T110`
+
+- [ ] **T124** Create `tests/test_mcp_integration.py`. Write exactly 1 test function. Start a real Python subprocess as a minimal MCP server using `python3 -c "<inline script>"`. The inline script must: listen on stdin, respond to `initialize` with `{"jsonrpc":"2.0","id":0,"result":{}}`, respond to `tools/list` with one tool named `echo`, respond to `tools/call` with `{"content": arguments["msg"], "isError": false}`. Test: `StdioMCPClient.connect()`, `list_tools()` returns `[MCPTool("echo",…)]`, `call_tool("echo", {"msg":"hello"})` returns `MCPResult(content="hello")`. Use `pytest.mark.skipif(sys.platform=="win32", reason="POSIX only")`. `type:test_write` `p1` `needs:T107`
+
 ## DONE
 
 - [x] **T088** Fix Discussion panel focus: after AI responds in the Discussion tab the message input loses focus and clicking it doesn't restore it. User has to leave the panel and come back. Fix: after each AI response completes, programmatically re-focus the message input using inputRef.current?.focus(). Also when the AI presents numbered options in its response, clicking an option fills the input but does not focus it — add focus() call after filling the input value. `type:code_generate` `p1`

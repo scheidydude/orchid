@@ -97,32 +97,23 @@ def load_tasks(project_dir: str | Path = ".") -> list[Task]:
     path = Path(project_dir) / cfg.get("memory.tasks_file", "tasks.md")
     if not path.exists():
         return []
-    tasks = []
-    in_comment = False
-    for line in path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if "<!--" in stripped:
-            in_comment = True
-        if in_comment:
-            if "-->" in stripped:
-                in_comment = False
-            continue
-        m = _TASK_LINE_RE.match(stripped)
-        if not m:
-            continue
 
+    def _build_task(m: re.Match, continuation: list[str]) -> Task:
         body = m.group("body")
+        # Strip trailing blank lines
+        while continuation and not continuation[-1].strip():
+            continuation.pop()
+        continuation_text = "\n".join(ln.strip() for ln in continuation)
 
-        # Split title from metadata at first annotation tag
+        # Metadata may live on the header line or on a continuation line
         meta_m = _META_BOUNDARY_RE.search(body)
         if meta_m:
             title = body[:meta_m.start()].strip()
-            meta_str = body[meta_m.start():]
+            meta_str = body[meta_m.start():] + "\n" + continuation_text
         else:
             title = body.strip()
-            meta_str = ""
+            meta_str = continuation_text
 
-        # Extract all metadata from meta_str
         type_m = re.search(r"`type:([^`]+)`", meta_str)
         pri_m = re.search(r"`p(\d)`", meta_str)
         agent_m = re.search(r"`agent:([^`]+)`", meta_str)
@@ -141,7 +132,7 @@ def load_tasks(project_dir: str | Path = ".") -> list[Task]:
             if rollup_m else []
         )
 
-        tasks.append(Task(
+        return Task(
             id=m.group("id").strip(),
             title=title,
             status=_SC_MAP.get(m.group("sc"), TaskStatus.TODO),
@@ -153,7 +144,61 @@ def load_tasks(project_dir: str | Path = ".") -> list[Task]:
             model_override=model_m.group(1).strip() if model_m else None,
             rollup_sources=rollup_sources,
             output_file=output_m.group(1).strip() if output_m else None,
-        ))
+            description=continuation_text.strip(),
+        )
+
+    tasks: list[Task] = []
+    current_match: re.Match | None = None
+    current_continuation: list[str] = []
+    in_comment = False
+    in_fence = False
+
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+
+        if "<!--" in stripped:
+            in_comment = True
+        if in_comment:
+            if "-->" in stripped:
+                in_comment = False
+            continue
+
+        m = _TASK_LINE_RE.match(stripped)
+        if m:
+            if current_match is not None:
+                tasks.append(_build_task(current_match, current_continuation))
+            current_match = m
+            current_continuation = []
+            in_fence = False
+            continue
+
+        if current_match is None:
+            continue
+
+        # Track opening/closing of fenced code blocks
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+            current_continuation.append(line)
+            continue
+
+        if in_fence:
+            # Inside a code fence: collect everything (including blank lines)
+            current_continuation.append(line)
+            continue
+
+        # Outside a fence: collect indented or blank lines; a non-blank
+        # non-indented line (e.g. section header) terminates the block.
+        if not stripped or line.startswith("  ") or line.startswith("\t"):
+            current_continuation.append(line)
+        else:
+            tasks.append(_build_task(current_match, current_continuation))
+            current_match = None
+            current_continuation = []
+            in_fence = False
+
+    if current_match is not None:
+        tasks.append(_build_task(current_match, current_continuation))
+
     return tasks
 
 
