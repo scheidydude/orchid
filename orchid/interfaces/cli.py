@@ -1634,6 +1634,95 @@ def serve(
     )
 
 
+
+# ── MCP sub-app ───────────────────────────────────────────────────────────────
+
+mcp_app = typer.Typer(
+    name="mcp",
+    help="Manage MCP (Model Context Protocol) servers and tools.",
+)
+
+
+@mcp_app.command()
+def ls(
+    project: str = typer.Option(".", "--project", "-p", help="Project directory"),
+) -> None:
+    """List all tools available from configured MCP servers."""
+    from rich.markup import escape
+
+    from orchid import config as cfg
+    from orchid.mcp.manager import MCPManager
+
+    cfg.configure_for_project(_resolve_project(project))
+    manager = MCPManager()
+    manager.discover_servers()
+    manager.connect()
+    try:
+        tools = manager.list_tools()
+        if not tools:
+            console.print("[yellow]No MCP tools found.[/yellow]")
+            return
+
+        table = Table(title="MCP Tools", show_lines=True)
+        table.add_column("Server", style="cyan", no_wrap=True)
+        table.add_column("Tool", style="bold")
+        table.add_column("Description", style="dim")
+
+        by_server = manager.list_tools_by_server()
+        for server_name, server_tools in by_server.items():
+            for tool in server_tools:
+                desc = escape(tool.description)[:120] if tool.description else ""
+                table.add_row(server_name, tool.name, desc)
+
+        console.print(table)
+    finally:
+        manager.disconnect()
+
+
+@mcp_app.command()
+def call(
+    project: str = typer.Option(".", "--project", "-p", help="Project directory"),
+    tool: str = typer.Argument(..., help="Tool name to call"),
+    arguments: str = typer.Option("", "--arg", "-a",
+                                  help="JSON string of arguments (e.g. '{\"msg\":\"hello\"}')"),
+) -> None:
+    """Call an MCP tool and print its result."""
+    import json
+
+    from rich.markup import escape
+
+    from orchid import config as cfg
+    from orchid.mcp.manager import MCPManager
+
+    cfg.configure_for_project(_resolve_project(project))
+    manager = MCPManager()
+    manager.discover_servers()
+    manager.connect()
+    try:
+        args: dict = {}
+        if arguments:
+            try:
+                args = json.loads(arguments)
+            except json.JSONDecodeError as exc:
+                console.print(f"[red]Invalid JSON for --arg: {exc}[/red]")
+                raise typer.Exit(1)
+
+        result = manager.call_tool(tool, args)
+        content = result.content if isinstance(result.content, str) else json.dumps(result.content, indent=2)
+        console.print(Panel(
+            escape(content),
+            title=f"[cyan]{tool}[/cyan]",
+            border_style="green",
+        ))
+    except Exception as exc:
+        console.print(f"[red]Tool call failed: {exc}[/red]")
+        raise typer.Exit(1)
+    finally:
+        manager.disconnect()
+
+
+app.add_typer(mcp_app)
+
 # Register hooks CLI subcommands
 try:
     from orchid.interfaces.hooks_cli import register_hooks_cli

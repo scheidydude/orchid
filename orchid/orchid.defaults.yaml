@@ -455,3 +455,22 @@ hooks:
 
   # Session hooks
   session: []
+
+# MCP Servers — external tool servers (D0051)
+# Each server is defined by name, transport type, and connection parameters.
+# The MCPManager reads this section and connects to servers at runtime.
+#
+# Transport types:
+#   stdio — spawn a subprocess and communicate over stdin/stdout
+#   http  — connect to an HTTP endpoint (SSE or JSON-RPC over HTTP)
+#
+# Example:
+#   mcp_servers:
+#     code_server:
+#       transport: stdio
+#       command: "npx"
+#       args: ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
+#     search_server:
+#       transport: http
+#       url: "http://localhost:3100/mcp"
+mcp_servers: {}

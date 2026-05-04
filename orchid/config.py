@@ -114,3 +114,8 @@ def get(key_path: str, default: Any = None) -> Any:
         if node is None:
             return default
     return node
+
+
+def get_mcp_servers() -> dict[str, Any]:
+    """Return the MCP servers configuration dict (may be empty)."""
+    return get("mcp_servers", {})

@@ -156,6 +156,8 @@ class Orchestrator:
         # Hook registry for task events (T096)
         self._hook_registry = HookRegistry()
         self._load_hooks()
+        # T113: MCP manager — created once, connected lazily on first task
+        self._mcp_manager: Any = None
 
     def _load_hooks(self) -> None:
         """Load and register hooks from project configuration."""
@@ -295,6 +297,9 @@ class Orchestrator:
             # T045: wrap write_file to track files written during this task
             files_written: list[str] = []
 
+            # T113: Wire MCP tools into the agent — connect manager lazily on first task
+            self._ensure_mcp_connected()
+
             # Dispatch to agent
             injection_queue = self.session.project_dir / ".orchid" / "inject.queue"
             stream_cb = self._make_stream_callback(task.id, task.title)
@@ -307,6 +312,18 @@ class Orchestrator:
             # Override model_key based on routing decision
             agent.model_key = decision.model
             agent.delegator = self._delegator
+
+            # T113: Inject MCP tools into the agent's tool registry
+            if self._mcp_manager is not None:
+                mcp_tools = self._mcp_manager.list_tools()
+                for tool in mcp_tools:
+                    def _make_mcp_tool_fn(adapter, tool_name: str) -> Callable[..., str]:
+                        def _fn(**kwargs: Any) -> str:
+                            result = adapter.call_tool(tool_name, kwargs)
+                            return str(result.content) if result else ""
+                        return _fn
+                    fn = _make_mcp_tool_fn(self._mcp_manager.get_adapter(tool.server_name) or self._mcp_manager, tool.name)
+                    agent.tools[tool.name] = fn
 
             # Wrap write_file to record paths (T045)
             _orig_write = agent.tools.get("write_file")
@@ -573,6 +590,19 @@ class Orchestrator:
 
         _cb._trace_state = _state  # type: ignore[attr-defined]
         return _cb
+
+    def _ensure_mcp_connected(self) -> None:
+        """T113: Lazily create and connect the MCP manager on first task execution."""
+        if self._mcp_manager is not None:
+            return
+        from orchid.mcp.manager import MCPManager
+        self._mcp_manager = MCPManager()
+        try:
+            self._mcp_manager.connect()
+            logger.info("MCP servers connected: %s", list(self._mcp_manager._adapters.keys()))
+        except Exception as exc:
+            logger.warning("MCP connection failed (MCP tools unavailable): %s", exc)
+            self._mcp_manager = None
 
     def _plan_task(self, task: Task) -> str:
         """Produce a step-by-step plan for complex tasks via the provider registry."""

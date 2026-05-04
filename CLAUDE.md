@@ -120,3 +120,65 @@ def project_with_hooks(tmp_path: Path) -> Path:
 
 @pytest.mark.asyncio
 async def test_execute_r
+
+- [T105] Create `orchid/mcp/types.py`. Also create empty `orchid/mcp/__init__.py` with content `# MCP adapter layer`. Define exactly these three dataclasses and nothing else:: Created two files:
+
+1. **`orchid/mcp/__init__.py`** — contains just `# MCP adapter layer`
+2. **`orchid/mcp/types.py`** — defines exactly three dataclasses:
+   - `MCPTool(name, description, parameters)
+
+- [T106] Create `orchid/mcp/client.py`. Define exactly one ABC and one exception class:: Created `orchid/mcp/client.py` with:
+- **`MCPClientError`** — exception class with `message` and `code` attributes
+- **`MCPClient`** — ABC with four abstract methods: `connect()`, `disconnect()`, `lis
+
+- [T107] Create `orchid/mcp/stdio_client.py`. Implement exactly this class using `subprocess.Popen`:: File `orchid/mcp/stdio_client.py` created with the `StdioMCPClient` class implementing the `MCPClient` ABC via `subprocess.Popen`, with full JSON-RPC 2.0 transport over stdin/stdout pipes. The `__init
+
+- [T124] Create `tests/test_mcp_integration.py`. Write exactly 1 test function. Start a real Python subprocess as a minimal MCP server using `python3 -c "<inline script>"`. The inline script must: listen on stdin, respond to `initialize` with `{"jsonrpc":"2.0","id":0,"result":{}}`, respond to `tools/list` with one tool named `echo`, respond to `tools/call` with `{"content": arguments["msg"], "isError": false}`. Test: `StdioMCPClient.connect()`, `list_tools()` returns `[MCPTool("echo",…)]`, `call_tool("echo", {"msg":"hello"})` returns `MCPResult(content="hello")`. Use `pytest.mark.skipif(sys.platform=="win32", reason="POSIX only")`.: Thought: I need to understand the existing MCP module structure before writing the integration test. Let me check the existing files.
+
+- [T108] Create `orchid/mcp/http_client.py`. Implement exactly this class using `httpx.Client` (sync):: File `orchid/mcp/http_client.py` has been created with the `HTTPMCPClient` class implementing the `MCPClient` ABC using `httpx.Client` (sync).
+
+- [T109] Create `orchid/mcp/adapter.py`. Implement exactly this class:: T109 `orchid/mcp/adapter.py` created with the `MCPAdapter` class — a synchronous adapter that wraps an `MCPClient` and exposes `connect()`, `disconnect()`, `list_tools()`, and `call_tool()` methods fo
+
+- [T110] Create `orchid/mcp/manager.py`. Implement exactly this class. It is fully synchronous:: The file has been written and verified. Here's a summary of what `orchid/mcp/manager.py` implements:
+
+**`MCPManagerError`** — A subclass of `MCPClientError` raised for configuration or lifecycle error
+
+- [T111] Extend `orchid/orchid.defaults.yaml` — append MCP servers section. Read the file first to find its end. Append exactly this block at the bottom of the file:: T111 complete. The `orchid/orchid.defaults.yaml` file now includes the `mcp_servers:` section at the bottom with documentation explaining transport types (stdio/http) and an example configuration.
+
+- [T112] Extend `orchid/config.py` — add one helper function. Read the file first. Append after the last function in the file:: Done. Added `get_mcp_servers()` helper to `orchid/config.py` — it returns the `mcp_servers` dict from the merged config, defaulting to `{}` if not present.
+
+- [T113] Extend `orchid/orchestrator.py` — wire `MCPManager` into task execution. Read the file first. Make exactly two changes:: T113 complete — `orchid/orchestrator.py` has been updated with two changes: (1) `_ensure_mcp_connected()` lazily creates/connects `MCPManager` on first task execution, and (2) MCP tools are injected i
+
+- [T114] Extend `orchid/runner.py` — create and teardown `MCPManager` around the run loop. Read the file first. In `BackgroundRunner._run()` (line 70), make exactly these two changes:: T114 is complete. Two changes were made to `orchid/runner.py` in `BackgroundRunner._run()`:
+
+1. **Before the task loop** — an `MCPManager` is created, servers are discovered via `discover_servers()`,
+
+- [T115] Extend `orchid/interfaces/cli.py` — add `mcp` Typer sub-app with two commands. Read the file first. Find the pattern where sub-apps are registered (search for `app.add_typer`). Add a new sub-app with these two commands:: Task T115 complete. The `mcp` sub-app has been added to `orchid/interfaces/cli.py` with two commands (`ls` and `call`), registered via `app.add_typer(mcp_app)`, and verified to work correctly via `orc
+
+- [T116] Review `orchid/mcp/stdio_client.py` for exactly these 4 issues. For each, report PASS or FAIL with the line number:: Thought: The task is to review `orchid/mcp/stdio_client.py` for exactly 4 issues and report PASS or FAIL with line numbers. This is a review task — no file needs to be written. I already read the file
+
+- [T117] Review `orchid/mcp/http_client.py` for exactly these 4 issues. For each, report PASS or FAIL with the line number:: Review complete. All 4 issues reported as FAIL with line numbers: Issue 1 (line 93), Issue 2 (line 53), Issue 3 (line 96), Issue 4 (line 31).
+
+- [T118] Review `orchid/mcp/adapter.py` for exactly these 3 issues. For each, report PASS or FAIL with the line number:: Review of `orchid/mcp/adapter.py` — 3 issues:
+
+**Issue 1: No connection state tracking** — The `connect()` method on line 42 calls `self._client.connect()` but does not set a `_connected` flag. Simila
+
+- [T119] Create `tests/test_mcp_types.py`. Write exactly these 3 test functions, no fixtures needed:: Created `tests/test_mcp_types.py` with exactly 3 test functions. All 3 tests pass (3 passed in 0.01s).
+</think>
+
+Final Answer: Created `tests/test_mcp_types.py` with exactly 3 test functions — `test_m
+
+- [T120] Create `tests/test_mcp_stdio_client.py`. Write exactly these 4 test functions using `unittest.mock.patch`:: Created `tests/test_mcp_stdio_client.py` with exactly 4 test functions, all using `unittest.mock.patch` to mock `subprocess.Popen`:
+
+1. **`test_connect_success`** — Mocks the subprocess to simulate a
+
+- [T121] Create `tests/test_mcp_http_client.py`. Write exactly these 3 test functions using `respx` to mock httpx:: The `Request` object in respx doesn't have `.json()`. I need to use `.read()` or `.content` and parse it:
+
+Action: write_file
+Action Content:
+<<<ORCHID
+"""Tests for orchid.mcp.http_client — HTTPMCPCli
+
+- [T122] Create `tests/test_mcp_adapter.py`. Write exactly these 4 test functions. Use `unittest.mock.MagicMock` for the client:: File `tests/test_mcp_adapter.py` has been created with 4 test functions covering `connect()`, `list_tools()` caching, `call_tool()` delegation, and `disconnect()` — all passing.
+
+- [T123] Create `tests/test_mcp_manager.py`. Write exactly these 3 test functions using `unittest.mock.patch`:: File created at `tests/test_mcp_manager.py` with 3 test functions, all passing.

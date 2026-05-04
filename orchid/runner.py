@@ -70,12 +70,20 @@ class BackgroundRunner:
     def _run(self, project_path: str, state: _ProjectState) -> None:
         try:
             from orchid.memory.state import TaskStatus
+            from orchid.mcp.manager import MCPManager
             from orchid.orchestrator import Orchestrator
             from orchid.session import Session
 
             session = Session(project_dir=project_path)
             session.load()
             orch = Orchestrator(session)
+
+            mcp = MCPManager()
+            mcp.discover_servers()
+            try:
+                mcp.connect()
+            except Exception:
+                logger.warning("MCP server connection failed for %s", project_path)
 
             while not state.cancel_event.is_set():
                 task = session.next_task()
@@ -95,3 +103,7 @@ class BackgroundRunner:
             logger.exception("Auto-run failed for %s", project_path)
         finally:
             state.current_task = None
+            try:
+                mcp.disconnect()
+            except NameError:
+                pass
