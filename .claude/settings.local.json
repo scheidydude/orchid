@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -r \"class.*Agent\" /Users/david/Development/scheidydudes-github-repos/orchid/orchid/agents/*.py)",
+      "Bash(wc -l /Users/david/Development/scheidydudes-github-repos/orchid/orchid/**/*.py)"
+    ]
+  }
+}
