@@ -19,6 +19,10 @@ AGENT_ACTION = "agent_action"
 AGENT_OBSERVATION = "agent_observation"
 AGENT_THOUGHT = "agent_thought"
 AGENT_FINAL_ANSWER = "agent_final_answer"
+PRE_TOOL_USE = "pre_tool_use"
+POST_TOOL_USE = "post_tool_use"
+DELEGATION_START = "delegation_start"
+DELEGATION_END = "delegation_end"
 
 # Task lifecycle events (T096)
 TASK_START = "task_start"
@@ -157,3 +161,101 @@ class HookEvent:
             },
             context={"task_id": task_id, "action": action},
         )
+
+    @classmethod
+    def pre_tool_use_event(cls, tool: str, input_data: Any, task_id: str = "") -> "HookEvent":
+        """Create a PRE_TOOL_USE event."""
+        return cls(
+            event_type=PRE_TOOL_USE,
+            data={"tool": tool, "input": input_data},
+            context={"task_id": task_id, "tool": tool},
+        )
+
+    @classmethod
+    def post_tool_use_event(cls, tool: str, input_data: Any, output: str, task_id: str = "") -> "HookEvent":
+        """Create a POST_TOOL_USE event."""
+        return cls(
+            event_type=POST_TOOL_USE,
+            data={"tool": tool, "input": input_data, "output": output},
+            context={"task_id": task_id, "tool": tool},
+        )
+
+    @classmethod
+    def delegation_start_event(cls, agent_type: str, task: str, depth: int, task_id: str = "") -> "HookEvent":
+        """Create a DELEGATION_START event."""
+        return cls(
+            event_type=DELEGATION_START,
+            data={"agent_type": agent_type, "task": task, "depth": depth},
+            context={"task_id": task_id},
+        )
+
+    @classmethod
+    def delegation_end_event(cls, agent_type: str, result: str, depth: int, task_id: str = "") -> "HookEvent":
+        """Create a DELEGATION_END event."""
+        return cls(
+            event_type=DELEGATION_END,
+            data={"agent_type": agent_type, "result": result, "depth": depth},
+            context={"task_id": task_id},
+        )
+
+
+# ── Typed HookContext dataclasses ─────────────────────────────────────────────
+
+@dataclass
+class PreToolUseContext:
+    task_id: str = ""
+    tool: str = ""
+    input: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class PostToolUseContext:
+    task_id: str = ""
+    tool: str = ""
+    input: dict[str, Any] = field(default_factory=dict)
+    output: str = ""
+
+
+@dataclass
+class TaskStartContext:
+    task_id: str = ""
+    title: str = ""
+    task_type: str = ""
+    model: str = ""
+
+
+@dataclass
+class TaskEndContext:
+    task_id: str = ""
+    status: str = ""
+    duration_s: float = 0.0
+    iterations: int = 0
+    error: str = ""
+
+
+@dataclass
+class SessionStartContext:
+    project: str = ""
+    mode: str = ""
+    provider: str = ""
+
+
+@dataclass
+class SessionEndContext:
+    task_count: int = 0
+    duration_s: float = 0.0
+
+
+@dataclass
+class PhaseTransitionContext:
+    from_phase: str = ""
+    to_phase: str = ""
+    project_name: str = ""
+
+
+@dataclass
+class DelegationContext:
+    agent_type: str = ""
+    task: str = ""
+    depth: int = 0
+    task_id: str = ""

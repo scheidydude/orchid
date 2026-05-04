@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from orchid import config as cfg
+from orchid.hooks.events import HookEvent, POST_TOOL_USE, PRE_TOOL_USE
+from orchid.hooks.registry import HookRegistry
 from orchid.tools.models import Message, call
 
 logger = logging.getLogger(__name__)
@@ -576,10 +578,23 @@ class BaseAgent:
                 return response.strip()
 
             if observation is None:
-                observation = self._dispatch(tool_name, tool_args)
-                # Track successful writes so _require_file_write enforcement works
-                if tool_name in ("write_file", "append_file", "bash") and not observation.startswith("["):
-                    _did_write = True
+                _registry = HookRegistry()
+                _pre_result = _registry.fire(HookEvent.pre_tool_use_event(
+                    tool=tool_name or "",
+                    input_data=tool_args or {},
+                ))
+                if _pre_result.blocked:
+                    observation = f"[BLOCKED by hook: {_pre_result.error or 'hook blocked this action'}]"
+                else:
+                    observation = self._dispatch(tool_name, tool_args)
+                    _registry.fire(HookEvent.post_tool_use_event(
+                        tool=tool_name or "",
+                        input_data=tool_args or {},
+                        output=observation,
+                    ))
+                    # Track successful writes so _require_file_write enforcement works
+                    if tool_name in ("write_file", "append_file", "bash") and not observation.startswith("["):
+                        _did_write = True
 
             logger.debug("[%s] Tool %s → %s", self.__class__.__name__, tool_name, observation[:200])
             self.history.append(Message("user", f"Observation: {observation}"))

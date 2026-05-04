@@ -7,11 +7,21 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from orchid.hooks.events import HookEvent
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class HookResult:
+    """Aggregated result from firing all handlers for an event."""
+    blocked: bool = False
+    mutated_context: dict[str, Any] | None = None
+    error: str | None = None
+    results: list[Any] = field(default_factory=list)
 
 
 class HookRegistry:
@@ -91,7 +101,7 @@ class HookRegistry:
                     return True
         return False
 
-    def fire(self, event: HookEvent, ignore_errors: bool = True) -> list[Any]:
+    def fire(self, event: HookEvent, ignore_errors: bool = True) -> HookResult:
         """Fire all handlers for an event type.
 
         Args:
@@ -99,20 +109,19 @@ class HookRegistry:
             ignore_errors: If True, catch and log errors without raising
 
         Returns:
-            List of results from sync handlers
+            HookResult with blocked flag, mutated_context, error, and raw results list
         """
         handlers = self._handlers.get(event.event_type, [])
-        results = []
+        hook_result = HookResult()
 
         if not handlers:
-            return results
+            return hook_result
 
         logger.debug("Firing %d handlers for event %s", len(handlers), event.event_type)
 
         for handler in handlers:
             try:
                 if handler.mode == "background":
-                    # Fire-and-forget
                     import threading
                     thread = threading.Thread(
                         target=self._execute_handler,
@@ -121,7 +130,6 @@ class HookRegistry:
                     )
                     thread.start()
                 elif handler.mode == "async":
-                    # Non-blocking with timeout
                     import threading
                     thread = threading.Thread(
                         target=self._execute_handler_with_timeout,
@@ -133,7 +141,15 @@ class HookRegistry:
                     result = self._execute_handler_with_timeout(
                         handler, event, handler.timeout
                     )
-                    results.append(result)
+                    hook_result.results.append(result)
+                    # Check if handler signalled blocking or returned mutations
+                    if isinstance(result, dict):
+                        if result.get("blocked"):
+                            hook_result.blocked = True
+                            if not hook_result.error:
+                                hook_result.error = result.get("error") or result.get("reason") or "blocked by hook"
+                        if "mutated_context" in result and result["mutated_context"]:
+                            hook_result.mutated_context = result["mutated_context"]
 
             except Exception as e:
                 if ignore_errors:
@@ -144,7 +160,7 @@ class HookRegistry:
                 else:
                     raise
 
-        return results
+        return hook_result
 
     def _execute_handler(self, handler: "HookHandler", event: HookEvent) -> Any:
         """Execute a handler synchronously."""

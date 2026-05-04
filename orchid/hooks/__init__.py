@@ -45,6 +45,10 @@ from orchid.hooks.events import (
     AGENT_OBSERVATION,
     AGENT_THOUGHT,
     AGENT_FINAL_ANSWER,
+    PRE_TOOL_USE,
+    POST_TOOL_USE,
+    DELEGATION_START,
+    DELEGATION_END,
     # Task lifecycle events
     TASK_START,
     TASK_END,
@@ -63,9 +67,18 @@ from orchid.hooks.events import (
     HOOK_REGISTERED,
     HOOK_UNREGISTERED,
     HOOK_ERROR,
+    # Typed context dataclasses
+    PreToolUseContext,
+    PostToolUseContext,
+    TaskStartContext,
+    TaskEndContext,
+    SessionStartContext,
+    SessionEndContext,
+    PhaseTransitionContext,
+    DelegationContext,
 )
-from orchid.hooks.loader import HookLoader
-from orchid.hooks.registry import HookRegistry
+from orchid.hooks.loader import HookLoadError, HookLoader
+from orchid.hooks.registry import HookRegistry, HookResult
 from orchid.hooks.types import HookCategory, HookExecutionMode, ShellHook, HTTPHook, PythonHook
 from orchid.hooks.schema import (
     # Schema classes
@@ -85,7 +98,26 @@ from orchid.hooks.schema import (
     get_schema_documentation,
 )
 
+
+def orchid_hook(event: str):
+    """Decorator: tag a function to be auto-registered as a hook handler.
+
+    Usage in project hooks.py:
+        from orchid.hooks import orchid_hook, TASK_COMPLETE
+
+        @orchid_hook(TASK_COMPLETE)
+        def on_task_done(hook_event):
+            print(hook_event.data)
+    """
+    def decorator(fn):
+        fn._orchid_hook_event = event
+        return fn
+    return decorator
+
+
 __all__ = [
+    # Decorator
+    "orchid_hook",
     # Events
     "HookEvent",
     # Agent ReAct loop events
@@ -95,6 +127,10 @@ __all__ = [
     "AGENT_OBSERVATION",
     "AGENT_THOUGHT",
     "AGENT_FINAL_ANSWER",
+    "PRE_TOOL_USE",
+    "POST_TOOL_USE",
+    "DELEGATION_START",
+    "DELEGATION_END",
     # Task lifecycle events
     "TASK_START",
     "TASK_END",
@@ -113,9 +149,20 @@ __all__ = [
     "HOOK_REGISTERED",
     "HOOK_UNREGISTERED",
     "HOOK_ERROR",
-    # Loader and Registry
+    # Typed context dataclasses
+    "PreToolUseContext",
+    "PostToolUseContext",
+    "TaskStartContext",
+    "TaskEndContext",
+    "SessionStartContext",
+    "SessionEndContext",
+    "PhaseTransitionContext",
+    "DelegationContext",
+    # Loader, Registry, Result
+    "HookLoadError",
     "HookLoader",
     "HookRegistry",
+    "HookResult",
     # Types
     "HookCategory",
     "HookExecutionMode",

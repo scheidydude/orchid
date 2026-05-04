@@ -387,16 +387,16 @@ class TestHookRegistry:
         self.registry.register("test_event", handler2, priority=20)
 
         event = HookEvent(event_type="test_event", data={"test": "data"})
-        results_from_fire = self.registry.fire(event, ignore_errors=True)
+        hook_result = self.registry.fire(event, ignore_errors=True)
 
         assert results == ["handler2", "handler1"]
-        assert results_from_fire == ["result2", "result1"]
+        assert hook_result.results == ["result2", "result1"]
 
     def test_fire_event_no_handlers(self):
         """Test firing event with no handlers."""
         event = HookEvent(event_type="nonexistent_event")
-        results = self.registry.fire(event)
-        assert results == []
+        hook_result = self.registry.fire(event)
+        assert hook_result.results == []
 
     def test_fire_event_background_mode(self):
         """Test firing background mode handlers."""
@@ -444,9 +444,9 @@ class TestHookRegistry:
         self.registry.register("test_event", bad_handler, priority=20)
 
         event = HookEvent(event_type="test_event")
-        results = self.registry.fire(event, ignore_errors=True)
+        hook_result = self.registry.fire(event, ignore_errors=True)
 
-        assert "success" in results
+        assert "success" in hook_result.results
 
     def test_get_handlers_for_event(self):
         """Test getting handlers for an event type."""

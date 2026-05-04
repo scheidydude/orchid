@@ -2,7 +2,12 @@
   "permissions": {
     "allow": [
       "Bash(grep -r \"class.*Agent\" /Users/david/Development/scheidydudes-github-repos/orchid/orchid/agents/*.py)",
-      "Bash(wc -l /Users/david/Development/scheidydudes-github-repos/orchid/orchid/**/*.py)"
+      "Bash(wc -l /Users/david/Development/scheidydudes-github-repos/orchid/orchid/**/*.py)",
+      "Bash(git -C /Users/david/Development/scheidydudes-github-repos/orchid show ff2a67e --stat)",
+      "Bash(git -C /Users/david/Development/scheidydudes-github-repos/orchid show ff2a67e -- new_tasks.md)",
+      "Bash(.venv/bin/python -m pytest tests/test_hooks.py tests/test_hooks_registry.py tests/test_hooks_loader.py tests/test_hooks_integration.py -x -q)",
+      "Bash(uv run *)",
+      "Bash(uv sync *)"
     ]
   }
 }

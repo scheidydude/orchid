@@ -5,6 +5,7 @@ Loads hook configurations from .orchid.yaml and registers them with the registry
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -16,6 +17,10 @@ from orchid.hooks.registry import HookRegistry
 from orchid.hooks.types import HookCategory, HookExecutionMode, HTTPHook, PythonHook, ShellHook
 
 logger = logging.getLogger(__name__)
+
+
+class HookLoadError(Exception):
+    """Raised when hooks.py cannot be imported or a hook is invalid."""
 
 
 class HookLoader:
@@ -93,7 +98,47 @@ class HookLoader:
         self._section_counts["session"] = self._load_section(hooks_config.get("session", []), "session")
         count += self._section_counts["session"]
 
+        # Load @orchid_hook-decorated functions from hooks.py in project root
+        count += self._load_project_hooks_py()
+
         logger.info("Loaded %d hook(s)", count)
+        return count
+
+    def _load_project_hooks_py(self) -> int:
+        """Load @orchid_hook-decorated functions from hooks.py in project root."""
+        hooks_py = self.project_dir / "hooks.py"
+        if not hooks_py.exists():
+            return 0
+
+        import importlib.util
+        try:
+            spec = importlib.util.spec_from_file_location("project_hooks", hooks_py)
+            if spec is None or spec.loader is None:
+                raise HookLoadError(f"Cannot create module spec for {hooks_py}")
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)  # type: ignore[union-attr]
+        except HookLoadError:
+            raise
+        except Exception as e:
+            raise HookLoadError(f"Failed to import hooks.py: {e}") from e
+
+        count = 0
+        for name in dir(mod):
+            fn = getattr(mod, name)
+            if callable(fn) and hasattr(fn, "_orchid_hook_event"):
+                event_type = fn._orchid_hook_event
+                self.registry.register(event_type, fn)
+                self._loaded_hooks.append({
+                    "name": name,
+                    "event": event_type,
+                    "type": "python",
+                    "source": "hooks.py",
+                })
+                logger.debug("Registered hooks.py function %s for event %s", name, event_type)
+                count += 1
+
+        if count:
+            logger.info("Loaded %d hook(s) from hooks.py", count)
         return count
 
     def _load_section(self, hooks: list[dict], category: str) -> int:
@@ -271,33 +316,55 @@ class HookLoader:
         logger.debug("Registered hook %s for event %s", hook.name, hook.event_type)
 
     def _create_shell_handler(self, hook: ShellHook) -> callable:
-        """Create a handler for a shell hook."""
-        def handler(event: HookEvent) -> str:
-            """Execute shell command with event data substitution."""
+        """Create a handler for a shell hook.
+
+        Context JSON is passed on stdin. If stdout parses as JSON with
+        {"block": true}, the handler returns a blocking signal to HookRegistry.
+        """
+        def handler(event: HookEvent) -> str | dict:
             if hook.allowlist_check and not self._is_command_allowed(hook.command):
                 logger.warning(
                     "Shell hook %s blocked: command not in allowlist", hook.name
                 )
                 return "[blocked]"
 
-            # Substitute event data into command
             command = self._substitute_vars(hook.command, event)
+            context_json = json.dumps({
+                "event_type": event.event_type,
+                "data": event.data,
+                "context": event.context,
+                "timestamp": event.timestamp,
+            })
 
             import subprocess
             try:
                 result = subprocess.run(
                     command,
                     shell=True,
+                    input=context_json,
                     capture_output=True,
                     text=True,
                     timeout=hook.timeout,
                     cwd=str(self.project_dir),
                 )
                 if result.returncode != 0:
-                    logger.error(
-                        "Shell hook %s failed: %s", hook.name, result.stderr
-                    )
-                return result.stdout or result.stderr or "[executed]"
+                    logger.error("Shell hook %s failed: %s", hook.name, result.stderr)
+
+                stdout = result.stdout.strip()
+                if stdout:
+                    try:
+                        response = json.loads(stdout)
+                        if response.get("block"):
+                            return {
+                                "blocked": True,
+                                "error": response.get("reason", "blocked by hook"),
+                                "mutated_context": response.get("mutated_context"),
+                            }
+                        if "mutated_context" in response:
+                            return {"mutated_context": response["mutated_context"]}
+                    except json.JSONDecodeError:
+                        pass
+                return stdout or result.stderr or "[executed]"
             except subprocess.TimeoutExpired:
                 logger.error("Shell hook %s timed out", hook.name)
                 return "[timeout]"

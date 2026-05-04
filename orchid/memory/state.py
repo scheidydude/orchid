@@ -80,12 +80,13 @@ class Task:
 
 # ── Tasks.md parser/writer ────────────────────────────────────────────────────
 
-_TASK_RE = re.compile(
-    r"^- \[(?P<sc>.)\]\s+\*\*(?P<id>[^*]+)\*\*\s+(?P<title>[^`\n]+)"
-    r"(?:`type:(?P<type>[^`]+)`)?"
-    r"(?:\s+`p(?P<pri>\d)`)?"
-    r"(?:\s+`agent:(?P<agent>[^`]+)`)?"
-    r"(?P<rest>.*)$"
+# Matches the checkbox + ID, captures everything after as `body`
+_TASK_LINE_RE = re.compile(
+    r"^- \[(?P<sc>.)\]\s+\*\*(?P<id>[^*]+)\*\*\s+(?P<body>.+)$"
+)
+# Finds the start of the first metadata annotation — title ends here
+_META_BOUNDARY_RE = re.compile(
+    r"`(?:type:[^`]+|p\d|agent:[^`]+|needs:[^`]+|model:[^`]+|rollup:[^`]+|output:[^`]+)`"
 )
 _SC_MAP = {" ": TaskStatus.TODO, ">": TaskStatus.IN_PROGRESS,
            "x": TaskStatus.DONE, "!": TaskStatus.BLOCKED, "-": TaskStatus.CANCELLED,
@@ -106,46 +107,52 @@ def load_tasks(project_dir: str | Path = ".") -> list[Task]:
             if "-->" in stripped:
                 in_comment = False
             continue
-        m = _TASK_RE.match(stripped)
+        m = _TASK_LINE_RE.match(stripped)
         if not m:
             continue
-        rest = m.group("rest") or ""
-        tags = re.findall(r"#(\w+)", rest)
 
-        # Parse needs:T001,T002 annotation
-        needs_m = re.search(r"`needs:([^`]+)`", rest)
+        body = m.group("body")
+
+        # Split title from metadata at first annotation tag
+        meta_m = _META_BOUNDARY_RE.search(body)
+        if meta_m:
+            title = body[:meta_m.start()].strip()
+            meta_str = body[meta_m.start():]
+        else:
+            title = body.strip()
+            meta_str = ""
+
+        # Extract all metadata from meta_str
+        type_m = re.search(r"`type:([^`]+)`", meta_str)
+        pri_m = re.search(r"`p(\d)`", meta_str)
+        agent_m = re.search(r"`agent:([^`]+)`", meta_str)
+        needs_m = re.search(r"`needs:([^`]+)`", meta_str)
+        model_m = re.search(r"`model:([^`]+)`", meta_str)
+        rollup_m = re.search(r"`rollup:([^`]+)`", meta_str)
+        output_m = re.search(r"`output:([^`]+)`", meta_str)
+        tags = re.findall(r"#(\w+)", meta_str)
+
         depends_on = (
             [d.strip() for d in needs_m.group(1).split(",") if d.strip()]
             if needs_m else []
         )
-
-        # Parse model:claude|local|auto annotation
-        model_m = re.search(r"`model:([^`]+)`", rest)
-        model_override = model_m.group(1).strip() if model_m else None
-
-        # Parse rollup:T001,T002 annotation
-        rollup_m = re.search(r"`rollup:([^`]+)`", rest)
         rollup_sources = (
             [d.strip() for d in rollup_m.group(1).split(",") if d.strip()]
             if rollup_m else []
         )
 
-        # Parse output:FILENAME.md annotation
-        output_m = re.search(r"`output:([^`]+)`", rest)
-        output_file = output_m.group(1).strip() if output_m else None
-
         tasks.append(Task(
             id=m.group("id").strip(),
-            title=m.group("title").strip(),
+            title=title,
             status=_SC_MAP.get(m.group("sc"), TaskStatus.TODO),
-            type=m.group("type") or "draft",
-            priority=int(m.group("pri") or 2),
-            agent=m.group("agent"),
+            type=type_m.group(1).strip() if type_m else "draft",
+            priority=int(pri_m.group(1)) if pri_m else 2,
+            agent=agent_m.group(1).strip() if agent_m else None,
             tags=tags,
             depends_on=depends_on,
-            model_override=model_override,
+            model_override=model_m.group(1).strip() if model_m else None,
             rollup_sources=rollup_sources,
-            output_file=output_file,
+            output_file=output_m.group(1).strip() if output_m else None,
         ))
     return tasks
 
