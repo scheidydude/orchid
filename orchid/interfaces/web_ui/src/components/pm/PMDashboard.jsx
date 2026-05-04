@@ -45,7 +45,7 @@ export default function PMDashboard({ projectId }) {
   }
 
   return (
-    <div style={{ maxWidth: 960, margin: '0 auto' }}>
+    <div className="pm-dashboard" style={{ maxWidth: 960, margin: '0 auto' }}>
       <Section title="🏁 Milestone Progress">
         <MilestoneProgress projectId={projectId} />
       </Section>

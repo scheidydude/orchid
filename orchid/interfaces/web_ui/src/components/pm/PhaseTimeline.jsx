@@ -55,6 +55,7 @@ export default function PhaseTimeline({ projectId }) {
         Last activity: {lastActivity.toLocaleString()} ·
         Total: {totalMs > 0 ? formatDuration(totalMs) : '—'}
       </div>
+      <div className="phase-timeline-bars">
       <div style={{ display: 'flex', gap: 3, alignItems: 'stretch', height: 52 }}>
         {PHASE_ORDER.map((phase, idx) => {
           const reached = idx <= currentIdx
@@ -76,7 +77,7 @@ export default function PhaseTimeline({ projectId }) {
                 borderRadius: 4,
                 opacity: isFuture ? 0.4 : 1,
                 transition: 'flex 0.3s',
-                minWidth: 0,
+                minWidth: 60,
                 cursor: 'default',
                 position: 'relative',
               }}
@@ -102,6 +103,7 @@ export default function PhaseTimeline({ projectId }) {
             </div>
           )
         })}
+      </div>
       </div>
       <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 8 }}>
         Current phase: <strong style={{ color: PHASE_COLOR[lifecycle.phase] }}>{lifecycle.phase}</strong>

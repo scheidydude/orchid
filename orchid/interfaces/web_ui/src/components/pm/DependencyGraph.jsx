@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import cytoscape from 'cytoscape'
+import { useMediaQuery } from '../../hooks/useMediaQuery.js'
 
 const STATUS_COLOR = {
   DONE: '#56d364',
@@ -8,6 +9,42 @@ const STATUS_COLOR = {
   TODO: '#8b949e',
   SKIPPED: '#388bfd',
   CANCELLED: '#6e7681',
+}
+
+function DependencyTable({ tasks }) {
+  const sorted = [...tasks].sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }))
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+        <thead>
+          <tr style={{ borderBottom: '1px solid var(--border)', color: 'var(--text-dim)' }}>
+            <th style={{ padding: '6px 8px', textAlign: 'left', whiteSpace: 'nowrap' }}>Task</th>
+            <th style={{ padding: '6px 8px', textAlign: 'left' }}>Status</th>
+            <th style={{ padding: '6px 8px', textAlign: 'left' }}>Depends on</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map(t => (
+            <tr key={t.id} style={{ borderBottom: '1px solid var(--border)' }}>
+              <td style={{ padding: '5px 8px', fontFamily: 'var(--mono)', color: 'var(--accent-2)', whiteSpace: 'nowrap' }}>{t.id}</td>
+              <td style={{ padding: '5px 8px' }}>
+                <span style={{
+                  fontSize: 10, padding: '2px 6px', borderRadius: 8,
+                  background: (STATUS_COLOR[t.status] || '#8b949e') + '33',
+                  color: STATUS_COLOR[t.status] || '#8b949e',
+                }}>
+                  {t.status}
+                </span>
+              </td>
+              <td style={{ padding: '5px 8px', color: 'var(--text-dim)', fontFamily: 'var(--mono)', fontSize: 11 }}>
+                {t.depends_on?.length > 0 ? t.depends_on.join(', ') : '—'}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
 }
 
 function buildElements(tasks) {
@@ -66,8 +103,10 @@ export default function DependencyGraph({ projectId }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [tooltip, setTooltip] = useState(null)
+  const [showGraph, setShowGraph] = useState(false)
   const containerRef = useRef(null)
   const cyRef = useRef(null)
+  const isMobile = useMediaQuery('(max-width: 768px)')
 
   useEffect(() => {
     if (!projectId) return
@@ -174,10 +213,30 @@ export default function DependencyGraph({ projectId }) {
   if (error) return <div className="error-msg">Error: {error}</div>
   if (tasks.length === 0) return <div style={{ color: 'var(--text-dim)', fontSize: 13, padding: 12 }}>No tasks to graph.</div>
 
+  if (isMobile && !showGraph) {
+    return (
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+          <button onClick={() => setShowGraph(true)} style={{ fontSize: 12 }}>
+            Show Graph ↗
+          </button>
+        </div>
+        <DependencyTable tasks={tasks} />
+      </div>
+    )
+  }
+
   const hasDeps = tasks.some(t => t.depends_on?.length > 0)
 
   return (
     <div style={{ position: 'relative' }}>
+      {isMobile && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+          <button onClick={() => setShowGraph(false)} style={{ fontSize: 12 }}>
+            ← Table view
+          </button>
+        </div>
+      )}
       {!hasDeps && (
         <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8, fontStyle: 'italic' }}>
           No dependencies defined — tasks will appear as isolated nodes.

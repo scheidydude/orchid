@@ -718,6 +718,11 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
   color: var(--text);
 }
 
+/* ── Phase 4 PM component classes (desktop base) ────────────────────────── */
+
+/* PhaseTimeline — scrollable bar wrapper */
+.phase-timeline-bars { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
 /* ── Phase 3 component classes (desktop base) ───────────────────────────── */
 
 /* Task board toolbar */
@@ -883,4 +888,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
   /* Settings form actions — stack vertically */
   .settings-form-actions { flex-direction: column; }
   .settings-form-actions button { min-height: 44px; width: 100%; }
+
+  /* PM Dashboard — remove max-width cap so content fills screen */
+  .pm-dashboard { max-width: 100% !important; }
 }

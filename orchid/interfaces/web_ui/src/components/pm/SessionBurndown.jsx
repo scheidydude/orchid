@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from 'recharts'
+import { useMediaQuery } from '../../hooks/useMediaQuery.js'
 
 function parseSessionEntries(entries) {
   let done = 0, blocked = 0, skipped = 0
@@ -25,6 +26,7 @@ export default function SessionBurndown({ projectId }) {
   const [data, setData] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const isMobile = useMediaQuery('(max-width: 768px)')
 
   useEffect(() => {
     if (!projectId) return
@@ -61,7 +63,7 @@ export default function SessionBurndown({ projectId }) {
   if (data.length === 0) return <div style={{ color: 'var(--text-dim)', fontSize: 13, padding: 12 }}>No session logs found.</div>
 
   return (
-    <ResponsiveContainer width="100%" height={260}>
+    <ResponsiveContainer width="100%" height={isMobile ? 180 : 260}>
       <BarChart data={data} margin={{ top: 4, right: 16, left: 0, bottom: 24 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#30363d" />
         <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#8b949e' }} angle={-30} textAnchor="end" />
