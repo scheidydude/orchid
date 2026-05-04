@@ -205,6 +205,22 @@ def _make_session(tmp_path: Path, tasks: list[Task]) -> MagicMock:
     return session
 
 
+def _make_orchestrator(tmp_path: Path, tasks: list[Task]) -> MagicMock:
+    """Build a minimal mock orchestrator with proper hook registry initialization."""
+    from orchid.orchestrator import Orchestrator
+    from orchid.hooks.registry import HookRegistry
+
+    orch = Orchestrator.__new__(Orchestrator)
+    orch.session = _make_session(tmp_path, tasks)
+    orch.cli_model_override = None
+    orch.cli_provider_overrides = {}
+    orch.offline_mode = False
+    orch.stream_callback = None
+    # Initialize hook registry (normally done in __init__)
+    orch._hook_registry = HookRegistry()
+    return orch
+
+
 def test_rollup_blocked_when_sources_incomplete(tmp_path):
     from orchid.orchestrator import Orchestrator
 
@@ -218,12 +234,7 @@ def test_rollup_blocked_when_sources_incomplete(tmp_path):
     )
     session = _make_session(tmp_path, [source, rollup])
 
-    orch = Orchestrator.__new__(Orchestrator)
-    orch.session = session
-    orch.cli_model_override = None
-    orch.cli_provider_overrides = {}
-    orch.offline_mode = False
-    orch.stream_callback = None
+    orch = _make_orchestrator(tmp_path, [source, rollup])
 
     result = orch._execute_rollup_task(rollup)
 
@@ -249,12 +260,7 @@ def test_rollup_executes_when_sources_complete(tmp_path):
     )
     session = _make_session(tmp_path, [source, rollup])
 
-    orch = Orchestrator.__new__(Orchestrator)
-    orch.session = session
-    orch.cli_model_override = None
-    orch.cli_provider_overrides = {}
-    orch.offline_mode = False
-    orch.stream_callback = None
+    orch = _make_orchestrator(tmp_path, [source, rollup])
 
     synthesis_text = "## Summary\n\nAll tasks passed. No issues found."
 
@@ -282,12 +288,7 @@ def test_rollup_writes_output_file(tmp_path):
     )
     session = _make_session(tmp_path, [source, rollup])
 
-    orch = Orchestrator.__new__(Orchestrator)
-    orch.session = session
-    orch.cli_model_override = None
-    orch.cli_provider_overrides = {}
-    orch.offline_mode = False
-    orch.stream_callback = None
+    orch = _make_orchestrator(tmp_path, [source, rollup])
 
     synthesis_text = "## Status\n\nPassed."
 
@@ -317,12 +318,7 @@ def test_rollup_default_output_file_used_when_none(tmp_path):
     )
     session = _make_session(tmp_path, [source, rollup])
 
-    orch = Orchestrator.__new__(Orchestrator)
-    orch.session = session
-    orch.cli_model_override = None
-    orch.cli_provider_overrides = {}
-    orch.offline_mode = False
-    orch.stream_callback = None
+    orch = _make_orchestrator(tmp_path, [source, rollup])
 
     with patch("orchid.orchestrator.call", return_value="Summary content"):
         result = orch._execute_rollup_task(rollup)
@@ -348,12 +344,7 @@ def test_rollup_always_uses_claude(tmp_path):
     )
     session = _make_session(tmp_path, [source, rollup])
 
-    orch = Orchestrator.__new__(Orchestrator)
-    orch.session = session
-    orch.cli_model_override = None
-    orch.cli_provider_overrides = {}
-    orch.offline_mode = False
-    orch.stream_callback = None
+    orch = _make_orchestrator(tmp_path, [source, rollup])
 
     captured_calls = []
 
@@ -379,12 +370,7 @@ def test_rollup_no_sources_marks_blocked(tmp_path):
     )
     session = _make_session(tmp_path, [rollup])
 
-    orch = Orchestrator.__new__(Orchestrator)
-    orch.session = session
-    orch.cli_model_override = None
-    orch.cli_provider_overrides = {}
-    orch.offline_mode = False
-    orch.stream_callback = None
+    orch = _make_orchestrator(tmp_path, [rollup])
 
     result = orch._execute_rollup_task(rollup)
     assert result["status"] == "failed"

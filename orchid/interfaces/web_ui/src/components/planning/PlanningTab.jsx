@@ -100,6 +100,7 @@ export default function PlanningTab({ projectId, runStatus, onSwitchToTasks }) {
         <DiscussionPanel
           projectId={projectId}
           onReadyToAdvance={doAdvance}
+          onReset={loadLifecycle}
           advancing={advancing}
           advanceLog={advanceLog}
         />
@@ -156,6 +157,20 @@ export default function PlanningTab({ projectId, runStatus, onSwitchToTasks }) {
                   {onSwitchToTasks && (
                     <> <button className="link-btn" onClick={onSwitchToTasks} style={{ color: 'var(--accent)' }}>Go to Tasks →</button></>
                   )}
+                  {' '}
+                  <button
+                    className="link-btn"
+                    style={{ color: 'var(--text-dim)' }}
+                    onClick={() => {
+                      fetch(`/api/projects/${projectId}/lifecycle/validate-executing`, { method: 'POST' })
+                        .then(r => r.json())
+                        .then(d => {
+                          if (d.advanced) loadLifecycle()
+                          else alert(d.reason || 'Tasks still pending')
+                        })
+                        .catch(e => alert(String(e)))
+                    }}
+                  >Check completion</button>
                 </p>
               </div>
             </div>

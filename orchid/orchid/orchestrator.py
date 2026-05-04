@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from orchid import config as cfg
-from orchid.hooks.events import HookEvent, TASK_START, TASK_COMPLETE, TASK_FAILED, AGENT_ACTION, AGENT_OBSERVATION
+from orchid.hooks.events import HookEvent, TASK_START, TASK_COMPLETE, TASK_FAILED, TASK_BLOCKED, AGENT_ACTION, AGENT_OBSERVATION
 from orchid.hooks.registry import HookRegistry
 from orchid.memory.state import Task, TaskResultStore, TaskStatus
 from orchid.session import Session
@@ -118,10 +118,6 @@ class Orchestrator:
     - task_complete: After successful task completion
     - task_failed: When task fails or is blocked
     - agent_action/observation: During ReAct loop iterations
-
-    T097: Hooks are also wired into session and phase transitions via:
-    - Session._fire_session_start_hook() / _fire_session_end_hook()
-    - ProjectLifecycle._fire_phase_transition_hook() etc.
     """
 
     def __init__(
@@ -153,7 +149,7 @@ class Orchestrator:
             vector_memory=session._vector,
             project_name=session.project_name,
         )
-        # Hook registry for task events (T096)
+        # Hook registry for this orchestrator instance
         self._hook_registry = HookRegistry()
         self._load_hooks()
 
@@ -165,6 +161,7 @@ class Orchestrator:
             count = loader.load()
             # Merge loaded hooks into this orchestrator's registry
             if loader.registry:
+                # Copy handlers from loader's registry
                 for event_type, handlers in loader.registry._handlers.items():
                     for handler in handlers:
                         self._hook_registry._handlers[event_type].append(handler)
@@ -222,7 +219,10 @@ class Orchestrator:
     def _execute_task(self, task: Task) -> dict[str, Any]:
         from orchid.providers.base import ProviderUnavailableError
 
-        # Re-assert project config before every task
+        # Re-assert project config before every task — the global _config singleton can
+        # be overwritten by concurrent API requests (e.g. GET /api/projects polling
+        # _load_session for multiple projects). Without this, provider routing reads
+        # the wrong project's config and routes tasks to the wrong provider.
         cfg.configure_for_project(self.session.project_dir)
 
         # Resolve agent type for per-agent-type provider overrides
@@ -233,7 +233,7 @@ class Orchestrator:
         per_agent_override = self.cli_provider_overrides.get(agent_type)
         _agent_name = getattr(agent_cls, "agent_name", agent_type)
 
-        # Resolve provider through the full registry chain
+        # Resolve provider through the full registry chain — single source of truth.
         from orchid.providers.registry import get_registry as _get_provider_registry
         from orchid.tools.models import RouteDecision
         _provider_name = _get_provider_registry().resolve_name(
@@ -432,7 +432,6 @@ class Orchestrator:
             self._fire_task_failed_hook(task, str(e))
             return {"task_id": task.id, "status": "error", "error": str(e)}
 
-    # T096: Task lifecycle hook methods
     def _fire_task_start_hook(self, task: Task, model: str) -> None:
         """Fire the task_start hook event."""
         event = HookEvent(

@@ -1,0 +1,397 @@
+"""Hook loader for Orchid V2.
+
+Loads hook configurations from .orchid.yaml and registers them with the registry.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import re
+from pathlib import Path
+from typing import Any
+
+from orchid.hooks.events import HookEvent
+from orchid.hooks.registry import HookRegistry
+from orchid.hooks.types import HookCategory, HookExecutionMode, HTTPHook, PythonHook, ShellHook
+
+logger = logging.getLogger(__name__)
+
+
+class HookLoader:
+    """Loads and registers hooks from configuration.
+
+    Hook configuration in .orchid.yaml:
+
+        hooks:
+          enabled: true
+          tasks:
+            - name: notify_on_task_start
+              event: task_start
+              type: shell
+              command: echo "Task started: {{task_id}}"
+              mode: background
+
+            - name: slack_notification
+              event: task_complete
+              type: http
+              url: https://hooks.slack.com/...
+              method: POST
+              payload_template: |
+                {
+                  "text": "Task {{task_id}} completed"
+                }
+              mode: async
+
+            - name: custom_handler
+              event: phase_transition
+              type: python
+              module: myproject.hooks
+              function: on_phase_change
+              mode: sync
+    """
+
+    def __init__(self, project_dir: Path):
+        self.project_dir = Path(project_dir)
+        self.registry = HookRegistry()
+        self._loaded_hooks: list[dict] = []
+        self._section_counts: dict[str, int] = {}
+
+    def load(self) -> int:
+        """Load hooks from .orchid.yaml configuration.
+
+        Returns:
+            Number of hooks loaded
+        """
+        from orchid import config as cfg
+
+        # Configure for this project
+        cfg.configure_for_project(self.project_dir)
+
+        hooks_config = cfg.get("hooks", {})
+
+        if not hooks_config.get("enabled", False):
+            logger.info("Hooks disabled in configuration")
+            return 0
+
+        count = 0
+        self._section_counts = {}
+
+        # Load task lifecycle hooks
+        self._section_counts["tasks"] = self._load_section(hooks_config.get("tasks", []), "task")
+        count += self._section_counts["tasks"]
+
+        # Load phase transition hooks
+        self._section_counts["phases"] = self._load_section(hooks_config.get("phases", []), "phase")
+        count += self._section_counts["phases"]
+
+        # Load agent loop hooks
+        self._section_counts["agent"] = self._load_section(hooks_config.get("agent", []), "agent")
+        count += self._section_counts["agent"]
+
+        # Load session hooks
+        self._section_counts["session"] = self._load_section(hooks_config.get("session", []), "session")
+        count += self._section_counts["session"]
+
+        logger.info("Loaded %d hook(s)", count)
+        return count
+
+    def _load_section(self, hooks: list[dict], category: str) -> int:
+        """Load hooks from a configuration section."""
+        count = 0
+
+        for hook_config in hooks:
+            try:
+                hook = self._parse_hook(hook_config, category)
+                if hook:
+                    self._register_hook(hook)
+                    self._loaded_hooks.append(hook_config)
+                    count += 1
+            except Exception as e:
+                logger.error("Failed to load hook %s: %s", hook_config.get("name", "?"), e)
+
+        return count
+
+    def _parse_hook(self, config: dict, category: str) -> ShellHook | HTTPHook | PythonHook | None:
+        """Parse a hook configuration into a hook object."""
+        name = config.get("name", "unnamed")
+        event_type = config.get("event", "")
+        hook_type = config.get("type", "shell")
+        mode_str = config.get("mode", "sync")
+
+        # Validate event type
+        if not event_type:
+            logger.warning("Hook %s has no event type, skipping", name)
+            return None
+
+        # Parse mode
+        mode_map = {
+            "sync": HookExecutionMode.SYNC,
+            "async": HookExecutionMode.ASYNC,
+            "background": HookExecutionMode.BACKGROUND,
+        }
+        mode = mode_map.get(mode_str, HookExecutionMode.SYNC)
+
+        # Map category to HookCategory
+        category_map = {
+            "task": HookCategory.TASK,
+            "phase": HookCategory.PHASE,
+            "agent": HookCategory.AGENT,
+            "session": HookCategory.SESSION,
+        }
+        hook_category = category_map.get(category, HookCategory.TASK)
+
+        if hook_type == "shell":
+            return self._parse_shell_hook(name, event_type, config, mode, hook_category)
+        elif hook_type == "http":
+            return self._parse_http_hook(name, event_type, config, mode, hook_category)
+        elif hook_type == "python":
+            return self._parse_python_hook(name, event_type, config, mode, hook_category)
+        else:
+            logger.warning("Unknown hook type %s for hook %s", hook_type, name)
+            return None
+
+    def _parse_shell_hook(
+        self, name: str, event_type: str, config: dict,
+        mode: HookExecutionMode, category: HookCategory
+    ) -> ShellHook:
+        """Parse a shell hook configuration."""
+        command = config.get("command", "")
+        timeout = config.get("timeout", 60)
+        allowlist_check = config.get("allowlist_check", True)
+
+        return ShellHook(
+            name=name,
+            event_type=event_type,
+            command=command,
+            category=category,
+            mode=mode,
+            timeout=timeout,
+            allowlist_check=allowlist_check,
+        )
+
+    def _parse_http_hook(
+        self, name: str, event_type: str, config: dict,
+        mode: HookExecutionMode, category: HookCategory
+    ) -> HTTPHook:
+        """Parse an HTTP hook configuration."""
+        url = config.get("url", "")
+        method = config.get("method", "POST")
+        headers = config.get("headers", {})
+        payload_template = config.get("payload_template", "")
+        timeout = config.get("timeout", 10)
+
+        return HTTPHook(
+            name=name,
+            event_type=event_type,
+            url=url,
+            method=method,
+            headers=headers,
+            payload_template=payload_template,
+            category=category,
+            mode=mode,
+            timeout=timeout,
+        )
+
+    def _parse_python_hook(
+        self, name: str, event_type: str, config: dict,
+        mode: HookExecutionMode, category: HookCategory
+    ) -> PythonHook | None:
+        """Parse a Python hook configuration."""
+        module = config.get("module", "")
+        function = config.get("function", "")
+
+        if not module or not function:
+            logger.warning(
+                "Python hook %s missing module or function, skipping", name
+            )
+            return None
+
+        # Import the module and get the function
+        try:
+            import importlib
+            mod = importlib.import_module(module)
+            callback = getattr(mod, function)
+            if not callable(callback):
+                logger.warning(
+                    "Python hook %s: %s.%s is not callable", name, module, function
+                )
+                return None
+        except (ImportError, AttributeError) as e:
+            logger.error(
+                "Failed to import Python hook %s: %s", name, e
+            )
+            return None
+
+        return PythonHook(
+            name=name,
+            event_type=event_type,
+            callback=callback,
+            category=category,
+            mode=mode,
+        )
+
+    def _register_hook(self, hook: ShellHook | HTTPHook | PythonHook) -> None:
+        """Register a hook with the registry."""
+        # Convert mode to string
+        mode_map = {
+            HookExecutionMode.SYNC: "sync",
+            HookExecutionMode.ASYNC: "async",
+            HookExecutionMode.BACKGROUND: "background",
+        }
+        mode_str = mode_map.get(hook.mode, "sync")
+
+        # Create handler based on hook type
+        if isinstance(hook, ShellHook):
+            handler = self._create_shell_handler(hook)
+        elif isinstance(hook, HTTPHook):
+            handler = self._create_http_handler(hook)
+        elif isinstance(hook, PythonHook):
+            handler = hook.callback
+        else:
+            logger.warning("Unknown hook type: %s", type(hook))
+            return
+
+        # Register with priority based on mode (sync hooks get higher priority)
+        priority_map = {
+            HookExecutionMode.SYNC: 100,
+            HookExecutionMode.ASYNC: 50,
+            HookExecutionMode.BACKGROUND: 10,
+        }
+        priority = priority_map.get(hook.mode, 50)
+
+        self.registry.register(
+            event_type=hook.event_type,
+            handler=handler,
+            priority=priority,
+            mode=mode_str,
+            timeout=hook.timeout,
+        )
+
+        logger.debug("Registered hook %s for event %s", hook.name, hook.event_type)
+
+    def _create_shell_handler(self, hook: ShellHook) -> callable:
+        """Create a handler for a shell hook."""
+        def handler(event: HookEvent) -> str:
+            """Execute shell command with event data substitution."""
+            if hook.allowlist_check and not self._is_command_allowed(hook.command):
+                logger.warning(
+                    "Shell hook %s blocked: command not in allowlist", hook.name
+                )
+                return "[blocked]"
+
+            # Substitute event data into command
+            command = self._substitute_vars(hook.command, event)
+
+            import subprocess
+            try:
+                result = subprocess.run(
+                    command,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=hook.timeout,
+                    cwd=str(self.project_dir),
+                )
+                if result.returncode != 0:
+                    logger.error(
+                        "Shell hook %s failed: %s", hook.name, result.stderr
+                    )
+                return result.stdout or result.stderr or "[executed]"
+            except subprocess.TimeoutExpired:
+                logger.error("Shell hook %s timed out", hook.name)
+                return "[timeout]"
+            except Exception as e:
+                logger.error("Shell hook %s error: %s", hook.name, e)
+                return f"[error: {e}]"
+
+        return handler
+
+    def _create_http_handler(self, hook: HTTPHook) -> callable:
+        """Create a handler for an HTTP hook."""
+        def handler(event: HookEvent) -> dict:
+            """Make HTTP request with event data."""
+            import json
+
+            # Substitute event data into URL and payload
+            url = self._substitute_vars(hook.url, event)
+            payload = hook.payload_template
+            if payload:
+                payload = self._substitute_vars(payload, event)
+
+            try:
+                import requests
+                response = requests.request(
+                    method=hook.method,
+                    url=url,
+                    headers=hook.headers,
+                    data=payload,
+                    timeout=hook.timeout,
+                )
+                return {
+                    "status_code": response.status_code,
+                    "response": response.text[:500],
+                }
+            except Exception as e:
+                logger.error("HTTP hook %s error: %s", hook.name, e)
+                return {"error": str(e)}
+
+        return handler
+
+    def _is_command_allowed(self, command: str) -> bool:
+        """Check if a shell command is in the allowlist."""
+        from orchid import config as cfg
+
+        allowlist = cfg.get("hooks.shell_allowlist", [])
+
+        # Extract the base command (first word)
+        base_cmd = command.split()[0] if command else ""
+
+        # Check exact match
+        if base_cmd in allowlist:
+            return True
+
+        # Check prefix matches
+        for allowed in allowlist:
+            if command.startswith(allowed):
+                return True
+
+        return False
+
+    def _substitute_vars(self, template: str, event: HookEvent) -> str:
+        """Substitute event variables into a template string."""
+        if not template:
+            return template
+
+        result = template
+
+        # Top-level event data
+        for key, value in event.data.items():
+            if isinstance(value, str):
+                result = result.replace(f"{{{{{key}}}}}", value)
+
+        # Context data
+        for key, value in event.context.items():
+            if isinstance(value, str):
+                result = result.replace(f"{{{{context.{key}}}}}", value)
+
+        # Timestamp
+        result = result.replace("{{timestamp}}", event.timestamp)
+
+        # Event type
+        result = result.replace("{{event_type}}", event.event_type)
+
+        # JSON representation of full event data
+        if "{{event_data}}" in result:
+            import json
+            result = result.replace("{{event_data}}", json.dumps(event.data))
+
+        return result
+
+    def get_loaded_hooks(self) -> list[dict]:
+        """Get list of loaded hook configurations."""
+        return self._loaded_hooks.copy()
+
+    def _count_section(self, section: str) -> int:
+        """Get count of hooks loaded from a section."""
+        return self._section_counts.get(section, 0)

@@ -111,7 +111,7 @@ vector_memory:
   n_results: 5
   embedding_model: nomic-embed-text
   fallback_model: all-MiniLM-L6-v2
-  auto_recall_on_load: true
+  auto_recall_on_build: true
   auto_embed_on_save: true
 
 telegram:
@@ -264,14 +264,14 @@ providers:
 
   # ── Layer 7: Agent-type defaults (configurable; override in .orchid.yaml) ───
   agent_defaults:
-    orchestrator:    claude
-    reviewer:        claude
+    orchestrator:    local
+    reviewer:        local
     developer:       local
     researcher:      local
     base:            local
-    discussion:      claude
-    product_manager: claude
-    project_manager: claude
+    discussion:      local
+    product_manager: local
+    project_manager: local
 
   # Named provider instances (add new providers here)
   # All built-in providers (claude, local) are always registered automatically.
@@ -339,3 +339,119 @@ lifecycle:
   auto_git_init: true
   notify_on_gate: true
   warn_on_local_planning: true          # warn when using local model for PM agents
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Hooks Configuration Schema (T092-T099)
+# Extensible event-driven hook system for task lifecycle, phase transitions,
+# agent loop events, and session events.
+#
+# Example configuration in .orchid.yaml:
+#
+#   hooks:
+#     enabled: true
+#     # Shell commands executed on events
+#     shell_allowlist:
+#       - echo
+#       - curl
+#       - notify-send
+#       - git
+#
+#     # Task lifecycle hooks
+#     tasks:
+#       - name: notify_task_start
+#         event: task_start
+#         type: shell
+#         command: echo "Task {{task_id}} started"
+#         mode: background
+#
+#       - name: slack_on_complete
+#         event: task_complete
+#         type: http
+#         url: https://hooks.slack.com/services/xxx
+#         method: POST
+#         payload_template: |
+#           {
+#             "text": "Task {{task_id}} completed: {{result}}"
+#           }
+#         mode: async
+#
+#     # Phase transition hooks
+#     phases:
+#       - name: notify_phase_change
+#         event: phase_transition
+#         type: shell
+#         command: notify-send "Phase: {{from_phase}} → {{to_phase}}"
+#         mode: background
+#
+#     # Agent loop hooks
+#     agent:
+#       - name: log_agent_action
+#         event: agent_action
+#         type: shell
+#         command: echo "{{task_id}}: {{action}} {{input}}" >> agent.log
+#         mode: background
+#
+#     # Session hooks
+#     session:
+#       - name: notify_session_start
+#         event: session_start
+#         type: shell
+#         command: echo "Session started for {{project_name}}"
+#         mode: background
+#
+# Event types:
+#   - task_start: Task execution begins
+#   - task_complete: Task completed successfully
+#   - task_failed: Task failed or was blocked
+#   - task_skipped: Task was skipped
+#   - agent_action: Agent took an action in ReAct loop
+#   - agent_observation: Agent received observation
+#   - phase_transition: Phase changed (from_phase → to_phase)
+#   - phase_enter: Entered new phase
+#   - phase_exit: Exited current phase
+#   - session_start: Session loaded
+#   - session_end: Session closed
+#
+# Hook types:
+#   - shell: Execute shell command (subject to allowlist)
+#   - http: Make HTTP request (POST/GET)
+#   - python: Call Python function (module.function)
+#
+# Execution modes:
+#   - sync: Blocking — waits for hook to complete (default)
+#   - async: Non-blocking with timeout
+#   - background: Fire-and-forget, errors ignored
+#
+# Variable substitution in templates:
+#   {{task_id}} - Task identifier
+#   {{title}} - Task title
+#   {{result}} - Task result (truncated)
+#   {{from_phase}} - Previous phase
+#   {{to_phase}} - New phase
+#   {{project_name}} - Project name
+#   {{action}} - Agent action name
+#   {{input}} - Action input
+#   {{observation}} - Agent observation
+#   {{timestamp}} - ISO timestamp
+#   {{event_type}} - Event type string
+#   {{event_data}} - JSON of full event data
+#   {{context.key}} - Context data by key
+# ──────────────────────────────────────────────────────────────────────────────
+
+hooks:
+  enabled: false
+
+  # Shell command allowlist (in addition to built-in safe commands)
+  shell_allowlist: []
+
+  # Task lifecycle hooks
+  tasks: []
+
+  # Phase transition hooks
+  phases: []
+
+  # Agent loop hooks
+  agent: []
+
+  # Session hooks
+  session: []

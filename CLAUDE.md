@@ -48,3 +48,75 @@ Skip: `- [~] **T003**`. Rollup: `- [ ] **T099** \`type:rollup\` \`rollup:T090,T0
 - [T091] Update docs/pm-guide.md: add section on configuring fully-local operation via .orchid.yaml providers overrides. Show example config for all-local PM planning and development with Claude only for final review. Explain the resolution order: CLI flag > project config > task annotation > defaults.: Task T091 complete. Updated `docs/pm-guide.md` with a comprehensive new section on **Configuring Fully-Local Operation** that includes:
 
 1. **Provider Resolution Order** — Clear table showing the prio
+
+- [T096] Wire hooks into task lifecycle: FAILED: [max iterations reached without final answer]
+
+- [T096] Wire hooks into task lifecycle: Hooks have been successfully wired into the task lifecycle (T096) and session/phase transitions (T097). The implementation includes:
+
+- **Task lifecycle hooks** in orchestrator.py: task_start, task_co
+
+- [T095] Wire hooks into agent ReAct loop: \s*(.*)", re.DOTALL)
+_THOUGHT_RE = re.compile(r"Thought:\s*(.*?)(?=\nAction:|\nFinal Answer:|$)", re.DOTALL)
+
+_TOOL_ARG_MAP: dict[str, str] = {
+    "read_file": "path", "list_dir": "path", "append_fil
+
+- [T092] Design and implement: The hooks system for Orchid V2 has been fully designed and implemented. All components are in place:
+
+1. **Core hook infrastructure** (`orchid/hooks/`) - Events, types, registry, loader
+2. **Integrati
+
+- [T093] Define hook event constants in: Hook event constants have been successfully defined in `orchid/hooks/events.py` and properly exported in `orchid/hooks/__init__.py`. The implementation includes:
+
+**Agent ReAct loop events:**
+- `AGENT
+
+- [T094] Implement hook loader: The hook loader implementation (T094) is complete. The HookLoader class loads hook configurations from `.orchid.yaml`, supports shell/http/python hook types with sync/async/background execution modes,
+
+- [T097] Wire hooks into session and phase transitions: fire: T097 "Wire hooks into session and phase transitions: fire" is **complete**. The hook system was already fully implemented in the codebase. Here's what was verified:
+
+## Hook Integration Points Impleme
+
+- [T098] Add hook config schema to: The hook config schema has been successfully added to the Orchid framework. The schema module (`orchid/hooks/schema.py`) provides Pydantic-based validation for all hook configurations including shell,
+
+- [T099] Add CLI:: The hooks CLI has been successfully implemented in `orchid/interfaces/hooks_cli.py` with 7 subcommands (list, show, validate, test, stats, add, remove). All commands have been tested and are working c
+
+- [T100] Review hook registry and loader implementation: verify blocking hooks cannot deadlock the orchestrator, shell hooks are sandboxed by the existing shell allowlist, http hooks respect timeout, and hook errors are logged but never crash the agent loop. Check: I have completed the security review for task **T100**. Here's a summary of the findings:
+
+## Review Summary
+
+### Files Analyzed
+- `orchid/hooks/registry.py` - Hook registry and execution
+- `orchid/ho
+
+- [T101] Review hook integration points in: Task T101 **Review hook integration points** is now COMPLETE.
+
+## Summary
+
+I have completed the review of hook integration points in the Orchid framework. The following files were created/updated:
+
+##
+
+- [T102] Unit tests: Unit tests for the hook system have been created at `tests/test_hooks.py` with 69 tests covering HookEvent, HookRegistry, HookLoader, hook type classes (ShellHook, HTTPHook, PythonHook), and schema va
+
+- [T103] Unit tests: FAILED: [max iterations reached without final answer]
+
+- [T104] Integration tests: Task completed successfully."
+
+
+@pytest.fixture()
+def project_with_hooks(tmp_path: Path) -> Path:
+    """Minimal orchid project with hooks configuration."""
+    (tmp_path / "tasks.md").write_text(
+
+- [T103] Unit tests: The answer is 42")
+
+    assert action is None
+    assert args is None
+
+
+# ── Tool execution tests ──────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_execute_r

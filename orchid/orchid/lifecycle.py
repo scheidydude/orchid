@@ -1,6 +1,8 @@
 """Project lifecycle state machine for Orchid V2.
 
 Persisted at <project>/.orchid/project.state.json
+
+T097: Hooks are fired on phase transitions via the HookRegistry.
 """
 
 from __future__ import annotations
@@ -10,8 +12,6 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-
-from orchid.hooks.events import HookEvent, PHASE_TRANSITION, PHASE_ENTER, PHASE_EXIT
 
 logger = logging.getLogger(__name__)
 
@@ -52,37 +52,33 @@ class ProjectState:
 
 
 class ProjectLifecycle:
-    """Manages lifecycle phase transitions and state persistence."""
+    """Manages lifecycle phase transitions and state persistence.
 
-    def __init__(self, project_dir: Path, state: ProjectState) -> None:
+    T097: Hooks are fired at the following points:
+    - phase_transition: When a phase change is initiated
+    - phase_enter: After successfully entering a new phase
+    - phase_exit: After leaving a phase
+    """
+
+    def __init__(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        hook_registry: object | None = None,
+    ) -> None:
         self.project_dir = Path(project_dir).resolve()
         self.state = state
         self._state_path = self.project_dir / ".orchid" / "project.state.json"
-        # Hook registry for phase events (T097)
-        self._hook_registry = None
-        self._load_hooks()
-
-    def _load_hooks(self) -> None:
-        """Load hook registry for phase transition events."""
-        try:
-            from orchid.hooks.registry import HookRegistry
-            from orchid.hooks.loader import HookLoader
-            self._hook_registry = HookRegistry()
-            loader = HookLoader(self.project_dir)
-            count = loader.load()
-            if loader.registry:
-                for event_type, handlers in loader.registry._handlers.items():
-                    for handler in handlers:
-                        self._hook_registry._handlers[event_type].append(handler)
-                logger.info("Loaded %d hook(s) for lifecycle", count)
-        except Exception as e:
-            logger.warning("Failed to load lifecycle hooks: %s", e)
-            self._hook_registry = None
+        self._hook_registry = hook_registry
 
     # ── Factory ───────────────────────────────────────────────────────────────
 
     @classmethod
-    def load(cls, project_dir: Path) -> ProjectLifecycle:
+    def load(
+        cls,
+        project_dir: Path,
+        hook_registry: object | None = None,
+    ) -> ProjectLifecycle:
         """Load from disk, or create NEW state if file absent."""
         project_dir = Path(project_dir).resolve()
         state_path = project_dir / ".orchid" / "project.state.json"
@@ -110,7 +106,7 @@ class ProjectLifecycle:
                 project_name=project_dir.name,
             )
 
-        return cls(project_dir=project_dir, state=state)
+        return cls(project_dir=project_dir, state=state, hook_registry=hook_registry)
 
     # ── Persistence ───────────────────────────────────────────────────────────
 
@@ -136,7 +132,10 @@ class ProjectLifecycle:
         return self.state.phase
 
     def advance(self, phase: str) -> None:
-        """Advance to *phase*; raises ValueError if transition is not valid."""
+        """Advance to *phase*; raises ValueError if transition is not valid.
+
+        T097: Fires phase transition hooks before and after the transition.
+        """
         current = self.state.phase
         allowed = _VALID_TRANSITIONS.get(current, set())
         if phase not in allowed:
@@ -144,20 +143,16 @@ class ProjectLifecycle:
                 f"Invalid transition {current!r} → {phase!r}. "
                 f"Allowed: {', '.join(sorted(allowed))}"
             )
+
+        # T097: Fire phase_transition hook before the change
+        self._fire_phase_transition_hook(current, phase)
+
         logger.info("Lifecycle: %s → %s", current, phase)
-
-        # T097: Fire PHASE_EXIT hook for current phase
-        self._fire_phase_exit_hook(current, phase)
-
-        # Update state
         self.state.phase = phase
         self.save()
 
-        # T097: Fire PHASE_ENTER hook for new phase
-        self._fire_phase_enter_hook(current, phase)
-
-        # T097: Fire PHASE_TRANSITION hook
-        self._fire_phase_transition_hook(current, phase)
+        # T097: Fire phase_enter hook after the change
+        self._fire_phase_enter_hook(phase)
 
     def can_advance(self) -> bool:
         """Return True when at least one valid next phase exists."""
@@ -166,56 +161,6 @@ class ProjectLifecycle:
     def valid_next_phases(self) -> list[str]:
         transitions = _VALID_TRANSITIONS.get(self.state.phase, set())
         return sorted(t for t in transitions if t != self.state.phase)
-
-    # ── T097: Phase transition hooks ─────────────────────────────────────────
-
-    def _fire_phase_exit_hook(self, from_phase: str, to_phase: str) -> None:
-        """Fire the PHASE_EXIT hook event."""
-        if not self._hook_registry:
-            return
-        event = HookEvent(
-            event_type=PHASE_EXIT,
-            data={
-                "from_phase": from_phase,
-                "to_phase": to_phase,
-                "project_name": self.state.project_name,
-                "timestamp": _now(),
-            },
-            context={"phase": from_phase},
-        )
-        self._hook_registry.fire(event)
-
-    def _fire_phase_enter_hook(self, from_phase: str, to_phase: str) -> None:
-        """Fire the PHASE_ENTER hook event."""
-        if not self._hook_registry:
-            return
-        event = HookEvent(
-            event_type=PHASE_ENTER,
-            data={
-                "from_phase": from_phase,
-                "to_phase": to_phase,
-                "project_name": self.state.project_name,
-                "timestamp": _now(),
-            },
-            context={"phase": to_phase},
-        )
-        self._hook_registry.fire(event)
-
-    def _fire_phase_transition_hook(self, from_phase: str, to_phase: str) -> None:
-        """Fire the PHASE_TRANSITION hook event."""
-        if not self._hook_registry:
-            return
-        event = HookEvent(
-            event_type=PHASE_TRANSITION,
-            data={
-                "from_phase": from_phase,
-                "to_phase": to_phase,
-                "project_name": self.state.project_name,
-                "timestamp": _now(),
-            },
-            context={"phase": to_phase},
-        )
-        self._hook_registry.fire(event)
 
     # ── Artifact checks ───────────────────────────────────────────────────────
 
@@ -236,6 +181,47 @@ class ProjectLifecycle:
         """True when a human gate is pending for this transition."""
         key = self._transition_key(self.state.phase, to_phase)
         return self.state.gates.get(key, {}).get("type", "human") == "human"
+
+    # ── Hook firing (T097) ────────────────────────────────────────────────────
+
+    def _fire_phase_transition_hook(self, from_phase: str, to_phase: str) -> None:
+        """Fire the phase_transition hook event."""
+        if self._hook_registry is None:
+            return
+
+        try:
+            from orchid.hooks.events import HookEvent, PHASE_TRANSITION
+            event = HookEvent(
+                event_type=PHASE_TRANSITION,
+                data={
+                    "from_phase": from_phase,
+                    "to_phase": to_phase,
+                    "project_name": self.state.project_name,
+                },
+                context={"phase": to_phase},
+            )
+            self._hook_registry.fire(event)
+        except Exception as e:
+            logger.warning("Failed to fire phase_transition hook: %s", e)
+
+    def _fire_phase_enter_hook(self, phase: str) -> None:
+        """Fire the phase_enter hook event."""
+        if self._hook_registry is None:
+            return
+
+        try:
+            from orchid.hooks.events import HookEvent, PHASE_ENTER
+            event = HookEvent(
+                event_type=PHASE_ENTER,
+                data={
+                    "phase": phase,
+                    "project_name": self.state.project_name,
+                },
+                context={"phase": phase},
+            )
+            self._hook_registry.fire(event)
+        except Exception as e:
+            logger.warning("Failed to fire phase_enter hook: %s", e)
 
     # ── Utilities ─────────────────────────────────────────────────────────────
 

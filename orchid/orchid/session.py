@@ -1,4 +1,7 @@
-"""Session manager — loads state at startup, compresses and saves at shutdown."""
+"""Session manager — loads state at startup, compresses and saves at shutdown.
+
+T097: Hooks are fired on session_start and session_end events.
+"""
 
 from __future__ import annotations
 
@@ -9,8 +12,6 @@ from pathlib import Path
 from typing import Any
 
 from orchid import config as cfg
-from orchid.hooks.events import HookEvent, SESSION_START, SESSION_END
-from orchid.hooks.registry import HookRegistry
 from orchid.memory import state as mem_state
 from orchid.memory.decisions import load_decisions
 from orchid.memory.vector import VectorMemory
@@ -33,10 +34,19 @@ class Session:
 
     project_dir: absolute path to the external project being worked on.
                  Can be any directory — does not need to be under orchid/.
+
+    T097: Hooks are fired at the following points:
+    - session_start: When session.load() is called
+    - session_end: When session.close() is called
     """
 
-    def __init__(self, project_dir: str | Path = "."):
+    def __init__(
+        self,
+        project_dir: str | Path = ".",
+        hook_registry: object | None = None,
+    ):
         self.project_dir = Path(project_dir).resolve()
+        self._hook_registry = hook_registry
 
         # Merge orchid defaults with this project's .orchid.yaml
         self.config = cfg.configure_for_project(self.project_dir)
@@ -63,29 +73,14 @@ class Session:
             "local_prompt_tokens": 0,
             "local_prompt_ms": 0,
         }
-        # Hook registry for session events (T097)
-        self._hook_registry = HookRegistry()
-        self._load_hooks()
-
-    def _load_hooks(self) -> None:
-        """Load and register hooks from project configuration."""
-        try:
-            from orchid.hooks.loader import HookLoader
-            loader = HookLoader(self.project_dir)
-            count = loader.load()
-            # Merge loaded hooks into this session's registry
-            if loader.registry:
-                for event_type, handlers in loader.registry._handlers.items():
-                    for handler in handlers:
-                        self._hook_registry._handlers[event_type].append(handler)
-                logger.info("Loaded %d hook(s) for session", count)
-        except Exception as e:
-            logger.warning("Failed to load hooks: %s", e)
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     def load(self) -> None:
-        """Read all state from disk."""
+        """Read all state from disk.
+
+        T097: Fires session_start hook after loading state.
+        """
         global _current_session  # noqa: PLW0603
         _current_session = self
 
@@ -130,57 +125,98 @@ class Session:
             "on" if (self._vector and self._vector.available) else "off",
         )
 
-        # T097: Fire SESSION_START hook
+        # T097: Fire session_start hook
         self._fire_session_start_hook()
 
     def save(self) -> None:
-        """Persist all mutated session state to disk."""
+        """Persist all mutated session state to disk.
+
+        This method is idempotent and can be called multiple times.
+        It writes the following to disk:
+
+        - tasks: Updated task list (via mem_state.save_tasks)
+        - hot_memory: Current hot memory content (via mem_state.save_hot_memory)
+
+        Side effects:
+        - Does NOT write decisions (those are persisted immediately upon creation)
+        - Does NOT write session logs (handled by _write_session_log)
+        - Does NOT compress hot memory (handled by _maybe_compress_hot_memory)
+
+        Thread safety:
+        - Not thread-safe. Callers should ensure single-threaded access.
+
+        Usage:
+            Typically called from close() after compression, or periodically
+            during long-running sessions to prevent data loss.
+        """
         mem_state.save_tasks(self.tasks, self.project_dir)
         mem_state.save_hot_memory(self.hot_memory, self.project_dir)
         logger.info("Session saved.")
 
     def close(self, summary: str = "") -> None:
-        """Save state, compress hot memory if needed, write session log, embed session."""
-        # T097: Fire SESSION_END hook before closing
+        """Save state, compress hot memory if needed, write session log, embed session.
+
+        T097: Fires session_end hook before closing.
+        """
+        # T097: Fire session_end hook
         self._fire_session_end_hook(summary)
+        
         self._maybe_compress_hot_memory()
         self.save()
         self._write_session_log(summary)
         self._finalize_live_log()
         self._auto_embed_session(summary)
 
-    # T097: Session hook methods
+    # ── Hook firing (T097) ────────────────────────────────────────────────────
+
     def _fire_session_start_hook(self) -> None:
-        """Fire the SESSION_START hook event."""
-        event = HookEvent(
-            event_type=SESSION_START,
-            data={
-                "project_name": self.project_name,
-                "project_dir": str(self.project_dir),
-                "task_count": len(self.tasks),
-                "started_at": self.started_at.isoformat(),
-            },
-            context={"project": self.project_name},
-        )
-        self._hook_registry.fire(event)
+        """Fire the session_start hook event."""
+        if self._hook_registry is None:
+            return
+
+        try:
+            from orchid.hooks.events import HookEvent, SESSION_START
+            event = HookEvent(
+                event_type=SESSION_START,
+                data={
+                    "project_name": self.project_name,
+                    "project_dir": str(self.project_dir),
+                    "started_at": self.started_at.isoformat(),
+                    "task_count": len(self.tasks),
+                },
+                context={"project": self.project_name},
+            )
+            self._hook_registry.fire(event)
+        except Exception as e:
+            logger.warning("Failed to fire session_start hook: %s", e)
 
     def _fire_session_end_hook(self, summary: str) -> None:
-        """Fire the SESSION_END hook event."""
-        duration = (datetime.now(UTC) - self.started_at).total_seconds()
-        event = HookEvent(
-            event_type=SESSION_END,
-            data={
-                "project_name": self.project_name,
-                "project_dir": str(self.project_dir),
-                "task_count": len(self.tasks),
-                "tasks_done": sum(1 for t in self.tasks if t.status == mem_state.TaskStatus.DONE),
-                "duration_seconds": duration,
-                "summary": summary[:1000] if summary else "",
-                "ended_at": datetime.now(UTC).isoformat(),
-            },
-            context={"project": self.project_name},
-        )
-        self._hook_registry.fire(event)
+        """Fire the session_end hook event."""
+        if self._hook_registry is None:
+            return
+
+        try:
+            from orchid.hooks.events import HookEvent, SESSION_END
+            ended_at = datetime.now(UTC)
+            duration = (ended_at - self.started_at).total_seconds()
+            
+            event = HookEvent(
+                event_type=SESSION_END,
+                data={
+                    "project_name": self.project_name,
+                    "project_dir": str(self.project_dir),
+                    "started_at": self.started_at.isoformat(),
+                    "ended_at": ended_at.isoformat(),
+                    "duration_seconds": duration,
+                    "tasks_done": sum(1 for t in self.tasks if t.status == mem_state.TaskStatus.DONE),
+                    "tasks_total": len(self.tasks),
+                    "summary": summary[:1000] if summary else "",
+                },
+                context={"project": self.project_name},
+            )
+            self._hook_registry.fire(event)
+        except Exception as e:
+            logger.warning("Failed to fire session_end hook: %s", e)
 
     # ── Context files ─────────────────────────────────────────────────────────
 
@@ -228,7 +264,11 @@ class Session:
     # ── Vector memory ─────────────────────────────────────────────────────────
 
     def recall(self, query: str, n: int | None = None) -> str:
-        """Query vector memory and return a formatted context string."""
+        """
+        Query vector memory and return a formatted context string.
+
+        Returns empty string when vector memory is unavailable or empty.
+        """
         if not self._vector or not self._vector.available:
             return ""
         n_results = n or cfg.get("vector_memory.n_results", 5)
@@ -266,7 +306,7 @@ class Session:
             log_text = self._log_path.read_text(encoding="utf-8").strip()
             if not log_text:
                 return
-            session_id = self._log_path.stem
+            session_id = self._log_path.stem  # e.g. "session_20260314_120000"
             self._vector.add_session_log(
                 session_id=session_id,
                 log_text=log_text,
@@ -310,6 +350,7 @@ class Session:
         """Rename .live.log → .log to signal completion."""
         if not self._live_log_path or not self._live_log_path.exists():
             return
+        # Strip ".live.log" suffix and replace with ".log"
         name = self._live_log_path.name
         final = self._live_log_path.parent / (name[: -len(".live.log")] + ".log")
         try:
@@ -340,6 +381,7 @@ class Session:
         ended_at = datetime.now(UTC)
         duration = (ended_at - self.started_at).total_seconds()
 
+        # Collect cache stats from Anthropic provider if available
         cache_stats: dict[str, Any] = {}
         try:
             from orchid.providers.anthropic import get_session_stats
@@ -364,6 +406,7 @@ class Session:
         if cache_stats:
             event["cache_stats"] = cache_stats
 
+        # Log local KV-cache stats if any local calls were made
         local = self.cache_stats
         local_total = local["local_fast_evals"] + local["local_slow_evals"]
         if local_total > 0:
@@ -405,6 +448,7 @@ class Session:
         if self.extra_context:
             parts.append(f"\n### Additional Context\n{self.extra_context[:2000]}")
 
+        # Auto-recall: seed context with semantically relevant past sessions
         if cfg.get("vector_memory.auto_recall_on_load", True):
             recall_query = " ".join(t.title for t in self.tasks[:5] if t.title)
             if recall_query:

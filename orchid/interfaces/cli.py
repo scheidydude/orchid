@@ -1634,5 +1634,12 @@ def serve(
     )
 
 
+# Register hooks CLI subcommands
+try:
+    from orchid.interfaces.hooks_cli import register_hooks_cli
+    register_hooks_cli(app)
+except ImportError:
+    pass
+
 if __name__ == "__main__":
     app()

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 
 function useDiscussionWS(projectId, onMessage) {
   const wsRef = useRef(null)
@@ -29,16 +29,18 @@ function useDiscussionWS(projectId, onMessage) {
   return wsRef
 }
 
-export default function DiscussionPanel({ projectId, onReadyToAdvance, advancing = false, advanceLog = [] }) {
+export default function DiscussionPanel({ projectId, onReadyToAdvance, onReset, advancing = false, advanceLog = [] }) {
   const [turns, setTurns] = useState([])
   const [contextMd, setContextMd] = useState('')
   const [input, setInput] = useState('')
   const [thinking, setThinking] = useState(false)
-  const [providerOverride, setProviderOverride] = useState('')
+  const [providerOverride, setProviderOverride] = useState('local')
   const [readyBanner, setReadyBanner] = useState(false)
   const [suggestions, setSuggestions] = useState([])
   const [error, setError] = useState(null)
   const [streamMsg, setStreamMsg] = useState('')
+  const [resetting, setResetting] = useState(false)
+  const streamMsgRef = useRef('')  // ref copy avoids stale closure in WS callback
   const bottomRef = useRef(null)
   const inputRef = useRef(null)
 
@@ -62,15 +64,18 @@ export default function DiscussionPanel({ projectId, onReadyToAdvance, advancing
     if (msg.type === 'thinking') {
       setThinking(true)
       setStreamMsg('')
+      streamMsgRef.current = ''
     } else if (msg.type === 'token') {
+      streamMsgRef.current = msg.data || ''
       setStreamMsg(msg.data || '')
     } else if (msg.type === 'done') {
-      const agentMsg = streamMsg || ''
+      const agentMsg = streamMsgRef.current || ''
       setTurns(prev => [...prev, {
         role: 'agent',
         message: agentMsg,
         timestamp: new Date().toISOString(),
       }])
+      streamMsgRef.current = ''
       setStreamMsg('')
       setThinking(false)
       setTimeout(() => inputRef.current?.focus(), 0)
@@ -81,10 +86,11 @@ export default function DiscussionPanel({ projectId, onReadyToAdvance, advancing
     } else if (msg.type === 'error') {
       setError(msg.data)
       setThinking(false)
+      streamMsgRef.current = ''
       setStreamMsg('')
       setTimeout(() => inputRef.current?.focus(), 0)
     }
-  }, [streamMsg])
+  }, [])  // stable — uses streamMsgRef to avoid stale closure and WS reconnection
 
   const wsRef = useDiscussionWS(projectId, handleWsMessage)
 
@@ -121,6 +127,27 @@ export default function DiscussionPanel({ projectId, onReadyToAdvance, advancing
   const useSuggestion = (s) => {
     setInput(s)
     setTimeout(() => inputRef.current?.focus(), 0)
+  }
+
+  const resetDiscussion = async () => {
+    if (!window.confirm('Reset discussion and start over? This clears the conversation history.')) return
+    setResetting(true)
+    try {
+      const res = await fetch(`/api/projects/${projectId}/discussion`, { method: 'DELETE' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      setTurns([])
+      setContextMd('')
+      setReadyBanner(false)
+      setSuggestions([])
+      setError(null)
+      streamMsgRef.current = ''
+      setStreamMsg('')
+      onReset?.()
+    } catch (err) {
+      setError(`Reset failed: ${err.message}`)
+    } finally {
+      setResetting(false)
+    }
   }
 
   return (
@@ -191,22 +218,41 @@ export default function DiscussionPanel({ projectId, onReadyToAdvance, advancing
         <div className="ready-banner">
           ✅ Requirements look complete!
           <button className="primary" onClick={onReadyToAdvance} style={{ marginLeft: 12 }}>
-            Advance to Requirements →
+            Generate Requirements →
           </button>
         </div>
       )}
 
-      <div className="discussion-input-row">
+      {!readyBanner && turns.length >= 1 && !advancing && (
+        <div className="ready-banner" style={{ background: 'var(--surface-2, #2a2a2a)', border: '1px solid var(--border)' }}>
+          Ready to proceed?
+          <button className="primary" onClick={onReadyToAdvance} style={{ marginLeft: 12 }}>
+            Generate Requirements →
+          </button>
+        </div>
+      )}
+
+      <div className="discussion-input-row" style={{ position: 'relative' }}>
+        {turns.length > 0 && (
+          <button
+            title="Reset discussion"
+            onClick={resetDiscussion}
+            disabled={resetting || thinking || advancing}
+            style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', fontSize: 14, padding: '0 4px', flexShrink: 0 }}
+          >
+            ↺
+          </button>
+        )}
         <select
           className="provider-select"
           value={providerOverride}
           onChange={e => setProviderOverride(e.target.value)}
           title="Provider override"
         >
-          <option value="">auto</option>
-          <option value="claude">claude</option>
           <option value="local">local</option>
+          <option value="claude">claude</option>
           <option value="ollama">ollama</option>
+          <option value="">auto</option>
         </select>
         <textarea
           ref={inputRef}

@@ -52,6 +52,19 @@
 - [x] **T008** Fix decisions.json parse error - likely JSON Lines vs single JSON document format mismatch `type:code_generate` `p1`
 - [x] **T002** Hook LLM summarizer into session compression `type:code_generate` `p1`
 - [x] **T001** Review the session.py compression logic and suggest improvements `type:review` `p1`
+- [x] **T103** Unit tests `type:draft` `p2` `needs:T094`
+- [x] **T092** Design and implement `type:draft` `p2`
+- [x] **T093** Define hook event constants in `type:draft` `p2` `needs:T092`
+- [x] **T094** Implement hook loader `type:draft` `p2` `needs:T093`
+- [x] **T097** Wire hooks into session and phase transitions: fire `type:draft` `p2` `needs:T094`
+- [x] **T098** Add hook config schema to `type:draft` `p2` `needs:T094`
+- [x] **T099** Add CLI: `type:draft` `p2` `needs:T098`
+- [x] **T100** Review hook registry and loader implementation: verify blocking hooks cannot deadlock the orchestrator, shell hooks are sandboxed by the existing shell allowlist, http hooks respect timeout, and hook errors are logged but never crash the agent loop. Check `type:draft` `p2` `needs:T094,T095,T096,T097`
+- [x] **T101** Review hook integration points in `type:draft` `p2` `needs:T095,T096`
+- [x] **T102** Unit tests `type:draft` `p2` `needs:T092,T093`
+- [x] **T104** Integration tests `type:draft` `p2` `needs:T095,T096,T097`
+- [x] **T095** Wire hooks into agent ReAct loop `type:draft` `p2` `needs:T094`
+- [x] **T096** Wire hooks into task lifecycle `type:draft` `p2` `needs:T094`
 - [x] **T091** Update docs/pm-guide.md: add section on configuring fully-local operation via .orchid.yaml providers overrides. Show example config for all-local PM planning and development with Claude only for final review. Explain the resolution order: CLI flag > project config > task annotation > defaults. `type:draft` `p2`
 - [x] **T085** Add task metrics capture to orchestrator: on every task completion (done/blocked/skipped) write a structured record to .orchid/task_metrics.jsonl containing: task_id, title, status, iters_used, iters_max, duration_s, action counts by type, model, session_id, and blocker details (reason, last_action, last_error) when blocked. Always-on, no flag needed. Add GET /api/projects/{id}/metrics endpoint returning parsed metrics. This feeds the PM dashboard and replaces need for full trace.log in Web UI. `type:code_generate` `p2`
 - [x] **T084** Add PM Dashboard view to Web UI: read-only project management view accessible from main navigation. Components: 1) Milestone Progress — milestone name, task count, completed/blocked/pending breakdown, completion %. 2) Dependency Graph — visual DAG of tasks showing dependencies (needs:), critical path highlighted, blocked tasks in red, completed in green, pending in grey. Use a lightweight JS graph library (d3 or cytoscape.js). 3) Session Burn-down — tasks completed per session over time, bar chart per session showing completed/blocked/skipped counts. 4) Phase Timeline — for V2 lifecycle projects show time spent in each phase (DISCUSSING/REQUIREMENTS/PLANNING/EXECUTING) as a horizontal timeline. 5) Task Timing — table of completed tasks sorted by duration (from trace.log if available, session logs otherwise) showing fastest and slowest tasks. All views are read-only. Add PM tab to main navigation alongside Tasks/Planning/Stream etc. `type:code_generate` `p2`

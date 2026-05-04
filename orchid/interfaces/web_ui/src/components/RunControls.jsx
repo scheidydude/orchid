@@ -1,7 +1,7 @@
 import { useState } from 'react'
 
 export default function RunControls({ projectId, runStatus, onRunChange }) {
-  const [codeModel, setCodeModel] = useState('auto')
+  const [codeModel, setCodeModel] = useState('local')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -68,9 +68,9 @@ export default function RunControls({ projectId, runStatus, onRunChange }) {
             onChange={e => setCodeModel(e.target.value)}
             style={{ width: 100 }}
           >
-            <option value="auto">auto</option>
-            <option value="claude">claude</option>
             <option value="local">local</option>
+            <option value="claude">claude</option>
+            <option value="auto">auto</option>
           </select>
         </>
       )}

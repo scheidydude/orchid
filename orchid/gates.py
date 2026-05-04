@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from enum import Enum
 
 from orchid import config as cfg
+from orchid.hooks.events import HookEvent, PHASE_TRANSITION
 from orchid.lifecycle import ProjectLifecycle
 
 logger = logging.getLogger(__name__)
@@ -67,6 +68,9 @@ class GateSystem:
         self.lifecycle.save()
         logger.info("Gate approved: %s → %s by %s", from_phase, to_phase, approver)
 
+        # T097: Fire PHASE_TRANSITION hook when gate is approved
+        self._fire_gate_approved_hook(from_phase, to_phase, approver)
+
     def notify_gate_reached(self, to_phase: str) -> None:
         """Log (and optionally notify) that a human gate has been reached."""
         from_phase = self.lifecycle.current_phase()
@@ -77,6 +81,24 @@ class GateSystem:
         )
         logger.info("Gate reached: %s", msg)
         # TODO: forward to Telegram/Slack via notification system (D0020)
+
+    # T097: Gate hook methods
+    def _fire_gate_approved_hook(self, from_phase: str, to_phase: str, approver: str) -> None:
+        """Fire a hook when a gate is approved."""
+        if not self.lifecycle._hook_registry:
+            return
+        event = HookEvent(
+            event_type=PHASE_TRANSITION,
+            data={
+                "from_phase": from_phase,
+                "to_phase": to_phase,
+                "project_name": self.lifecycle.state.project_name,
+                "approver": approver,
+                "approved_at": datetime.now(UTC).isoformat(),
+            },
+            context={"phase": to_phase},
+        )
+        self.lifecycle._hook_registry.fire(event)
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 

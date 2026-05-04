@@ -351,6 +351,19 @@ class _WebProjectRunner:
                 "done": done_ids,
                 "failed": failed_ids,
             })
+
+            # Auto-advance lifecycle EXECUTING → COMPLETE when all tasks done
+            if not self._cancel.is_set():
+                remaining_todo = sum(1 for t in session.tasks if t.status == TaskStatus.TODO)
+                if remaining_todo == 0:
+                    try:
+                        from orchid.lifecycle import ProjectLifecycle
+                        lc = ProjectLifecycle.load(Path(self.project_path))
+                        if lc.current_phase() == "EXECUTING":
+                            lc.advance("COMPLETE")
+                            self._emit(loop, "advance_done", {"phase": "COMPLETE"})
+                    except Exception as lc_exc:  # noqa: BLE001
+                        logger.warning("Failed to auto-advance lifecycle to COMPLETE: %s", lc_exc)
         except Exception as exc:  # noqa: BLE001
             logger.exception("Web runner session failed: %s", exc)
             self._emit(loop, "error", {"message": str(exc)})
@@ -1113,6 +1126,26 @@ def create_app(
             "current_milestone": lc.state.current_milestone,
         }
 
+    @app.post("/api/projects/{project_id}/lifecycle/validate-executing")
+    async def validate_executing(project_id: str):
+        """Check if all tasks are complete while in EXECUTING phase; advance to COMPLETE if so."""
+        path = _get_project(project_id)
+        from orchid.lifecycle import ProjectLifecycle
+        from orchid.memory.state import TaskStatus
+        from orchid.session import Session
+        proj_path = Path(path)
+        lc = ProjectLifecycle.load(proj_path)
+        if lc.current_phase() != "EXECUTING":
+            return {"phase": lc.current_phase(), "advanced": False, "reason": "not in EXECUTING phase"}
+        session = Session(project_dir=path)
+        session.load()
+        remaining = sum(1 for t in session.tasks if t.status == TaskStatus.TODO)
+        if remaining > 0:
+            return {"phase": "EXECUTING", "advanced": False, "remaining": remaining,
+                    "reason": f"{remaining} task(s) still pending"}
+        lc.advance("COMPLETE")
+        return {"phase": "COMPLETE", "advanced": True, "remaining": 0}
+
     @app.get("/api/projects/{project_id}/discussion")
     async def get_discussion(project_id: str):
         path = _get_project(project_id)
@@ -1158,6 +1191,26 @@ def create_app(
         except Exception as exc:
             logger.exception("Discussion agent error")
             raise HTTPException(status_code=500, detail=str(exc))
+
+    @app.delete("/api/projects/{project_id}/discussion")
+    async def reset_discussion(project_id: str):
+        """Reset discussion history and lifecycle phase back to NEW."""
+        path = _get_project(project_id)
+        proj_path = Path(path)
+        discussion_dir = proj_path / ".orchid" / "discussion"
+        conv_path = discussion_dir / "conversation.jsonl"
+        context_path = discussion_dir / "context.md"
+        if conv_path.exists():
+            conv_path.unlink()
+        if context_path.exists():
+            context_path.unlink()
+        from orchid.lifecycle import ProjectLifecycle
+        lc = ProjectLifecycle.load(proj_path)
+        lc.state.phase = "NEW"
+        lc.state.discussion_turns = 0
+        lc.save()
+        logger.info("Discussion reset for project %s", project_id)
+        return {"status": "reset", "phase": "NEW"}
 
     @app.post("/api/projects/{project_id}/advance")
     async def advance_project(project_id: str, body: AdvanceBody):

@@ -8,6 +8,13 @@ description: ""
 # Overrides routing.default from orchid.defaults.yaml
 model_preference: auto
 
+providers:
+  discussion: local
+  product_manager: local
+  project_manager: local
+  orchestrator: local
+  reviewer: local
+
 # Agent roles active for this project
 agent_roles:
   - developer
