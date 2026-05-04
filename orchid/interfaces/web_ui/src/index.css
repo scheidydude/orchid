@@ -746,6 +746,9 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
   }
   .sidebar::-webkit-scrollbar { display: none; }
 
+  /* Version label overlaps in horizontal sidebar — hide it */
+  .sidebar-version { display: none; }
+
   /* Project items lay out horizontally */
   .project-item {
     border-left: none;

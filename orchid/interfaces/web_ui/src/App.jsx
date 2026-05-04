@@ -125,7 +125,7 @@ export default function App() {
             />
           )}
           {orchidVersion && (
-            <div style={{
+            <div className="sidebar-version" style={{
               position: 'absolute',
               bottom: 8,
               left: 10,

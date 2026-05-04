@@ -116,7 +116,7 @@ export default function ProjectSwitcher({ projects, activeId, onSelect, newProje
     // No inactive projects — just show flat list with a header
     return (
       <div>
-        <div style={{ padding: '8px 16px 4px', fontSize: 11, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+        <div className="project-group-header" style={{ padding: '8px 16px 4px', fontSize: 11, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
           Projects
         </div>
         {projects.map(p => (
