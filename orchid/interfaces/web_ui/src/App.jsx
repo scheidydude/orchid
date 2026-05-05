@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import ProjectSwitcher from './components/ProjectSwitcher.jsx'
 import TaskBoard from './components/TaskBoard.jsx'
 import AgentStream from './components/AgentStream.jsx'
@@ -31,6 +31,8 @@ export default function App() {
   const [orchidVersion, setOrchidVersion] = useState('')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const isMobile = useMediaQuery('(max-width: 768px)')
+  const panelBodyRef = useRef(null)
+  const swipeTouchStartX = useRef(0)
 
   useEffect(() => {
     fetch('/api/version').then(r => r.json()).then(d => setOrchidVersion(d.version)).catch(() => {})
@@ -45,6 +47,18 @@ export default function App() {
       setActiveProject(projects[0].id)
     }
   }, [projects, activeProject])
+
+  // Scroll panel body to top on tab switch
+  useEffect(() => {
+    if (panelBodyRef.current) panelBodyRef.current.scrollTop = 0
+  }, [activeTab])
+
+  const handleDrawerTouchStart = (e) => {
+    swipeTouchStartX.current = e.touches[0].clientX
+  }
+  const handleDrawerTouchEnd = (e) => {
+    if (e.changedTouches[0].clientX - swipeTouchStartX.current < -50) setDrawerOpen(false)
+  }
 
   const activeProjectData = projects.find(p => p.id === activeProject)
 
@@ -135,7 +149,11 @@ export default function App() {
         {isMobile && drawerOpen && (
           <div className="sidebar-backdrop" onClick={() => setDrawerOpen(false)} />
         )}
-        <nav className={`sidebar${isMobile && drawerOpen ? ' drawer-open' : ''}`}>
+        <nav
+          className={`sidebar${isMobile && drawerOpen ? ' drawer-open' : ''}`}
+          onTouchStart={isMobile ? handleDrawerTouchStart : undefined}
+          onTouchEnd={isMobile ? handleDrawerTouchEnd : undefined}
+        >
           {projectsLoading ? (
             <div className="loading" style={{ padding: '16px' }}>Loading…</div>
           ) : (
@@ -194,7 +212,7 @@ export default function App() {
                   </button>
                 ))}
               </div>
-              <div className="panel-body" style={activeTab === 'Planning' ? { padding: 0, overflow: 'hidden' } : {}}>
+              <div ref={panelBodyRef} className="panel-body" style={activeTab === 'Planning' ? { padding: 0, overflow: 'hidden' } : {}}>
                 {activeTab === 'Tasks' && (
                   <TaskBoard projectId={activeProject} runStatus={runStatus} />
                 )}

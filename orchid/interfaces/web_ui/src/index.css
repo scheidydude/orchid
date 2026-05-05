@@ -80,6 +80,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
   align-items: center;
   gap: 12px;
   padding: 10px 20px;
+  padding-top: calc(10px + env(safe-area-inset-top, 0px));
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
@@ -891,4 +892,17 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 
   /* PM Dashboard — remove max-width cap so content fills screen */
   .pm-dashboard { max-width: 100% !important; }
+
+  /* Safe area insets — notch (top) and home indicator (bottom) */
+  .app-header {
+    padding: 8px 12px;
+    padding-top: calc(8px + env(safe-area-inset-top, 0px));
+  }
+  .sidebar {
+    padding-top: calc(12px + env(safe-area-inset-top, 0px));
+  }
+  /* Push panel-body above home bar on phones without bottom nav */
+  .panel-body {
+    padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  }
 }
