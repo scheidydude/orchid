@@ -886,16 +886,17 @@ def create_app(
         metrics_path = Path(path) / ".orchid" / "task_metrics.jsonl"
         if not metrics_path.exists():
             return []
-        records = []
+        seen: dict[str, dict] = {}
         for line in metrics_path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if not line:
                 continue
             try:
-                records.append(_json.loads(line))
+                rec = _json.loads(line)
+                seen[rec["task_id"]] = rec  # last entry per task_id wins
             except Exception:
                 pass
-        return records
+        return list(seen.values())
 
     @app.post("/api/projects/{project_id}/recall")
     async def recall(project_id: str, body: RecallBody):
