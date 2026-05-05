@@ -1430,9 +1430,16 @@ def create_app(
         if assets_dir.exists():
             app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
+        def _index_response() -> FileResponse:
+            r = FileResponse(_DIST_DIR / "index.html", media_type="text/html")
+            r.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            r.headers["Pragma"] = "no-cache"
+            r.headers["Expires"] = "0"
+            return r
+
         @app.get("/", include_in_schema=False)
         async def serve_index():
-            return FileResponse(_DIST_DIR / "index.html")
+            return _index_response()
 
         @app.get("/{full_path:path}", include_in_schema=False)
         async def serve_spa(full_path: str):
@@ -1443,7 +1450,7 @@ def create_app(
                 return FileResponse(file_path)
             index = _DIST_DIR / "index.html"
             if index.exists():
-                return FileResponse(index)
+                return _index_response()
             raise HTTPException(status_code=404)
     else:
         @app.get("/", include_in_schema=False)
