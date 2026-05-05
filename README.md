@@ -202,6 +202,27 @@ orchid web --project PATH [--port 7842]          single-session web UI
 orchid telegram --project PATH    → DEPRECATED, use `orchid serve --telegram`
 orchid slack --project PATH       → DEPRECATED, use `orchid serve --slack`
 
+# Session checkpointing
+orchid --project PATH --list-checkpoints        list available checkpoints
+orchid --project PATH --rewind CHECKPOINT_ID    restore session to checkpoint (no persist)
+orchid --project PATH --resume CHECKPOINT_ID    restore and approve gate (continue from checkpoint)
+
+# Output format
+orchid --project PATH --mode auto --output-format stream-json   emit NDJSON event stream
+
+# Hooks
+orchid hooks list   [--project PATH] [--section tasks|phases|agent|session] [--event E] [--type shell|http|python]
+orchid hooks show   [--project PATH] HOOK_ID
+orchid hooks validate [--project PATH]
+orchid hooks test   [--project PATH] HOOK_ID
+orchid hooks stats  [--project PATH]
+orchid hooks add    [--project PATH] --event E --type shell --cmd "..."
+orchid hooks remove [--project PATH] HOOK_ID
+
+# MCP servers
+orchid mcp ls   [--project PATH]              list tools from all configured MCP servers
+orchid mcp call [--project PATH] TOOL [ARGS]  call a specific MCP tool
+
 # Diagnostics
 orchid --check-providers                   probe all configured providers
 orchid --project PATH --tail               tail the live session log
@@ -240,7 +261,7 @@ Health check: `GET /health` → `{"status": "ok", "projects": N}` — used by Tr
 
 ### Features
 
-- **PM Dashboard tab** — project health at a glance: MilestoneProgress, DependencyGraph (cytoscape.js DAG), SessionBurndown, PhaseTimeline, TaskTiming table from `task_metrics.jsonl`
+- **PM Dashboard tab** — project health at a glance: MilestoneProgress, DependencyGraph (cytoscape.js DAG), SessionBurndown, PhaseTimeline, TaskTiming table from `task_metrics.jsonl` (deduplicates by task so re-run tasks show current status)
 - **Planning tab** — V2 lifecycle panel: phase indicator, discussion chat, artifact viewer, gate approval panel, NewProject wizard
 - **Discussion history** — persistent chat history with AI PM, view previous conversations and context
 - **Discussion streaming** — real-time WebSocket feed of PM agent responses as they stream
@@ -253,6 +274,7 @@ Health check: `GET /health` → `{"status": "ok", "projects": N}` — used by Tr
 - **Run controls** — start and stop agent runs from the browser; run single tasks with ▶ button
 - **Settings tab** — machine profile editor and provider availability status
 - **Project Config tab** — view and edit .orchid.yaml settings per project
+- **Mobile-responsive UI** — full PWA support: hamburger drawer navigation, touch-adapted controls, swipe gestures, safe-area insets, offline-capable via service worker manifest
 - **Active/Inactive project grouping** — projects grouped by activity status in sidebar
 - **Auto-discovery** — projects in watched directories appear automatically;
   adding `.orchid.yaml` to a directory (via `orchid init`) registers it
@@ -552,6 +574,125 @@ sudo journalctl -u orchid-serve -f
 The service template includes documentation for `TELEGRAM_BOT_TOKEN` and
 `SLACK_BOT_TOKEN` environment variables.
 
+## Hook System
+
+Orchid fires lifecycle events at key points in the agent loop. Hooks let you run shell commands, HTTP requests, or Python callables in response — without modifying core code.
+
+### Hook events
+
+| Section | Events |
+|---------|--------|
+| Session | `session.start`, `session.end` |
+| Phase | `phase.transition` |
+| Task | `task.start`, `task.complete`, `task.blocked`, `task.skipped` |
+| Agent | `agent.thought`, `agent.tool_use`, `agent.tool_result` |
+
+### Configuring hooks in `.orchid.yaml`
+
+```yaml
+hooks:
+  tasks:
+    - event: task.complete
+      type: shell
+      cmd: "notify-send 'Orchid' 'Task {{ task_id }} done'"
+      blocking: false
+
+    - event: task.blocked
+      type: http
+      url: "https://hooks.slack.com/services/..."
+      method: POST
+      body: '{"text": "Task {{ task_id }} blocked: {{ reason }}"}'
+
+  session:
+    - event: session.end
+      type: python
+      module: "my_project.hooks"
+      function: "on_session_end"
+      blocking: true
+```
+
+Shell hooks are sandboxed by the existing shell allowlist. HTTP hooks respect a configurable timeout. Hook errors are logged but never crash the agent loop.
+
+### Hook CLI
+
+```bash
+orchid hooks list --project ~/projects/webtron
+orchid hooks validate --project ~/projects/webtron
+orchid hooks test --project ~/projects/webtron HOOK_ID
+orchid hooks stats --project ~/projects/webtron
+```
+
+## MCP Adapter Layer
+
+Orchid can connect to any [Model Context Protocol](https://modelcontextprotocol.io/) server and expose its tools to the agent ReAct loop automatically.
+
+### Transport types
+
+| Transport | Use case |
+|-----------|----------|
+| `stdio` | Local process (subprocess.Popen over stdin/stdout) |
+| `http` | Remote or sidecar MCP server (httpx sync) |
+
+### Configuration
+
+```yaml
+# .orchid.yaml
+mcp_servers:
+  - name: filesystem
+    transport: stdio
+    cmd: ["npx", "@modelcontextprotocol/server-filesystem", "/tmp"]
+
+  - name: remote-tools
+    transport: http
+    url: "http://localhost:9000/mcp"
+```
+
+MCP tools are discovered at session start and injected alongside built-in tools. The `MCPManager` connects all configured servers before task execution and tears down on session end.
+
+### MCP CLI
+
+```bash
+orchid mcp ls --project ~/projects/webtron        # list available tools
+orchid mcp call --project ~/projects/webtron echo '{"msg": "hello"}'
+```
+
+## Session Checkpointing
+
+Orchid captures a checkpoint of session state before executing each task. Checkpoints let you rewind to any prior task boundary and re-run from there.
+
+```bash
+# List checkpoints for a project
+orchid --project ~/projects/webtron --list-checkpoints
+
+# Rewind session state to a checkpoint (does not persist — run --mode auto to continue)
+orchid --project ~/projects/webtron --rewind CP-20260504-T012
+
+# Rewind and approve the gate (resume execution from checkpoint)
+orchid --project ~/projects/webtron --resume CP-20260504-T012
+```
+
+Orchid keeps the 5 most recent checkpoints per project and prunes older ones at session end. Checkpoints are stored in `.orchid/checkpoints/`.
+
+## Stream-JSON Output
+
+Pass `--output-format stream-json` to emit a newline-delimited JSON (NDJSON) event stream instead of the default Rich terminal output. Each line is a typed event:
+
+```bash
+orchid --project ~/projects/webtron --mode auto --output-format stream-json | jq .
+```
+
+```jsonc
+{"type": "session_start", "session_id": "...", "timestamp": "..."}
+{"type": "task_start", "task_id": "T015", "title": "Build login form", ...}
+{"type": "agent_thought", "task_id": "T015", "thought": "I need to...", ...}
+{"type": "tool_use", "task_id": "T015", "tool": "write_file", "args": {...}}
+{"type": "tool_result", "task_id": "T015", "result": "ok", ...}
+{"type": "task_complete", "task_id": "T015", "duration_s": 42.1, ...}
+{"type": "session_end", "tasks_done": 3, ...}
+```
+
+The web server also exposes an NDJSON streaming endpoint at `GET /api/projects/{id}/stream`.
+
 ## Architecture
 
 ```
@@ -601,6 +742,32 @@ providers/
   ollama.py          Ollama — implicit KV cache, stable-prefix ordering
   openai.py          OpenAI / OpenRouter
   bedrock.py         AWS Bedrock (boto3, lazy import)
+
+hooks/
+  events.py          hook event constants (session, phase, task, agent)
+  types.py           ShellHook, HTTPHook, PythonHook dataclasses
+  registry.py        hook registry: fire events, blocking/non-blocking execution
+  loader.py          load hooks from .orchid.yaml, per-project hooks.py
+  schema.py          Pydantic validation for hook config
+
+mcp/
+  types.py           MCPTool, MCPResult dataclasses
+  client.py          MCPClient ABC + MCPClientError
+  stdio_client.py    subprocess.Popen transport (JSON-RPC 2.0 over stdin/stdout)
+  http_client.py     httpx.Client transport
+  adapter.py         MCPAdapter: wraps client, caches tool list
+  manager.py         MCPManager: multi-server lifecycle, tool injection
+
+output/
+  events.py          typed event dataclasses (SessionStart, TaskStart, AgentThought, …)
+  emitter.py         EmitterProtocol + NullEmitter
+  ndjson_emitter.py  NDJSONEmitter (stream) + NDJSONBufferEmitter (in-memory)
+  ws_emitter.py      WebSocket emitter for web server streaming
+
+checkpoint/
+  schema.py          CheckpointMetadata, Checkpoint, CheckpointEntry dataclasses
+  store.py           CheckpointStore: save, load, list, delete, prune
+  restore.py         rewind_session(), list_checkpoints()
 ```
 
 ## Model routing
@@ -635,7 +802,7 @@ caching:
 ## Development
 
 ```bash
-pytest -m "not network"   # 524 tests, no API calls required
+pytest -m "not network"   # 656+ tests, no API calls required
 ruff check orchid/        # 0 errors
 ```
 
