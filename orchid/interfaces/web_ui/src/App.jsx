@@ -97,15 +97,13 @@ export default function App() {
   return (
     <>
       <header className="app-header">
-        {isMobile && (
-          <button
-            className="hamburger-btn"
-            onClick={() => setDrawerOpen(o => !o)}
-            aria-label="Open project list"
-          >
-            ☰
-          </button>
-        )}
+        <button
+          className="hamburger-btn"
+          onClick={() => setDrawerOpen(o => !o)}
+          aria-label="Open project list"
+        >
+          ☰
+        </button>
         <span className="logo">🌸 Orchid</span>
         {activeProjectData && (
           <>
@@ -146,13 +144,13 @@ export default function App() {
       </header>
 
       <div className="app-body">
-        {isMobile && drawerOpen && (
+        {drawerOpen && (
           <div className="sidebar-backdrop" onClick={() => setDrawerOpen(false)} />
         )}
         <nav
-          className={`sidebar${isMobile && drawerOpen ? ' drawer-open' : ''}`}
-          onTouchStart={isMobile ? handleDrawerTouchStart : undefined}
-          onTouchEnd={isMobile ? handleDrawerTouchEnd : undefined}
+          className={`sidebar${drawerOpen ? ' drawer-open' : ''}`}
+          onTouchStart={handleDrawerTouchStart}
+          onTouchEnd={handleDrawerTouchEnd}
         >
           {projectsLoading ? (
             <div className="loading" style={{ padding: '16px' }}>Loading…</div>

@@ -757,6 +757,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 .hamburger-btn:hover { background: var(--surface2); border-color: transparent; }
 
 .sidebar-backdrop {
+  display: none;
   position: fixed;
   inset: 0;
   z-index: 199;
@@ -788,6 +789,9 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
   /* New Project: collapse to + icon */
   .new-project-label { display: none; }
   .new-project-short { display: inline; }
+
+  /* Backdrop: hidden in base CSS, visible here when rendered */
+  .sidebar-backdrop { display: block; }
 
   /* Sidebar → fixed off-canvas drawer */
   .sidebar {
