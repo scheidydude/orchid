@@ -334,6 +334,15 @@ worktree:
   auto_remove: true                  # auto-remove worktree after sub-agent completes
   commit_message: "worktree: task completion"  # commit message for worktree commits
 
+# Background runner — parallel task dispatch settings (T176-T181)
+runner:
+  max_parallel: 4                     # max tasks in a single parallel dispatch group
+  provider_concurrency:               # per-provider semaphore limits for parallel dispatch
+    claude: 3
+    openrouter: 3
+    bedrock: 3
+    openai: 3
+
 # Provider registry — 7-layer resolution chain
 # Layer 1: CLI --provider flag              (e.g. --provider developer=ollama)
 # Layer 2: per-agent config below           (providers.<agent_type>)

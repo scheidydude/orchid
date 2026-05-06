@@ -1,8 +1,24 @@
 # Tasks
 
 
+## TODO
+
+- [ ] **T184** Review parallelism implementation `type:code_review` `p1` `needs:T182,T183`
+- [ ] **T185** Fix issues found in T184 `type:code_generate` `p1` `needs:T184` `model:local`
+
+## BLOCKED
+
+- [!] **T183** Create `tests/test_parallel_runner.py` `type:code_generate` `p1` `needs:T176,T177,T178,T179,T180` `model:local`
+
 ## DONE
 
+- [x] **T176** Create `orchid/scheduler.py` `type:code_generate` `p1` `model:local`
+- [x] **T177** Add threading lock to `orchid/session.py` `type:code_generate` `p1` `model:local`
+- [x] **T178** Extract `_resolve_provider` method from `_execute_task` in `orchid/orchestrator.py` `type:code_generate` `p1` `model:local`
+- [x] **T179** Add provider semaphores to `BackgroundRunner` in `orchid/runner.py` `type:code_generate` `p1` `needs:T177` `model:local`
+- [x] **T180** Rewrite `BackgroundRunner._run()` loop for parallel dispatch `type:code_generate` `p1` `needs:T176,T177,T178,T179` `model:local`
+- [x] **T181** Add `runner.provider_concurrency` to `orchid/orchid.defaults.yaml` `type:code_generate` `p1` `model:local`
+- [x] **T182** Create `tests/test_scheduler.py` `type:code_generate` `p1` `needs:T176` `model:local`
 - [x] **T170** Create `orchid/worktree.py` `type:code_generate` `p1` `model:local`
 - [x] **T171** Add worktree config to `orchid/orchid.defaults.yaml` `type:code_generate` `p1` `model:local`
 - [x] **T172** Wire WorktreeManager into `AgentDelegator.delegate()` `type:code_generate` `p1` `needs:T170,T171` `model:local`

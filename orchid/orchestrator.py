@@ -25,7 +25,7 @@ from orchid.output.events import (
     ToolUseEvent,
 )
 from orchid.session import Session
-from orchid.tools.models import Message, call
+from orchid.tools.models import Message, RouteDecision, call
 
 logger = logging.getLogger(__name__)
 
@@ -235,12 +235,12 @@ class Orchestrator:
 
     # ── Task execution ─────────────────────────────────────────────────────────
 
-    def _execute_task(self, task: Task) -> dict[str, Any]:
-        from orchid.providers.base import ProviderUnavailableError
 
-        # Re-assert project config before every task
-        cfg.configure_for_project(self.session.project_dir)
+    def _resolve_provider(self, task: Task) -> RouteDecision:
+        """Resolve the provider/model for a task via the full routing chain.
 
+        Returns a RouteDecision with model, reason, and source fields.
+        """
         # Resolve agent type for per-agent-type provider overrides
         agent_cls = self._resolve_agent(task)
         agent_type = getattr(agent_cls, "agent_type", "base")
@@ -251,7 +251,6 @@ class Orchestrator:
 
         # Resolve provider through the full registry chain
         from orchid.providers.registry import get_registry as _get_provider_registry
-        from orchid.tools.models import RouteDecision
         _provider_name = _get_provider_registry().resolve_name(
             agent_type=agent_type,
             agent_name=_agent_name,
@@ -267,11 +266,20 @@ class Orchestrator:
             decision = RouteDecision(model="local", reason="offline mode", source="cli_flag")
 
         logger.info(
-            "Routing %s → %s (reason: %s, source: %s)",
+            "Routing %s -> %s (reason: %s, source: %s)",
             task.id, decision.model, decision.reason, decision.source,
         )
+        return decision
 
-        logger.info("Executing task %s: %s [type=%s model=%s]", task.id, task.title, task.type, decision.model)
+    def _execute_task(self, task: Task) -> dict[str, Any]:
+        from orchid.providers.base import ProviderUnavailableError
+
+        # Re-assert project config before every task
+        cfg.configure_for_project(self.session.project_dir)
+
+        # Resolve provider via extracted method
+        decision = self._resolve_provider(task)
+
         # T141: Capture checkpoint before task execution for rewind/resume support
         try:
             from orchid.checkpoint.store import CheckpointStore
@@ -340,6 +348,7 @@ class Orchestrator:
             # Dispatch to agent
             injection_queue = self.session.project_dir / ".orchid" / "inject.queue"
             stream_cb = self._make_stream_callback(task.id, task.title)
+            agent_cls = self._resolve_agent(task)
             agent = agent_cls(
                 session_context=session_context,
                 stream_callback=stream_cb,

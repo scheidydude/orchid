@@ -362,3 +362,31 @@ The worktree implementation is a solid foundation for isolated parallel task exe
 
 **1. Fixed `_cleanup_oldest` comparison bug** (worktree.py)
 - **Bug**: `oldest_time` was initialized to `""`, and ISO timestamps are always lexicographically `> ""`, so the condit
+
+- [T176] Create `orchid/scheduler.py`: <antThinking>
+All tests pass. The scheduler module is working correctly:
+
+1. **Ordered tasks**: T002, T003, T004, T005 — correct topological order respecting dependencies
+2. **Parallel groups**: [['T0
+
+- [T177] Add threading lock to `orchid/session.py`: T177 complete — added `threading.Lock` (`self._lock`) to `Session.__init__()` and wrapped all methods that mutate or read shared mutable state (`tasks`, `delegations`, `hot_memory`) and perform file I
+
+- [T178] Extract `_resolve_provider` method from `_execute_task` in `orchid/orchestrator.py`: T178 complete. The `_resolve_provider` method has been extracted from `_execute_task` in `orchid/orchestrator.py`. The new method:
+
+- **Signature**: `_resolve_provider(self, task: Task) -> RouteDecisi
+
+- [T179] Add provider semaphores to `BackgroundRunner` in `orchid/runner.py`: The file `orchid/runner.py` has been written and verified successfully. Here's a summary of the changes for T179:
+
+**New additions to `BackgroundRunner`:**
+
+1. **`_provider_concurrency` dict** — defau
+
+- [T180] Rewrite `BackgroundRunner._run()` loop for parallel dispatch: T180 is complete — `BackgroundRunner._run()` has been rewritten to use the `Scheduler` for parallel task dispatch. The loop now identifies parallel groups of independent tasks, dispatches them concurr
+
+- [T181] Add `runner.provider_concurrency` to `orchid/orchid.defaults.yaml`: Task T181 complete — added `runner.provider_concurrency` to `orchid/orchid.defaults.yaml` with per-provider semaphore limits (claude: 3, openrouter: 3, bedrock: 3, openai: 3) and `runner.max_parallel:
+
+- [T182] Create `tests/test_scheduler.py`: `tests/test_scheduler.py` has been created with 70 tests covering:
+
+- **TestDependencyGraphBuild** (5 tests): Graph construction with no deps, single dep, multiple deps, rollup sources, and combined d
+
+- [T183] Create `tests/test_parallel_runner.py`: FAILED: [max iterations reached without final answer]

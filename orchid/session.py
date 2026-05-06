@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -66,6 +67,11 @@ class Session:
         # Hook registry for session events (T097)
         self._hook_registry = HookRegistry()
         self._load_hooks()
+
+        # RLock (not Lock) — _execute_task may call update_task_status, which acquires
+        # this lock, and the exception handler in _execute_task_with_semaphore may also
+        # call it on the same thread. RLock allows safe re-entry from the same thread.
+        self._lock = threading.RLock()
 
     def _load_hooks(self) -> None:
         """Load and register hooks from project configuration."""
@@ -285,26 +291,27 @@ class Session:
         """Append a ReAct iteration record to the live streaming log."""
         if not self._live_log_path:
             return
-        ts = data.get("timestamp", datetime.now(UTC).isoformat())
-        iteration = data.get("iter", "?")
-        thought = data.get("thought", "").strip()
-        action = data.get("action", "").strip()
-        observation = data.get("observation", "").strip()
+        with self._lock:
+            ts = data.get("timestamp", datetime.now(UTC).isoformat())
+            iteration = data.get("iter", "?")
+            thought = data.get("thought", "").strip()
+            action = data.get("action", "").strip()
+            observation = data.get("observation", "").strip()
 
-        lines = [f"[{ts}] iter={iteration}"]
-        if thought:
-            lines.append(f"  Thought: {thought[:300]}")
-        if action:
-            lines.append(f"  Action:  {action[:200]}")
-        if observation:
-            lines.append(f"  Obs:     {observation[:300]}")
-        lines.append("")
+            lines = [f"[{ts}] iter={iteration}"]
+            if thought:
+                lines.append(f"  Thought: {thought[:300]}")
+            if action:
+                lines.append(f"  Action:  {action[:200]}")
+            if observation:
+                lines.append(f"  Obs:     {observation[:300]}")
+            lines.append("")
 
-        try:
-            with open(self._live_log_path, "a", encoding="utf-8") as f:
-                f.write("\n".join(lines) + "\n")
-        except Exception as exc:
-            logger.debug("stream_react write failed: %s", exc)
+            try:
+                with open(self._live_log_path, "a", encoding="utf-8") as f:
+                    f.write("\n".join(lines) + "\n")
+            except Exception as exc:
+                logger.debug("stream_react write failed: %s", exc)
 
     def _finalize_live_log(self) -> None:
         """Rename .live.log → .log to signal completion."""
@@ -322,19 +329,21 @@ class Session:
 
     def record_delegation(self, record: dict[str, Any]) -> None:
         """Record a delegation event in-memory and persist to session log."""
-        self.delegations.append(record)
-        self.log_event("delegation", record)
+        with self._lock:
+            self.delegations.append(record)
+            self.log_event("delegation", record)
 
     def log_event(self, event_type: str, data: dict[str, Any]) -> None:
-        if not self._log_path:
-            return
-        record = {
-            "ts": datetime.now(UTC).isoformat(),
-            "type": event_type,
-            **data,
-        }
-        with open(self._log_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(record) + "\n")
+        with self._lock:
+            if not self._log_path:
+                return
+            record = {
+                "ts": datetime.now(UTC).isoformat(),
+                "type": event_type,
+                **data,
+            }
+            with open(self._log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record) + "\n")
 
     def _write_session_log(self, summary: str) -> None:
         ended_at = datetime.now(UTC)
@@ -381,14 +390,16 @@ class Session:
     # ── Convenience accessors ─────────────────────────────────────────────────
 
     def next_task(self) -> mem_state.Task | None:
-        return mem_state.next_task(self.tasks)
+        with self._lock:
+            return mem_state.next_task(self.tasks)
 
     def update_task_status(self, task_id: str, status: mem_state.TaskStatus) -> bool:
-        for task in self.tasks:
-            if task.id == task_id:
-                task.status = status
-                return True
-        return False
+        with self._lock:
+            for task in self.tasks:
+                if task.id == task_id:
+                    task.status = status
+                    return True
+            return False
 
     def context_block(self) -> str:
         """Return a formatted context string for injecting into agent prompts."""
