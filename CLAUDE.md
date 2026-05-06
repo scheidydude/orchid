@@ -419,3 +419,37 @@ _TOOL_ARG_MAP
 Action: bash
 
 - [T191] Review dynamic spawning implementation: FAILED: [max iterations reached without final answer]
+
+- [T193] Create `orchid/agent_pool.py`: The file `orchid/agent_pool.py` has been created successfully and imports cleanly.
+
+Here's a summary of what was written:
+
+**`orchid/agent_pool.py`** — Reusable agent instance pool (T193)
+
+Key feature
+
+- [T194] Add agent pool config to `orchid/orchid.defaults.yaml`: The `agent_pool` configuration section has been added to `orchid/orchid.defaults.yaml` with three keys matching what `AgentPool` reads in `orchid/agent_pool.py`:
+
+- `max_size: 8` — maximum cached agen
+
+- [T195] Wire `AgentPool` into `BackgroundRunner._run()` in `orchid/runner.py`: Action: write_file
+
+- [T196] Wire `AgentPool` into `AgentDelegator.delegate()` in `orchid/agents/delegator.py`: T196 complete — `AgentPool` wired into `AgentDelegator.delegate()` via `_resolve_model()` and `_acquire_agent()` methods, with graceful fallback to direct instantiation.
+
+- [T197] Create `tests/test_agent_pool.py`: FAILED: [max iterations reached without final answer]
+
+- [T197] Create `tests/test_agent_pool.py`: `tests/test_agent_pool.py` already exists with 601 lines of comprehensive tests covering all aspects of the AgentPool implementation: creation, cache hit/miss, double-check race conditions, LRU evicti
+
+- [T198] Review agent pool implementation: ## T198 Review — Agent Pool Implementation
+
+### Summary
+The agent pool (`orchid/agent_pool.py`) is a well-designed thread-safe caching layer for reusable agent instances. It uses an OrderedDict for LR
+
+- [T199] Fix issues found in T198: All fixes are complete and verified. Here's a summary of the changes made:
+
+## T199 — Fix issues found in T198
+
+### Changes Made
+
+**1. `orchid/orchestrator.py` — Wire AgentPool into task execution**
+-

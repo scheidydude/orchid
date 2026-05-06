@@ -65,6 +65,7 @@ class AgentDelegator:
         """
         Spawn a sub-agent, run it on task, and return its final answer.
 
+        Uses the global AgentPool for agent reuse when available.
         depth: current delegation depth (0 = called from a top-level agent).
         Returns error strings on failure rather than raising.
         """
@@ -91,6 +92,9 @@ class AgentDelegator:
 
         project_dir = self.session.project_dir if self.session else None
 
+        # ── Resolve model_key via provider registry ────────────────────────────
+        model_key = self._resolve_model(agent_type, task)
+
         # ── Worktree integration ───────────────────────────────────────────────
         wt_path = None
         task_id = ""
@@ -114,19 +118,13 @@ class AgentDelegator:
                 logger.warning("[delegator] worktree creation failed: %s", e)
                 wt_path = None
 
-        # Researcher requires extra kwargs for web search tooling
-        if agent_type.lower().strip() == "researcher":
-            agent = agent_cls(
-                session_context=sub_context,
-                vector_memory=self._vector,
-                project_name=self.project_name,
-                project_dir=wt_path or project_dir,
-            )
-        else:
-            agent = agent_cls(
-                session_context=sub_context,
-                project_dir=wt_path or project_dir,
-            )
+        # ── Acquire agent from pool (or create directly) ───────────────────────
+        agent = self._acquire_agent(
+            agent_type=agent_type,
+            model_key=model_key,
+            project_dir=wt_path or project_dir,
+            session_context=sub_context,
+        )
 
         # Wire delegation into sub-agent so it can further delegate (at depth+1)
         sub_delegator = AgentDelegator(
@@ -197,6 +195,71 @@ class AgentDelegator:
                 logger.warning("Failed to embed delegation result: %s", e)
 
         return result
+
+    def _resolve_model(self, agent_type: str, task: str) -> str:
+        """Resolve the model_key for a delegated agent via the provider registry."""
+        from orchid.providers.registry import get_registry as _get_provider_registry
+
+        return _get_provider_registry().resolve_name(
+            agent_type=agent_type,
+            task_title=task,
+        )
+
+    def _acquire_agent(
+        self,
+        agent_type: str,
+        model_key: str,
+        project_dir: str | None,
+        session_context: str,
+    ) -> Any:
+        """Acquire an agent instance — from pool if available, else direct creation."""
+        try:
+            from orchid.agent_pool import get_agent_pool
+        except ImportError:
+            pass
+        else:
+            pool = get_agent_pool()
+            try:
+                agent = pool.acquire(
+                    agent_type=agent_type,
+                    model_key=model_key,
+                    project_dir=project_dir,
+                    session_context=session_context,
+                )
+                logger.debug(
+                    "[delegator] agent acquired from pool: %s (model=%s)",
+                    agent_type, model_key,
+                )
+                return agent
+            except Exception as e:
+                logger.debug(
+                    "[delegator] pool acquire failed for %s: %s — falling back to direct creation",
+                    agent_type, e,
+                )
+
+        # Fallback: create directly (same logic as the original implementation)
+        agent_cls = _get_agent_class(agent_type)
+
+        if agent_type.lower().strip() == "researcher":
+            agent = agent_cls(
+                session_context=session_context,
+                vector_memory=self._vector,
+                project_name=self.project_name,
+                project_dir=project_dir,
+            )
+        else:
+            agent = agent_cls(
+                session_context=session_context,
+                project_dir=project_dir,
+            )
+
+        agent.model_key = model_key
+
+        logger.debug(
+            "[delegator] agent created directly: %s (model=%s)",
+            agent_type, model_key,
+        )
+        return agent
 
     def _extract_task_id(self, task: str) -> str:
         """

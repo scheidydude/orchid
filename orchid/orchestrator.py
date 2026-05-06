@@ -32,6 +32,20 @@ logger = logging.getLogger(__name__)
 _TRUNC = 120
 
 
+
+
+def _get_type_map() -> dict[str, str]:
+    """Default agent type mapping by task type."""
+    return {
+        "code_generate": "developer",
+        "draft": "developer",
+        "search": "researcher",
+        "summarize": "researcher",
+        "review": "reviewer",
+        "critique": "reviewer",
+        "verify": "tester",
+        "rollup": "base",
+    }
 class TraceWriter:
     """Writes ReAct iteration traces to <project>/.orchid/trace.log in append mode."""
 
@@ -172,6 +186,8 @@ class Orchestrator:
         self._load_hooks()
         # T113: MCP manager — created once, connected lazily on first task
         self._mcp_manager: Any = None
+        # T199: Agent pool for reusable agent instances
+        self._agent_pool: Any = None
 
     def _load_hooks(self) -> None:
         """Load and register hooks from project configuration."""
@@ -353,17 +369,17 @@ class Orchestrator:
             # T113: Wire MCP tools into the agent — connect manager lazily on first task
             self._ensure_mcp_connected()
 
-            # Dispatch to agent
+            # T199: Dispatch to agent via pool
             injection_queue = self.session.project_dir / ".orchid" / "inject.queue"
             stream_cb = self._make_stream_callback(task.id, task.title)
-            agent_cls = self._resolve_agent(task)
-            agent = agent_cls(
+            agent_type = task.agent or _get_type_map().get(task.type, "base")
+            agent = self._get_agent(
+                agent_type=agent_type,
+                decision_model=decision.model,
                 session_context=session_context,
                 stream_callback=stream_cb,
                 injection_queue_path=injection_queue,
-                project_dir=self.session.project_dir,
             )
-            # Override model_key based on routing decision
             agent.model_key = decision.model
             agent.delegator = self._delegator
 
@@ -527,6 +543,77 @@ class Orchestrator:
                 error=str(e)[:500],
             ))
             return {"task_id": task.id, "status": "error", "error": str(e)}
+
+
+    def _get_agent(
+        self,
+        agent_type: str,
+        decision_model: str,
+        session_context: str,
+        stream_callback: Callable | None,
+        injection_queue_path: Path,
+    ) -> Any:
+        """Get an agent instance — from pool if available, else direct creation.
+
+        T199: Uses the global AgentPool for agent reuse. Falls back to direct
+        instantiation if the pool is unavailable or fails.
+        """
+        try:
+            if self._agent_pool is None:
+                from orchid.agent_pool import get_agent_pool
+                self._agent_pool = get_agent_pool()
+            agent = self._agent_pool.acquire(
+                agent_type=agent_type,
+                model_key=decision_model,
+                project_dir=self.session.project_dir,
+                session_context=session_context,
+                stream_callback=stream_callback,
+                injection_queue_path=injection_queue_path,
+            )
+            logger.debug(
+                "[orchestrator] agent acquired from pool: %s (model=%s)",
+                agent_type, decision_model,
+            )
+            return agent
+        except Exception as e:
+            logger.debug(
+                "[orchestrator] pool acquire failed for %s: %s — falling back to direct creation",
+                agent_type, e,
+            )
+
+        # Fallback: create directly
+        agent_cls = self._resolve_agent_for_type(agent_type)
+        if agent_type.lower().strip() == "researcher":
+            from orchid.session import get_current_session
+            session = get_current_session()
+            vector_memory = session._vector if session else None
+            agent = agent_cls(
+                session_context=session_context,
+                vector_memory=vector_memory,
+                project_name=session.project_name if session else "",
+                project_dir=self.session.project_dir,
+                stream_callback=stream_callback,
+                injection_queue_path=injection_queue_path,
+            )
+        else:
+            agent = agent_cls(
+                session_context=session_context,
+                project_dir=self.session.project_dir,
+                stream_callback=stream_callback,
+                injection_queue_path=injection_queue_path,
+            )
+
+        agent.model_key = decision_model
+        logger.debug(
+            "[orchestrator] agent created directly: %s (model=%s)",
+            agent_type, decision_model,
+        )
+        return agent
+
+    def _resolve_agent_for_type(self, agent_type: str) -> type:
+        """Resolve agent class from agent_type string."""
+        registry = _get_registry()
+        return registry.get(agent_type.lower().strip(), registry["base"])
 
     # T096: Task lifecycle hook methods
     def _fire_task_start_hook(self, task: Task, model: str) -> None:
@@ -734,17 +821,7 @@ class Orchestrator:
         if task.agent and task.agent in registry:
             return registry[task.agent]
         # Default mapping by task type
-        type_map = {
-            "code_generate": "developer",
-            "draft": "developer",
-            "search": "researcher",
-            "summarize": "researcher",
-            "review": "reviewer",
-            "critique": "reviewer",
-            "verify": "tester",   # T082: verification tasks route to TesterAgent
-            "rollup": "base",  # orchestrator handles rollup directly, base is fallback
-        }
-        agent_name = type_map.get(task.type, "base")
+        agent_name = _get_type_map().get(task.type, "base")
         return registry.get(agent_name, registry["base"])
 
     def _execute_rollup_task(self, task: Task) -> dict[str, Any]:

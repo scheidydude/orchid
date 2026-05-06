@@ -343,6 +343,14 @@ runner:
     bedrock: 3
     openai: 3
 
+# Agent Pool — reusable agent instance caching (T193)
+agent_pool:
+  enabled: false                  # set true to enable; off by default (opt-in)
+  max_size: 8                     # maximum cached agent instances
+  eviction_interval: 60           # seconds between idle-eviction checks
+  idle_timeout: 300               # seconds before an idle agent is evicted
+  task_timeout_s: 600             # max seconds to wait for a pool task
+
 # Provider registry — 7-layer resolution chain
 # Layer 1: CLI --provider flag              (e.g. --provider developer=ollama)
 # Layer 2: per-agent config below           (providers.<agent_type>)
