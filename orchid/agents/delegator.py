@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -90,16 +91,42 @@ class AgentDelegator:
 
         project_dir = self.session.project_dir if self.session else None
 
+        # ── Worktree integration ───────────────────────────────────────────────
+        wt_path = None
+        task_id = ""
+        worktree_enabled = cfg.get("worktree.enabled", False)
+        if worktree_enabled and project_dir:
+            from orchid.worktree import WorktreeManager
+
+            try:
+                manager = WorktreeManager(project_dir)
+                # Extract task_id from task string if present (e.g. "T170: Create file")
+                task_id = self._extract_task_id(task)
+                if task_id:
+                    wt_path = manager.create(task_id, agent_type)
+                    logger.info(
+                        "[delegator] worktree created: branch=%s path=%s task=%s",
+                        manager.get_worktree_branch(task_id),
+                        wt_path,
+                        task_id,
+                    )
+            except Exception as e:
+                logger.warning("[delegator] worktree creation failed: %s", e)
+                wt_path = None
+
         # Researcher requires extra kwargs for web search tooling
         if agent_type.lower().strip() == "researcher":
             agent = agent_cls(
                 session_context=sub_context,
                 vector_memory=self._vector,
                 project_name=self.project_name,
-                project_dir=project_dir,
+                project_dir=wt_path or project_dir,
             )
         else:
-            agent = agent_cls(session_context=sub_context, project_dir=project_dir)
+            agent = agent_cls(
+                session_context=sub_context,
+                project_dir=wt_path or project_dir,
+            )
 
         # Wire delegation into sub-agent so it can further delegate (at depth+1)
         sub_delegator = AgentDelegator(
@@ -113,6 +140,25 @@ class AgentDelegator:
 
         result = agent.run(task)
         result_summary = result[:500]
+
+        # ── Post-run worktree operations ───────────────────────────────────────
+        if wt_path and task_id:
+            try:
+                from orchid.worktree import WorktreeManager
+
+                manager = WorktreeManager(project_dir)
+                # Commit any changes made by the sub-agent
+                commit_msg = cfg.get("worktree.commit_message", "worktree: task completion")
+                commit_result = manager.commit_worktree(task_id, commit_msg)
+                logger.info("[delegator] worktree commit: %s", commit_result)
+
+                # Optionally remove the worktree after completion
+                auto_remove = cfg.get("worktree.auto_remove", True)
+                if auto_remove:
+                    remove_result = manager.remove(task_id)
+                    logger.info("[delegator] worktree removed: %s", remove_result)
+            except Exception as e:
+                logger.warning("[delegator] worktree post-processing failed: %s", e)
 
         timestamp = datetime.now(UTC).isoformat()
         delegation_record: dict[str, Any] = {
@@ -151,6 +197,16 @@ class AgentDelegator:
                 logger.warning("Failed to embed delegation result: %s", e)
 
         return result
+
+    def _extract_task_id(self, task: str) -> str:
+        """
+        Extract a task ID from a task description string.
+
+        Looks for patterns like 'T170', 'T001', etc.
+        Returns empty string if no task ID found.
+        """
+        match = re.search(r'\bT\d{2,4}\b', task)
+        return match.group(0) if match else ""
 
     def _build_sub_context(self, task: str, context: str, depth: int) -> str:
         """Slim down context for sub-agent: task, top-3 recall, depth indicator."""

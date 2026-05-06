@@ -325,6 +325,15 @@ serve:
   auto_discovery: true
   agent_manager: true
 
+# Worktree — isolated git worktrees for parallel task execution (T170-T171)
+worktree:
+  enabled: false                       # set true to enable; off by default (opt-in)
+  max_worktrees: 10                    # maximum concurrent worktrees per project
+  auto_cleanup: true                   # auto-remove oldest worktree when limit reached
+  base_ref: "HEAD"                     # git ref to branch from when creating worktrees
+  auto_remove: true                  # auto-remove worktree after sub-agent completes
+  commit_message: "worktree: task completion"  # commit message for worktree commits
+
 # Provider registry — 7-layer resolution chain
 # Layer 1: CLI --provider flag              (e.g. --provider developer=ollama)
 # Layer 2: per-agent config below           (providers.<agent_type>)

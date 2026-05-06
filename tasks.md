@@ -3,6 +3,12 @@
 
 ## DONE
 
+- [x] **T170** Create `orchid/worktree.py` `type:code_generate` `p1` `model:local`
+- [x] **T171** Add worktree config to `orchid/orchid.defaults.yaml` `type:code_generate` `p1` `model:local`
+- [x] **T172** Wire WorktreeManager into `AgentDelegator.delegate()` `type:code_generate` `p1` `needs:T170,T171` `model:local`
+- [x] **T173** Create `tests/test_worktree.py` `type:code_generate` `p1` `needs:T170` `model:local`
+- [x] **T174** Review worktree implementation `type:code_review` `p1` `needs:T173`
+- [x] **T175** Fix issues found in T174 `type:code_generate` `p1` `needs:T174` `model:local`
 - [x] **T163** Create `orchid/tools/git.py` `type:code_generate` `p1` `model:local`
 - [x] **T164** Register git tools in `_make_project_tools` in `orchid/agents/base.py` `type:code_generate` `p1` `needs:T163` `model:local`
 - [x] **T165** Add git tools to DeveloperAgent `allowed_tools` and system prompt `type:code_generate` `p1` `needs:T164,T156` `model:local`
