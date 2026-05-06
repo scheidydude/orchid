@@ -110,18 +110,17 @@ cost:
 
 ---
 
-- [ ] **T203** Wire `CostLedger` token recording into `orchid/orchestrator.py` `type:code_generate` `p1` `needs:T200,T202` `model:local`
+- [ ] **T203** Wire `CostLedger` token recording into `orchid/orchestrator.py` after agent run `type:code_generate` `p1` `needs:T200,T202` `model:local`
 
-Read `orchid/orchestrator.py`. Find `_execute_task`. Find where the agent runs and `result` is produced (look for `result = agent.run(task_description)` or similar).
+Read `orchid/orchestrator.py`. Find `_execute_task`. Search for the line where `agent.run(` is called — this produces the result string. Find the line immediately after the agent run completes (before the next `self.session.log_event` or task-complete event).
 
-After the agent run completes (just before `self.session.log_event("task_complete", ...)` or equivalent), add:
+Make exactly one change: add the cost-tracking block immediately after `result = agent.run(...)`:
 
 ```python
 # Record token usage for cost tracking
 try:
     from orchid.cost.scheduler import CostAwareScheduler
     _cost_sched = CostAwareScheduler(self.session.project_dir)
-    # Extract token counts from agent history if available
     _in_tok = sum(getattr(m, "input_tokens", 0) for m in getattr(agent, "history", []))
     _out_tok = sum(getattr(m, "output_tokens", 0) for m in getattr(agent, "history", []))
     if _in_tok or _out_tok:
@@ -130,23 +129,43 @@ except Exception as _cost_err:
     logger.debug("Cost tracking failed (non-fatal): %s", _cost_err)
 ```
 
-Also: if the provider returns a 429 response during `agent.run()`, the agent's `run()` currently logs it and retries or fails. Add a 429 detection hook. Find where `ProviderUnavailableError` is caught in `_execute_task` (search for `ProviderUnavailableError`). In the except block, add:
+Do not make any other changes.
+
+**Verification (required before Final Answer):** Run:
+```
+bash("grep -n 'record_usage\|cost_sched\|CostAwareScheduler' orchid/orchestrator.py")
+```
+Expected: at least 3 lines. If fewer, the write failed. Re-read the section around `agent.run(` and retry. Only give Final Answer after grep confirms all 3 symbols.
+
+---
+
+- [ ] **T203b** Wire 429 rate-limit detection into `orchid/orchestrator.py` `type:code_generate` `p1` `needs:T203` `model:local`
+
+Read `orchid/orchestrator.py`. Search for `ProviderUnavailableError` — find the `except ProviderUnavailableError` block inside `_execute_task`.
+
+Make exactly one change: inside that except block, add the rate-limit flag:
 
 ```python
 # Mark provider as rate-limited for cost scheduler
 if "429" in str(e) or "rate" in str(e).lower():
     try:
-        from orchid.cost.scheduler import CostAwareScheduler, set_rate_pressure
+        from orchid.cost.scheduler import set_rate_pressure
         set_rate_pressure(decision.model, True)
     except Exception:
         pass
 ```
 
-Note: `set_rate_pressure` is a module-level function — import it directly from `orchid.cost.scheduler`, not from `CostAwareScheduler`.
+Add these lines as the first thing inside the `except ProviderUnavailableError` block, before any existing exception handling.
+
+**Verification (required before Final Answer):** Run:
+```
+bash("grep -n 'set_rate_pressure\|ProviderUnavailableError' orchid/orchestrator.py")
+```
+Expected: at least 2 lines. If `set_rate_pressure` is missing, write failed. Re-read the except block and retry. Only give Final Answer after grep confirms both symbols.
 
 ---
 
-- [ ] **T204** Wire `CostAwareScheduler` into provider resolution in `orchid/orchestrator.py` `type:code_generate` `p1` `needs:T201,T202,T203` `model:local`
+- [ ] **T204** Wire `CostAwareScheduler` into provider resolution in `orchid/orchestrator.py` `type:code_generate` `p1` `needs:T201,T202,T203b` `model:local`
 
 Read `orchid/orchestrator.py`. Find `_resolve_provider(self, task)` (added in T178).
 
@@ -189,6 +208,12 @@ if self.offline_mode:
     return decision.model, decision  # skip cost override in offline mode
 ```
 Place this right before the cost-aware block.
+
+**Verification (required before Final Answer):** Run:
+```
+bash("grep -n 'cost.enforce_budget\|cost_scheduler\|_resolve_provider' orchid/orchestrator.py")
+```
+Expected: at least 3 lines — the config check, the RouteDecision override, and the method definition. If fewer than 3, write failed. Re-read `_resolve_provider` and retry. Only give Final Answer after grep confirms all symbols.
 
 ---
 
@@ -233,9 +258,9 @@ Clear `_rate_flags` dict in each test (e.g. `_rate_flags.clear()`) to prevent st
 
 ---
 
-- [ ] **T207** Review cost scheduling implementation `type:code_review` `p1` `needs:T205,T206`
+- [ ] **T207** Review cost scheduling implementation `type:code_review` `p1` `needs:T205,T206,T204`
 
-Review files: `orchid/cost/ledger.py`, `orchid/cost/scheduler.py`, `orchid/orchestrator.py` (T203 and T204 additions only).
+Review files: `orchid/cost/ledger.py`, `orchid/cost/scheduler.py`, `orchid/orchestrator.py` (T203, T203b, and T204 additions only).
 
 Check for exactly these issues:
 1. **Ledger lock scope** — does `daily_spend()` hold `_lock` while iterating lines? If a write (`record()`) arrives mid-read, could the reader see a partial line? Report PASS if read is done inside `with self._lock:`.

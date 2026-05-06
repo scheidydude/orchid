@@ -135,6 +135,12 @@ Then add these to the returned dict:
 
 Do not modify anything else. These tools are unrestricted at the base level; `DeveloperAgent` gets all, others get them filtered by Phase 1 `allowed_tools`.
 
+**Verification (required before Final Answer):** After writing, run:
+```
+bash("grep -n 'git_status\|git_commit\|from orchid.tools.git' orchid/agents/base.py")
+```
+If grep returns fewer than 3 matching lines, the write failed. Re-read `orchid/agents/base.py`, find the exact location, and retry. Only give Final Answer after grep confirms all three symbols are present.
+
 ---
 
 - [ ] **T165** Add git tools to DeveloperAgent `allowed_tools` and system prompt `type:code_generate` `p1` `needs:T164,T156` `model:local`
@@ -178,12 +184,48 @@ git_tools:
   enabled: true
 ```
 
-Also: in `orchid/agents/base.py`, inside `_make_project_tools`, wrap the git tool additions in a config check. Read base.py. Find the block added in T164. Wrap the entire git tool registration (wrappers + dict entries) with:
+**Verification (required before Final Answer):** Run:
+```
+bash("grep -n 'git_tools' orchid/orchid.defaults.yaml")
+```
+If grep returns no output, the append failed. Re-read the end of the file and retry. Only give Final Answer after grep confirms `git_tools:` is present.
+
+---
+
+- [ ] **T166b** Wrap git tool registration in config guard in `orchid/agents/base.py` `type:code_generate` `p1` `needs:T164,T166` `model:local`
+
+Read `orchid/agents/base.py`. Find `_make_project_tools(project_dir: Path)`. Find the block of git wrapper functions and dict entries added by T164 (starts with `_repo = str(project_dir)`, ends with `"git_log": _git_log,` in the return dict).
+
+Make exactly one change: wrap the git wrapper definitions AND their dict entries in a config guard. The return dict currently has all tools listed. Split it so git tools are only added conditionally:
+
+Before the `return {` statement, add:
 ```python
 if cfg.get("git_tools.enabled", True):
-    # ... git wrappers and dict entries ...
+    _repo = str(project_dir)
+    # [all 8 git wrapper function definitions go here]
+    _git_tools = {
+        "git_status": _git_status,
+        "git_diff": _git_diff,
+        "git_add": _git_add,
+        "git_commit": _git_commit,
+        "git_branch": _git_branch,
+        "git_checkout": _git_checkout,
+        "git_push": _git_push,
+        "git_log": _git_log,
+    }
+else:
+    _git_tools = {}
 ```
-Ensure the return dict still includes all non-git tools regardless.
+
+Then in the `return {` dict, replace the individual `"git_status": _git_status, ...` entries with `**_git_tools,`.
+
+The non-git tools remain in the return dict unconditionally. `cfg` is already imported at the top of `base.py`.
+
+**Verification (required before Final Answer):** Run:
+```
+bash("grep -n 'git_tools.enabled\|_git_tools' orchid/agents/base.py")
+```
+If grep returns fewer than 2 lines, the write failed. Re-read `_make_project_tools` and retry. Only give Final Answer after grep confirms both symbols are present.
 
 ---
 
@@ -208,7 +250,7 @@ from orchid.tools.git import git_status, git_diff, git_add, git_commit, git_log
 
 ---
 
-- [ ] **T168** Review git integration `type:code_review` `p1` `needs:T167`
+- [ ] **T168** Review git integration `type:code_review` `p1` `needs:T167,T166b`
 
 Review files: `orchid/tools/git.py`, `orchid/agents/base.py` (git tool registration block only), `orchid/agents/developer.py` (git prompt section only), `orchid/agents/reviewer.py` and `orchid/agents/tester.py` (allowed_tools only).
 

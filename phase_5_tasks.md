@@ -128,33 +128,53 @@ No other functions or classes.
 
 ---
 
-- [ ] **T188** Wire `spawn_task` into agent tool registry and set session before dispatch `type:code_generate` `p1` `needs:T187` `model:local`
+- [ ] **T188** Add `spawn_task` to `_make_project_tools` in `orchid/agents/base.py` `type:code_generate` `p1` `needs:T187` `model:local`
 
-Make changes to two files.
+Read `orchid/agents/base.py`. Find `_make_project_tools(project_dir: Path)`.
 
-**File 1: `orchid/agents/base.py`** — Read first.
-In `_make_project_tools(project_dir: Path)`, add `spawn_task` import and wrapper. At the top of `_make_project_tools`, import:
+Make exactly two changes to this function:
+
+**Change 1** — at the very top of `_make_project_tools` (before `_resolve` is defined), add:
 ```python
 from orchid.tools.task_injection import spawn_task as _spawn_task_fn
 ```
-Add to the returned dict:
+
+**Change 2** — in the `return {` dict, add one entry outside the `_git_tools` conditional (spawn_task is always available regardless of git_tools.enabled):
 ```python
 "spawn_task": _spawn_task_fn,
 ```
-This is outside the `git_tools.enabled` guard (spawn_task is always available).
 
-Also add `spawn_task` to `DeveloperAgent.allowed_tools`... wait, DeveloperAgent has no `allowed_tools` (it's None = all allowed). So spawn_task is automatically available to DeveloperAgent. Good. For TesterAgent and ReviewerAgent, `spawn_task` should NOT be in their `allowed_tools` frozensets (they shouldn't spawn tasks). Do not add it to their frozensets.
+Do not modify DeveloperAgent (its `allowed_tools` is None = all tools, so spawn_task is automatically available). Do not touch TesterAgent or ReviewerAgent — `spawn_task` must NOT appear in their frozensets.
 
-**File 2: `orchid/orchestrator.py`** — Read first.
-In `_execute_task`, before `agent = agent_cls(...)` is called, add:
+**Verification (required before Final Answer):** Run:
+```
+bash("grep -n 'spawn_task\|task_injection' orchid/agents/base.py")
+```
+Expected: at least 2 lines — the import and the dict entry. If fewer than 2 lines, the write failed. Re-read `_make_project_tools` at the location where the change belongs and retry. Only give Final Answer after grep confirms both symbols.
+
+---
+
+- [ ] **T188b** Wire `set_active_session` into `_execute_task` in `orchid/orchestrator.py` `type:code_generate` `p1` `needs:T188` `model:local`
+
+Read `orchid/orchestrator.py`. Find `_execute_task(self, task: Task)`. Search for the line `agent = agent_cls(` — this is where agent instantiation begins.
+
+Make exactly one change: immediately before the `agent = agent_cls(` line, add:
 ```python
 from orchid.tools.task_injection import set_active_session
 set_active_session(self.session)
 ```
 
+Do not modify anything else in `_execute_task`.
+
+**Verification (required before Final Answer):** Run:
+```
+bash("grep -n 'set_active_session\|task_injection' orchid/orchestrator.py")
+```
+Expected: at least 2 lines. If fewer than 2, the write failed. Re-read the section around `agent = agent_cls(` and retry. Only give Final Answer after grep confirms both symbols.
+
 ---
 
-- [ ] **T189** Add `spawn_task` description to DeveloperAgent system prompt `type:code_generate` `p1` `needs:T188` `model:local`
+- [ ] **T189** Add `spawn_task` description to DeveloperAgent system prompt `type:code_generate` `p1` `needs:T188b` `model:local`
 
 Read `orchid/agents/developer.py`.
 
@@ -198,7 +218,7 @@ For the last test: import and instantiate `Session` from `orchid.session`. You m
 
 ---
 
-- [ ] **T191** Review dynamic spawning implementation `type:code_review` `p1` `needs:T190`
+- [ ] **T191** Review dynamic spawning implementation `type:code_review` `p1` `needs:T190,T188b`
 
 Review files: `orchid/session.py` (`inject_task` method only), `orchid/tools/task_injection.py`, `orchid/orchestrator.py` (`set_active_session` call only).
 

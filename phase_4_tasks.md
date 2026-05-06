@@ -95,6 +95,12 @@ And update any references to `decision` below — they should work unchanged sin
 
 Return type is `tuple[str, RouteDecision]`. Add `RouteDecision` to the `TYPE_CHECKING` import if needed.
 
+**Verification (required before Final Answer):** Run:
+```
+bash("grep -n 'def _resolve_provider\|_resolve_provider(task)' orchid/orchestrator.py")
+```
+Expected: at least 2 lines — one `def _resolve_provider` definition, one call site `_resolve_provider(task)` inside `_execute_task`. If either is missing, the refactor was not written to disk. Re-read the relevant section of orchestrator.py and retry the write. Only give Final Answer after grep confirms both lines.
+
 ---
 
 - [ ] **T179** Add provider semaphores to `BackgroundRunner` in `orchid/runner.py` `type:code_generate` `p1` `needs:T177` `model:local`
