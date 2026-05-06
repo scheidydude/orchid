@@ -3,6 +3,26 @@
 
 ## DONE
 
+- [x] **T163** Create `orchid/tools/git.py` `type:code_generate` `p1` `model:local`
+- [x] **T164** Register git tools in `_make_project_tools` in `orchid/agents/base.py` `type:code_generate` `p1` `needs:T163` `model:local`
+- [x] **T165** Add git tools to DeveloperAgent `allowed_tools` and system prompt `type:code_generate` `p1` `needs:T164,T156` `model:local`
+- [x] **T166** Add `git_tools_enabled` config to `orchid/orchid.defaults.yaml` `type:code_generate` `p1` `model:local`
+- [x] **T166b** Wrap git tool registration in config guard in `orchid/agents/base.py` `type:code_generate` `p1` `needs:T164,T166` `model:local`
+- [x] **T167** Create `tests/test_git_tools.py` `type:code_generate` `p1` `needs:T163` `model:local`
+- [x] **T168** Review git integration `type:code_review` `p1` `needs:T167,T166b`
+- [x] **T169** Fix issues found in T168 `type:code_generate` `p1` `needs:T168` `model:local`
+- [x] **T152** Wire circuit breaker into HTTP hook handler in `orchid/hooks/loader.py` `type:code_generate` `p1` `needs:T151` `model:local`
+- [x] **T153** Create `orchid/hooks/audit.py` `type:code_generate` `p1` `model:local`
+- [x] **T154** Wire audit logging into shell hook handler in `orchid/hooks/loader.py` `type:code_generate` `p1` `needs:T152,T153` `model:local`
+- [x] **T155** Add `allowed_tools` filtering to `BaseAgent` in `orchid/agents/base.py` `type:code_generate` `p1` `model:local`
+- [x] **T156** Set `allowed_tools` on TesterAgent, ReviewerAgent, ResearcherAgent `type:code_generate` `p1` `needs:T155` `model:local`
+- [x] **T157** Add permissions and circuit-breaker config to `orchid/orchid.defaults.yaml` `type:code_generate` `p1` `needs:T155` `model:local`
+- [x] **T158** Create `tests/test_circuit_breaker.py` `type:code_generate` `p1` `needs:T151` `model:local`
+- [x] **T159** Create `tests/test_hook_audit.py` `type:code_generate` `p1` `needs:T153` `model:local`
+- [x] **T160** Create `tests/test_agent_permissions.py` `type:code_generate` `p1` `needs:T155,T156` `model:local`
+- [x] **T161** Review Phase 1 implementation `type:code_review` `p1` `needs:T158,T159,T160,T157`
+- [x] **T162** Fix issues found in T161 `type:code_generate` `p1` `needs:T161` `model:local`
+- [x] **T151** Create `orchid/hooks/circuit_breaker.py` `type:code_generate` `p1` `model:local`
 - [x] **T150** Gap-closure sprint rollup `type:rollup` `p1` `rollup:T092,T093,T094,T095,T096,T097,T098,T099,T100,T101,T102,T103,T104,T105,T106,T107,T108,T109,T110,T111,T112,T113,T114,T115,T116,T117,T118,T119,T120,T121,T122,T123,T124,T125,T126,T127,T128,T129,T130,T131,T132,T133,T134,T135,T136,T137,T138,T139,T140,T141,T142,T143,T144,T145,T146,T147,T148,T149` `output:GAP-CLOSURE-REPORT.md`
 - [x] **T124** Create `tests/test_mcp_integration.py`. Write exactly 1 test function. Start a real Python subprocess as a minimal MCP server using `python3 -c "<inline script>"`. The inline script must: listen on stdin, respond to `initialize` with `{"jsonrpc":"2.0","id":0,"result":{}}`, respond to `tools/list` with one tool named `echo`, respond to `tools/call` with `{"content": arguments["msg"], "isError": false}`. Test: `StdioMCPClient.connect()`, `list_tools()` returns `[MCPTool("echo",…)]`, `call_tool("echo", {"msg":"hello"})` returns `MCPResult(content="hello")`. Use `pytest.mark.skipif(sys.platform=="win32", reason="POSIX only")`. `type:test_write` `p1` `needs:T107`
 - [x] **T088** Fix Discussion panel focus: after AI responds in the Discussion tab the message input loses focus and clicking it doesn't restore it. User has to leave the panel and come back. Fix: after each AI response completes, programmatically re-focus the message input using inputRef.current?.focus(). Also when the AI presents numbered options in its response, clicking an option fills the input but does not focus it — add focus() call after filling the input value. `type:code_generate` `p1`

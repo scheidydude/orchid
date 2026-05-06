@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from pathlib import Path
 
 from orchid.hooks.events import HookEvent
@@ -76,6 +77,12 @@ class HookLoader:
             logger.info("Hooks disabled in configuration")
             return 0
 
+        # ── Wire circuit-breaker configuration ────────────────────────────
+        self._configure_circuit_breaker(hooks_config)
+
+        # ── Wire audit logger ─────────────────────────────────────────────
+        self._configure_audit_logger()
+
         count = 0
         self._section_counts = {}
 
@@ -100,6 +107,59 @@ class HookLoader:
 
         logger.info("Loaded %d hook(s)", count)
         return count
+
+    def _configure_circuit_breaker(self, hooks_config: dict) -> None:
+        """Read circuit_breaker config from .orchid.yaml and wire it into the
+        CircuitBreakerRegistry singleton."""
+        cb_cfg = hooks_config.get("circuit_breaker", {})
+        if not cb_cfg:
+            return
+
+        from orchid.hooks.circuit_breaker import (
+            CircuitBreakerConfig,
+            configure_circuit_breaker,
+        )
+
+        config = CircuitBreakerConfig(
+            enabled=cb_cfg.get("enabled", True),
+            failure_threshold=cb_cfg.get("failure_threshold", 5),
+            recovery_timeout=cb_cfg.get("recovery_timeout", 60),
+            half_open_max_calls=cb_cfg.get("half_open_max_calls", 1),
+            success_threshold=cb_cfg.get("success_threshold", 1),
+            monitored_events=cb_cfg.get("monitored_events", [
+                "task_complete",
+                "task_failed",
+                "phase_transition",
+            ]),
+        )
+        configure_circuit_breaker(config)
+        logger.info(
+            "Circuit breaker configured: enabled=%s, threshold=%s, recovery=%ss",
+            config.enabled, config.failure_threshold, config.recovery_timeout,
+        )
+
+    def _configure_audit_logger(self) -> None:
+        """Read audit config from .orchid.yaml and wire it into the
+        AuditLogger singleton."""
+        from orchid import config as cfg
+
+        hooks_config = cfg.get("hooks", {})
+        audit_cfg = hooks_config.get("audit", {})
+
+        if not audit_cfg:
+            # Default: enable audit logging
+            audit_cfg = {"enabled": True}
+
+        if not audit_cfg.get("enabled", True):
+            logger.info("Audit logging disabled in configuration")
+            return
+
+        from orchid.hooks.audit import configure_audit_logger
+
+        configure_audit_logger(self.project_dir)
+        logger.info(
+            "Audit logger configured for %s", self.project_dir,
+        )
 
     def _load_project_hooks_py(self) -> int:
         """Load @orchid_hook-decorated functions from hooks.py in project root."""
@@ -317,24 +377,49 @@ class HookLoader:
 
         Context JSON is passed on stdin. If stdout parses as JSON with
         {"block": true}, the handler returns a blocking signal to HookRegistry.
+
+        Audit logging is wired in: every invocation is recorded to the
+        project's .orchid/audit_log.jsonl with status, duration, and error.
         """
+        from orchid.hooks.audit import get_audit_logger
+
+        event_type = hook.event_type
+
         def handler(event: HookEvent) -> str | dict:
+            start = time.monotonic()
+            task_id = event.context.get("task_id", "")
+
+            # ── Audit: allowlist gate ───────────────────────────────────
+            audit_logger = get_audit_logger()
+
             if hook.allowlist_check and not self._is_command_allowed(hook.command):
+                duration = time.monotonic() - start
+                if audit_logger:
+                    audit_logger.log_hook(
+                        event_type=event_type,
+                        hook_name=hook.name,
+                        hook_type="shell",
+                        status="blocked",
+                        duration_s=duration,
+                        task_id=task_id,
+                        command=hook.command,
+                    )
                 logger.warning(
                     "Shell hook %s blocked: command not in allowlist", hook.name
                 )
                 return "[blocked]"
 
             command = self._substitute_vars(hook.command, event)
-            context_json = json.dumps({
-                "event_type": event.event_type,
-                "data": event.data,
-                "context": event.context,
-                "timestamp": event.timestamp,
-            })
 
-            import subprocess
             try:
+                context_json = json.dumps({
+                    "event_type": event.event_type,
+                    "data": event.data,
+                    "context": event.context,
+                    "timestamp": event.timestamp,
+                })
+
+                import subprocess
                 result = subprocess.run(
                     command,
                     shell=True,
@@ -344,37 +429,121 @@ class HookLoader:
                     timeout=hook.timeout,
                     cwd=str(self.project_dir),
                 )
+                duration = time.monotonic() - start
+
                 if result.returncode != 0:
                     logger.error("Shell hook %s failed: %s", hook.name, result.stderr)
+                    if audit_logger:
+                        audit_logger.log_hook(
+                            event_type=event_type,
+                            hook_name=hook.name,
+                            hook_type="shell",
+                            status="failure",
+                            duration_s=duration,
+                            error=result.stderr[:500],
+                            task_id=task_id,
+                            command=hook.command,
+                        )
 
                 stdout = result.stdout.strip()
                 if stdout:
                     try:
                         response = json.loads(stdout)
                         if response.get("block"):
+                            if audit_logger:
+                                audit_logger.log_hook(
+                                    event_type=event_type,
+                                    hook_name=hook.name,
+                                    hook_type="shell",
+                                    status="success",
+                                    duration_s=duration,
+                                    task_id=task_id,
+                                    command=hook.command,
+                                )
                             return {
                                 "blocked": True,
                                 "error": response.get("reason", "blocked by hook"),
                                 "mutated_context": response.get("mutated_context"),
                             }
                         if "mutated_context" in response:
+                            if audit_logger:
+                                audit_logger.log_hook(
+                                    event_type=event_type,
+                                    hook_name=hook.name,
+                                    hook_type="shell",
+                                    status="success",
+                                    duration_s=duration,
+                                    task_id=task_id,
+                                    command=hook.command,
+                                )
                             return {"mutated_context": response["mutated_context"]}
                     except json.JSONDecodeError:
                         pass
+
+                if audit_logger:
+                    audit_logger.log_hook(
+                        event_type=event_type,
+                        hook_name=hook.name,
+                        hook_type="shell",
+                        status="success",
+                        duration_s=duration,
+                        task_id=task_id,
+                        command=hook.command,
+                    )
                 return stdout or result.stderr or "[executed]"
             except subprocess.TimeoutExpired:
+                duration = time.monotonic() - start
                 logger.error("Shell hook %s timed out", hook.name)
+                if audit_logger:
+                    audit_logger.log_hook(
+                        event_type=event_type,
+                        hook_name=hook.name,
+                        hook_type="shell",
+                        status="timeout",
+                        duration_s=duration,
+                        error=f"exceeded {hook.timeout}s",
+                        task_id=task_id,
+                        command=hook.command,
+                    )
                 return "[timeout]"
             except Exception as e:
+                duration = time.monotonic() - start
                 logger.error("Shell hook %s error: %s", hook.name, e)
+                if audit_logger:
+                    audit_logger.log_hook(
+                        event_type=event_type,
+                        hook_name=hook.name,
+                        hook_type="shell",
+                        status="error",
+                        duration_s=duration,
+                        error=str(e),
+                        task_id=task_id,
+                        command=hook.command,
+                    )
                 return f"[error: {e}]"
 
         return handler
 
     def _create_http_handler(self, hook: HTTPHook) -> callable:
-        """Create a handler for an HTTP hook."""
+        """Create a handler for an HTTP hook with circuit-breaker wiring."""
+        event_type = hook.event_type
+
         def handler(event: HookEvent) -> dict:
-            """Make HTTP request with event data."""
+            """Make HTTP request with event data, guarded by circuit breaker."""
+
+            # ── Circuit-breaker gate ────────────────────────────────────
+            from orchid.hooks.circuit_breaker import allow_request, record_failure, record_success
+
+            if not allow_request(event_type):
+                logger.warning(
+                    "HTTP hook %s for event %s: circuit breaker OPEN — request rejected",
+                    hook.name, event_type,
+                )
+                return {
+                    "status_code": 0,
+                    "response": "",
+                    "circuit_breaker": "open",
+                }
 
             # Substitute event data into URL and payload
             url = self._substitute_vars(hook.url, event)
@@ -391,11 +560,18 @@ class HookLoader:
                     data=payload,
                     timeout=hook.timeout,
                 )
+                # ── Record outcome ──────────────────────────────────────
+                if response.ok:
+                    record_success(event_type)
+                else:
+                    record_failure(event_type)
+
                 return {
                     "status_code": response.status_code,
                     "response": response.text[:500],
                 }
             except Exception as e:
+                record_failure(event_type)
                 logger.error("HTTP hook %s error: %s", hook.name, e)
                 return {"error": str(e)}
 

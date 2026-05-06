@@ -77,6 +77,45 @@ memory:
   max_hot_memory_tokens: 4000
   compression_threshold: 6000   # compress when hot memory exceeds this
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Agent Permissions — tool allowlist per agent type (T155-T156)
+#
+# Controls which tools each agent type is allowed to call.
+# If a tool is not listed, the agent receives "[BLOCKED]" when attempting it.
+#
+# Resolution order:
+#   1. Per-agent override in .orchid.yaml (agents.allowed_tools.<agent_name>)
+#   2. Per-agent-type default below (agents.allowed_tools.<agent_type>)
+#   3. Built-in defaults (all tools) when no override is set
+#
+# Example .orchid.yaml:
+#
+#   agents:
+#     allowed_tools:
+#       researcher:
+#         - search
+#         - fetch
+#         - read_file
+#         - list_dir
+#         - bash
+#       reviewer:
+#         - read_file
+#         - list_dir
+#         - check_imports
+#         - bash
+#       developer:
+#         - read_file
+#         - write_file
+#         - append_file
+#         - list_dir
+#         - bash
+#         - check_imports
+#         - get_task_files
+#
+# Built-in defaults (all agents): read_file, write_file, append_file, list_dir,
+# bash, check_imports, get_task_files. Search and fetch are added by
+# ResearcherAgent at runtime.
+# ──────────────────────────────────────────────────────────────────────────────
 agents:
   max_react_iterations: 50
   tool_timeout_seconds: 30
@@ -85,6 +124,67 @@ agents:
   shell_allowlist: []        # extra executables to permit in allowlist mode (merged with built-in defaults)
   verify_syntax_only: false  # T081: when true, skip runtime tests — only run py_compile/node --check
   environment: null          # T080: override auto-detected env (docker|venv|node|python|unknown)
+  git_tools_enabled: true    # T166: register git tools (status, diff, log, commit, push, pull, branch)
+
+  # Per-agent-type tool allowlists (override in .orchid.yaml)
+  # Example:
+  #   allowed_tools:
+  #     researcher:
+  #       - search
+  #       - fetch
+  #       - read_file
+  #       - list_dir
+  #       - bash
+  #     reviewer:
+  #       - read_file
+  #       - list_dir
+  #       - check_imports
+  #       - bash
+  #     developer:
+  #       - read_file
+  #       - write_file
+  #       - append_file
+  #       - list_dir
+  #       - bash
+  #       - check_imports
+  #       - get_task_files
+  #     discussion:
+  #       - read_file
+  #       - list_dir
+  #     product_manager:
+  #       - read_file
+  #       - write_file
+  #       - append_file
+  #       - list_dir
+  #       - bash
+  #     project_manager:
+  #       - read_file
+  #       - write_file
+  #       - append_file
+  #       - list_dir
+  #       - bash
+  #       - check_imports
+  #       - get_task_files
+  #     orchestrator:
+  #       - read_file
+  #       - write_file
+  #       - append_file
+  #       - list_dir
+  #       - bash
+  #       - check_imports
+  #       - get_task_files
+  #     reviewer:
+  #       - read_file
+  #       - list_dir
+  #       - check_imports
+  #       - bash
+  #     base:
+  #       - read_file
+  #       - write_file
+  #       - append_file
+  #       - list_dir
+  #       - bash
+  allowed_tools: {}
 
 # projects_dir is no longer used — projects are standalone external repos
 
@@ -258,7 +358,7 @@ providers:
     draft:         local
     code_generate: local
     summarize:     local
-    search:        local
+    search:       local
     transform:     local
     research:      local
 
@@ -443,6 +543,42 @@ hooks:
 
   # Shell command allowlist (in addition to built-in safe commands)
   shell_allowlist: []
+
+  # Circuit breaker for HTTP hooks — prevents cascading failures
+  # when external endpoints (Slack/Telegram webhooks) are unreachable.
+  #
+  # States:
+  #   CLOSED   — normal operation, requests pass through.
+  #   OPEN     — failures exceeded threshold; requests rejected immediately.
+  #   HALF_OPEN — after cooldown, one probe request is allowed through.
+  #               Success → CLOSED. Failure → OPEN again.
+  #
+  # Each event type (task_complete, task_failed, phase_transition) gets its
+  # own breaker so a flaky Slack webhook does not block Telegram notifications.
+  circuit_breaker:
+    enabled: true
+    failure_threshold: 5      # consecutive failures before OPEN state
+    recovery_timeout: 60      # seconds before transitioning to HALF_OPEN
+    half_open_max_calls: 1    # probe calls allowed in HALF_OPEN state
+    success_threshold: 1      # consecutive successes to return to CLOSED
+    monitored_events:
+      - task_complete         # HTTP hooks fired on task completion
+      - task_failed           # HTTP hooks fired on task failure
+      - phase_transition      # HTTP hooks fired on phase change
+    # Per-event overrides (optional — merge with defaults above):
+    # event_thresholds:
+    #   task_complete:
+    #     failure_threshold: 10     # more tolerant for completion webhooks
+    #     recovery_timeout: 120
+    #   task_failed:
+    #     failure_threshold: 3      # less tolerant for failure notifications
+
+  # Audit logging for hook invocations (T153)
+  audit:
+    enabled: true
+    log_file: ".orchid/audit_log.jsonl"
+    max_lines: 10000              # rotate after this many lines
+    include_command_output: false # redact command stdout/stderr from logs
 
   # Task lifecycle hooks
   tasks: []

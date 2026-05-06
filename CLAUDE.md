@@ -268,3 +268,75 @@ orchid/orchestrator.py
 </read_file>
 
 - [T150] Gap-closure sprint rollup: Rollup written to GAP-CLOSURE-REPORT.md
+
+- [T151] Create `orchid/hooks/circuit_breaker.py`: T151 complete. Created `orchid/hooks/circuit_breaker.py` with:
+
+- **`CircuitState`** enum: `CLOSED`, `OPEN`, `HALF_OPEN`
+- **`CircuitBreakerConfig`** dataclass: `enabled`, `failure_threshold` (5), `re
+
+- [T152] Wire circuit breaker into HTTP hook handler in `orchid/hooks/loader.py`: T152 complete. The circuit breaker is wired into the HTTP hook handler in `orchid/hooks/loader.py`. The `_create_http_handler` method now checks `allow_request()` before every HTTP call, and records s
+
+- [T153] Create `orchid/hooks/audit.py`: Thought: I need to use the exact heredoc format for write_file. Let me write the file properly.
+
+- [T154] Wire audit logging into shell hook handler in `orchid/hooks/loader.py`: Both files are written and verified. `orchid/hooks/audit.py` provides the audit logging infrastructure (thread-safe JSONL writer with singleton pattern), and `orchid/hooks/loader.py` wires it into the
+
+- [T155] Add `allowed_tools` filtering to `BaseAgent` in `orchid/agents/base.py`: \\s*(.*)\", re.DOTALL)\n_THOUGHT_RE = re.compile(r\"Thought:\\s*(.*?)(?=\\nAction:|\\nFinal Answer:|$)\", re.DOTALL)\n\n# Map tool names to their primary argument name for bracket and path formats\n_T
+
+- [T156] Set `allowed_tools` on TesterAgent, ReviewerAgent, ResearcherAgent: \s*(.*)", re.DOTALL)
+_THOUGHT_RE = re.compile(r"Thought:\s*(.*?)(?=\nAction:|\nFinal Answer:|$)", re.DOTALL)
+
+# Map tool names to their primary argument name for bracket and path formats
+_TOOL_ARG_MAP
+
+- [T157] Add permissions and circuit-breaker config to `orchid/orchid.defaults.yaml`: File written to `/home/dave/LocalAI/orchid/orchid/orchid.defaults.yaml` with:
+- **`agents.allowed_tools`** — empty dict with commented examples for all 8 agent types (researcher, reviewer, developer,
+
+- [T158] Create `tests/test_circuit_breaker.py`: All 55 tests pass. The file `tests/test_circuit_breaker.py` covers:
+
+- **TestCircuitState** (3 tests): enum values, membership, string conversion
+- **TestCircuitBreakerConfig** (2 tests): default conf
+
+- [T159] Create `tests/test_hook_audit.py`: Created `tests/test_hook_audit.py` with 60 tests covering the complete audit logging system — AuditEntry serialization, AuditLogger file I/O, thread safety, module-level singleton functions, shell/HTT
+
+- [T160] Create `tests/test_agent_permissions.py`: <read_file>
+{"path": "orchid/agents/product_manager.py"}
+
+- [T161] Review Phase 1 implementation: # Phase 1 Implementation Review
+
+## Executive Summary
+Phase 1 (T151-T160) implements circuit breaker, audit logging, agent permissions, and configuration. The circuit breaker and audit logging are **w
+
+- [T162] Fix issues found in T161: \s*(.*)", re.DOTALL)
+_THOUGHT_RE = re.compile(r"Thought:\s*(.*?)(?=\nAction:|\nFinal Answer:|$)", re.DOTALL)
+
+# Map tool names to their primary argument name for bracket and path formats
+_TOOL_ARG_MAP
+
+- [T163] Create `orchid/tools/git.py`: Created `orchid/tools/git.py` with 12 git tool functions:
+
+- **`_git_cmd`** — internal helper that runs git subprocess commands with timeout, stderr capture, and error handling
+- **`git_status`** — wo
+
+- [T164] Register git tools in `_make_project_tools` in `orchid/agents/base.py`: \\s*(.*)\", re.DOTALL)\n_THOUGHT_RE = re.compile(r\"Thought:\\s*(.*?)(?=\\nAction:|\\nFinal Answer:|$)\", re.DOTALL)\n\n\nclass BaseAgent:\n    \"\"\"\n    ReAct agent base class.\n\n    Subclasses ma
+
+- [T165] Add git tools to DeveloperAgent `allowed_tools` and system prompt: <antThinking>
+I need to read the DeveloperAgent class definition to understand its current structure.
+</antThinking>
+
+- [T166] Add `git_tools_enabled` config to `orchid/orchid.defaults.yaml`: T166 complete. Added `git_tools_enabled: true` to the `agents` section of `orchid/orchid.defaults.yaml` (line: `git_tools_enabled: true    # T166: register git tools (status, diff, log, commit, push,
+
+- [T166b] Wrap git tool registration in config guard in `orchid/agents/base.py`: \\s*(.*)\", re.DOTALL)\n_THOUGHT_RE = re.compile(r\"Thought:\\s*(.*?)(?=\\nAction:|\\nFinal Answer:|$)\", re.DOTALL)\n\n# Map tool names to their primary argument name for bracket and path formats\n_T
+
+- [T167] Create `tests/test_git_tools.py`: `tests/test_git_tools.py` has been created with 50 tests covering all 12 public functions in `orchid.tools.git` plus the internal `_git_cmd` helper. The test file includes:
+
+- **TestGitCmd** (6 tests)
+
+- [T168] Review git integration: ## Git Integration Review — T168
+
+### Summary
+The git tools module and tests are well-implemented, but **the integration into the agent system is broken**. The tools exist in `orchid/tools/git.py` but
+
+- [T169] Fix issues found in T168: <tool_calls>
+<invoke name="read_file">
+<parameter=parameter name="path">/home/dave/LocalAI/orchid/tests/test_git_tools.py</parameter>
+</invoke>
