@@ -96,6 +96,8 @@ def _make_project_tools(project_dir: Path) -> dict[str, ToolFn]:
         rewritten = rewrite_python_command(command, project_dir)
         return bash(rewritten, timeout=timeout)
 
+    from orchid.tools.task_injection import spawn_task as _spawn_task_fn
+
     return {
         "read_file": _rr_file,
         "write_file": _rw_file,
@@ -104,6 +106,7 @@ def _make_project_tools(project_dir: Path) -> dict[str, ToolFn]:
         "bash": _project_bash,
         "check_imports": _check_imports,
         "get_task_files": _get_task_files,
+        "spawn_task": _spawn_task_fn,
     }
 
 def _get_task_files_for_project(task_id: str, project_dir: Path) -> str:

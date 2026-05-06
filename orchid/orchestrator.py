@@ -277,6 +277,14 @@ class Orchestrator:
         # Re-assert project config before every task
         cfg.configure_for_project(self.session.project_dir)
 
+        # T188b: Register this session as the active session so providers
+        # (e.g. LocalProvider) can retrieve session stats via
+        # get_current_session() during task execution.
+        self.session.set_active_session()
+        # Also wire into task_injection thread-local so spawn_task works in agents.
+        from orchid.tools.task_injection import set_active_session as _set_ti_session
+        _set_ti_session(self.session)
+
         # Resolve provider via extracted method
         decision = self._resolve_provider(task)
 

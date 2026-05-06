@@ -15,6 +15,7 @@ from orchid.hooks.registry import HookRegistry
 from orchid.memory import state as mem_state
 from orchid.memory.decisions import load_decisions
 from orchid.memory.vector import VectorMemory
+from orchid.memory.state import Task, TaskStatus
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,21 @@ class Session:
                 logger.info("Loaded %d hook(s) for session", count)
         except Exception as e:
             logger.warning("Failed to load hooks: %s", e)
+
+    def set_active_session(self) -> None:
+        """Explicitly register this session as the active (current) session.
+
+        Sets the module-level ``_current_session`` global so that providers
+        (e.g. LocalProvider) can retrieve session stats via
+        ``get_current_session()`` without holding a direct reference.
+
+        This is called by the orchestrator at the start of every
+        ``_execute_task`` to ensure the session is always current during
+        task execution, even when sessions are created outside of the
+        normal ``Session.load()`` lifecycle (e.g. parallel dispatch).
+        """
+        global _current_session  # noqa: PLW0603
+        _current_session = self
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -366,7 +382,7 @@ class Session:
         event: dict[str, Any] = {
             "summary": summary,
             "duration_seconds": duration,
-            "tasks_done": sum(1 for t in self.tasks if t.status == mem_state.TaskStatus.DONE),
+            "tasks_done": sum(1 for t in self.tasks if t.status == TaskStatus.DONE),
             "tasks_total": len(self.tasks),
             "delegations_total": len(self.delegations),
         }
@@ -386,6 +402,90 @@ class Session:
             event["local_cache_stats"] = dict(local)
 
         self.log_event("session_end", event)
+
+    # ── Task injection (T186) ──────────────────────────────────────────────────
+
+    def inject_task(
+        self,
+        title: str,
+        task_type: str = "draft",
+        priority: int = 2,
+        description: str = "",
+        depends_on: list[str] | None = None,
+        agent: str | None = None,
+        model_override: str | None = None,
+        tags: list[str] | None = None,
+        rollup_sources: list[str] | None = None,
+        output_file: str | None = None,
+    ) -> Task:
+        """Programmatically inject a new task into the session and persist it to disk.
+
+        The task is appended to the session's task list with status TODO,
+        given a unique ID (T#### format), and saved to tasks.md so it is
+        picked up by the next scheduler cycle.
+
+        Args:
+            title: Human-readable task title.
+            task_type: Task type — determines model routing (e.g. "code_generate",
+                       "review", "search", "verify", "rollup", "draft").
+            priority: Task priority — 1=high, 2=normal, 3=low.
+            description: Detailed description / acceptance criteria.
+            depends_on: List of task IDs this task depends on (must be DONE).
+            agent: Optional agent class override (e.g. "developer", "reviewer").
+            model_override: Optional model override (e.g. "claude", "local").
+            tags: Optional list of tags for the task.
+            rollup_sources: For rollup-type tasks, list of source task IDs.
+            output_file: For rollup-type tasks, the output filename.
+
+        Returns:
+            The newly created Task object.
+        """
+        with self._lock:
+            # Generate a unique task ID — find the highest existing number
+            max_num = 0
+            for t in self.tasks:
+                try:
+                    num = int(t.id.lstrip("T"))
+                    if num > max_num:
+                        max_num = num
+                except ValueError:
+                    pass
+            new_id = f"T{max_num + 1:03d}"
+
+            task = Task(
+                id=new_id,
+                title=title,
+                status=TaskStatus.TODO,
+                type=task_type,
+                priority=priority,
+                description=description,
+                agent=agent,
+                tags=tags or [],
+                depends_on=depends_on or [],
+                model_override=model_override,
+                rollup_sources=rollup_sources or [],
+                output_file=output_file,
+            )
+            self.tasks.append(task)
+
+            # Persist to tasks.md on disk immediately
+            mem_state.save_tasks(self.tasks, self.project_dir)
+
+            # Log the injection event
+            self.log_event("task_injected", {
+                "task_id": new_id,
+                "title": title,
+                "type": task_type,
+                "priority": priority,
+                "depends_on": task.depends_on,
+            })
+
+            logger.info(
+                "Task injected: %s — %s (type=%s, priority=%d, depends_on=%s)",
+                new_id, title, task_type, priority, task.depends_on,
+            )
+
+            return task
 
     # ── Convenience accessors ─────────────────────────────────────────────────
 

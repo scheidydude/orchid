@@ -1,12 +1,25 @@
 # Tasks
 
 
+## TODO
+
+- [ ] **T192** Fix issues found in T191 `type:code_generate` `p1` `needs:T191` `model:local`
+
+## BLOCKED
+
+- [!] **T191** Review dynamic spawning implementation `type:code_review` `p1` `needs:T190,T188b`
+
 ## DONE
 
+- [x] **T186** Add `inject_task` method to `orchid/session.py` `type:code_generate` `p1` `model:local`
+- [x] **T187** Create `orchid/tools/task_injection.py` `type:code_generate` `p1` `needs:T186` `model:local`
+- [x] **T188** Add `spawn_task` to `_make_project_tools` in `orchid/agents/base.py` `type:code_generate` `p1` `needs:T187` `model:local`
+- [x] **T188b** Wire `set_active_session` into `_execute_task` in `orchid/orchestrator.py` `type:code_generate` `p1` `needs:T188` `model:local`
+- [x] **T189** Add `spawn_task` description to DeveloperAgent system prompt `type:code_generate` `p1` `needs:T188b` `model:local`
+- [x] **T190** Create `tests/test_task_injection.py` `type:code_generate` `p1` `needs:T186,T187` `model:local`
 - [x] **T185** Fix issues found in T184 `type:code_generate` `p1` `needs:T184` `model:local`
 - [x] **T184** Review parallelism implementation `type:code_review` `p1` `needs:T182,T183`
 - [x] **T183** Create `tests/test_parallel_runner.py` `type:code_generate` `p1` `needs:T176,T177,T178,T179,T180` `model:local`
-
 - [x] **T176** Create `orchid/scheduler.py` `type:code_generate` `p1` `model:local`
 - [x] **T177** Add threading lock to `orchid/session.py` `type:code_generate` `p1` `model:local`
 - [x] **T178** Extract `_resolve_provider` method from `_execute_task` in `orchid/orchestrator.py` `type:code_generate` `p1` `model:local`

@@ -390,3 +390,32 @@ All tests pass. The scheduler module is working correctly:
 - **TestDependencyGraphBuild** (5 tests): Graph construction with no deps, single dep, multiple deps, rollup sources, and combined d
 
 - [T183] Create `tests/test_parallel_runner.py`: FAILED: [max iterations reached without final answer]
+
+- [T186] Add `inject_task` method to `orchid/session.py`: T186 complete — `inject_task` method added to `orchid/session.py` with thread-safe task creation, unique ID generation, immediate disk persistence to tasks.md, session log recording, and full paramete
+
+- [T187] Create `orchid/tools/task_injection.py`: Created `orchid/tools/task_injection.py` with the following functions:
+
+- **`inject_task(project_dir, title, ...)`** — Adds a new TODO task to the project's `tasks.md` with a unique T#### ID, validate
+
+- [T188] Add `spawn_task` to `_make_project_tools` in `orchid/agents/base.py`: \s*(.*)", re.DOTALL)
+_THOUGHT_RE = re.compile(r"Thought:\s*(.*?)(?=\nAction:|\nFinal Answer:|$)", re.DOTALL)
+
+# Map tool names to their primary argument name for bracket and path formats
+_TOOL_ARG_MAP
+
+- [T188b] Wire `set_active_session` into `_execute_task` in `orchid/orchestrator.py`: Everything is working correctly. Here's a summary of the changes made:
+
+**`orchid/session.py`** — Added `set_active_session()` method (line 92):
+- Explicitly sets the module-level `_current_session` g
+
+- [T189] Add `spawn_task` description to DeveloperAgent system prompt: \s*(.*)", re.DOTALL)
+_THOUGHT_RE = re.compile(r"Thought:\s*(.*?)(?=\nAction:|\nFinal Answer:|$)", re.DOTALL)
+
+# Map tool names to their primary argument name for bracket and path formats
+_TOOL_ARG_MAP
+
+- [T190] Create `tests/test_task_injection.py`: Thought: Let me use bash to write the file instead, since write_file seems to have issues with the heredoc format.
+
+Action: bash
+
+- [T191] Review dynamic spawning implementation: FAILED: [max iterations reached without final answer]
