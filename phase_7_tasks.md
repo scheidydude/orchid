@@ -110,7 +110,7 @@ cost:
 
 ---
 
-- [ ] **T203** Wire `CostLedger` token recording into `orchid/orchestrator.py` after agent run `type:code_generate` `p1` `needs:T200,T202` `model:local`
+- [ ] **T203** Wire `CostLedger` token recording into `orchid/orchestrator.py` after agent run `type:code_generate` `p1` `needs:T200,T201,T202` `model:local`
 
 Read `orchid/orchestrator.py`. Find `_execute_task`. Search for the line where `agent.run(` is called — this produces the result string. Find the line immediately after the agent run completes (before the next `self.session.log_event` or task-complete event).
 
