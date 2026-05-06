@@ -301,6 +301,11 @@ class BaseAgent:
     # this to True so the local model can't declare done without writing anything.
     _require_file_write: bool = False
 
+    # Restrict which tools this agent type may call. None = unrestricted.
+    # Subclasses set a frozenset; config key agents.allowed_tools.<agent_type>
+    # overrides the class default at instantiation time.
+    allowed_tools: frozenset[str] | None = None
+
     def __init__(
         self,
         extra_tools: dict[str, ToolFn] | None = None,
@@ -330,6 +335,27 @@ class BaseAgent:
         self.injection_queue_path = (
             Path(injection_queue_path) if injection_queue_path else None
         )
+        # Apply tool capability restrictions
+        _config_allowed = cfg.get("agents.allowed_tools", {})
+        if isinstance(_config_allowed, dict):
+            _config_tools = _config_allowed.get(self.agent_type, None)
+        else:
+            _config_tools = None
+        if _config_tools:
+            _allowed: frozenset[str] | None = frozenset(_config_tools)
+        elif self.allowed_tools is not None:
+            _allowed = self.allowed_tools
+        else:
+            _allowed = None
+        if _allowed is not None:
+            _removed = [k for k in list(self.tools) if k not in _allowed]
+            for _k in _removed:
+                del self.tools[_k]
+            if _removed:
+                logger.debug(
+                    "[%s] allowed_tools restricted; removed: %s",
+                    self.__class__.__name__, _removed,
+                )
 
     def register_tool(self, name: str, fn: ToolFn) -> None:
         self.tools[name] = fn

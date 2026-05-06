@@ -16,6 +16,10 @@ class ReviewerAgent(BaseAgent):
     agent_type = "reviewer"
     agent_name = "reviewer"
 
+    allowed_tools: frozenset[str] | None = frozenset({
+        "read_file", "list_dir", "bash", "check_imports", "get_task_files",
+    })
+
     def system_prompt(self) -> str:
         base = super().system_prompt()
         return (

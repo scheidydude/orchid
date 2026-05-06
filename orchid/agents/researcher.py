@@ -12,6 +12,11 @@ class ResearcherAgent(BaseAgent):
     agent_type = "researcher"
     agent_name = "researcher"
 
+    # search/fetch added by __init__ after super(); they bypass the filter by design
+    allowed_tools: frozenset[str] | None = frozenset({
+        "read_file", "list_dir", "bash", "search", "fetch", "get_task_files",
+    })
+
     def __init__(self, *args, vector_memory=None, project_name: str = "", **kwargs):
         super().__init__(*args, **kwargs)
         from orchid.tools.search import WebSearchTool  # noqa: PLC0415

@@ -13,6 +13,10 @@ class TesterAgent(BaseAgent):
     agent_type = "tester"
     agent_name = "tester"
 
+    allowed_tools: frozenset[str] | None = frozenset({
+        "read_file", "list_dir", "bash", "check_imports", "get_task_files",
+    })
+
     def system_prompt(self) -> str:
         env = self.environment
         runner_hint = self._test_runner_hint(env)
