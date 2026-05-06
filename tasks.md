@@ -1,16 +1,11 @@
 # Tasks
 
 
-## TODO
-
-- [ ] **T184** Review parallelism implementation `type:code_review` `p1` `needs:T182,T183`
-- [ ] **T185** Fix issues found in T184 `type:code_generate` `p1` `needs:T184` `model:local`
-
-## BLOCKED
-
-- [!] **T183** Create `tests/test_parallel_runner.py` `type:code_generate` `p1` `needs:T176,T177,T178,T179,T180` `model:local`
-
 ## DONE
+
+- [x] **T185** Fix issues found in T184 `type:code_generate` `p1` `needs:T184` `model:local`
+- [x] **T184** Review parallelism implementation `type:code_review` `p1` `needs:T182,T183`
+- [x] **T183** Create `tests/test_parallel_runner.py` `type:code_generate` `p1` `needs:T176,T177,T178,T179,T180` `model:local`
 
 - [x] **T176** Create `orchid/scheduler.py` `type:code_generate` `p1` `model:local`
 - [x] **T177** Add threading lock to `orchid/session.py` `type:code_generate` `p1` `model:local`
