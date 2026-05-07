@@ -453,3 +453,39 @@ The agent pool (`orchid/agent_pool.py`) is a well-designed thread-safe caching l
 
 **1. `orchid/orchestrator.py` — Wire AgentPool into task execution**
 -
+
+- [T200] Create `orchid/cost/` package with `__init__.py` and `ledger.py`: Created `orchid/cost/__init__.py`, `orchid/cost/ledger.py`, and `orchid/cost/scheduler.py` — a complete cost tracking package with `CostLedger` (persistent JSONL token accounting with budget caps) and
+
+- [T201] Create `orchid/cost/scheduler.py`: The file `orchid/cost/scheduler.py` has been created and verified. Here's a summary of what it provides:
+
+**`orchid/cost/scheduler.py` — Cost-aware task scheduling**
+
+### Data classes
+- **`SpendSnapsh
+
+- [T202] Add cost config to `orchid/orchid.defaults.yaml`: T202 complete — added the `cost` configuration section to `orchid/orchid.defaults.yaml` with three keys (`budget_usd`, `budget_warn_pct`, `budget_stop`) that are read by `CostLedger` and `CostSchedule
+
+- [T203] Wire `CostLedger` token recording into `orchid/orchestrator.py` after agent run: T203 complete — CostLedger token recording is wired into orchestrator.py after agent.run() in both the normal task path and the rollup task path, with lazy initialization via _init_cost_ledger() helpe
+
+- [T203b] Wire 429 rate-limit detection into `orchid/orchestrator.py`: Thought: I need to read the current orchestrator.py to understand the existing structure and where rate-limit detection should be wired in.
+Action: read_file
+{"path": "orchid/orchestrator.py"}
+
+- [T204] Wire `CostAwareScheduler` into provider resolution in `orchid/orchestrator.py`: All changes are verified and working. Here's a summary of what was wired into `orchid/orchestrator.py` for **T204**:
+
+**1. Imports added** (lines 30-37):
+- `CostScheduler`, `BudgetBlockedError`, `Thro
+
+- [T205] Create `tests/test_cost_ledger.py`: All 47 tests pass. The file `tests/test_cost_ledger.py` has been created and verified with comprehensive coverage of:
+
+1. **TokenRecord dataclass** — defaults, `input_token_total`, `output_token_total
+
+- [T206] Create `tests/test_cost_scheduler.py`: Created `tests/test_cost_scheduler.py` with 68 comprehensive tests covering all aspects of the CostScheduler implementation — SpendSnapshot properties, RateLimitState, budget enforcement, rate-limit b
+
+- [T207] Review cost scheduling implementation: Thought: I need to review the cost scheduling implementation. Let me start by examining the key files related to cost scheduling:
+1. `orchid/cost/ledger.py` - Cost ledger implementation
+2. `orchid/cos
+
+- [T208] Fix issues found in T207 and add token fields if missing: T208 complete. Fixed the following issues found in T207:
+
+1. **`TokenRecord.grand_total` double-counted cache tokens** — `input_token_total` already includes cache tokens, so `grand_total` was adding

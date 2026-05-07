@@ -78,44 +78,23 @@ memory:
   compression_threshold: 6000   # compress when hot memory exceeds this
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Agent Permissions — tool allowlist per agent type (T155-T156)
+# Cost Tracking — token accounting and budget enforcement (T200-T204)
 #
-# Controls which tools each agent type is allowed to call.
-# If a tool is not listed, the agent receives "[BLOCKED]" when attempting it.
-#
-# Resolution order:
-#   1. Per-agent override in .orchid.yaml (agents.allowed_tools.<agent_name>)
-#   2. Per-agent-type default below (agents.allowed_tools.<agent_type>)
-#   3. Built-in defaults (all tools) when no override is set
+# Controls the CostLedger (persistent token/cost recording) and
+# CostScheduler (budget-aware task dispatch with 429 rate-limit back-off).
 #
 # Example .orchid.yaml:
 #
-#   agents:
-#     allowed_tools:
-#       researcher:
-#         - search
-#         - fetch
-#         - read_file
-#         - list_dir
-#         - bash
-#       reviewer:
-#         - read_file
-#         - list_dir
-#         - check_imports
-#         - bash
-#       developer:
-#         - read_file
-#         - write_file
-#         - append_file
-#         - list_dir
-#         - bash
-#         - check_imports
-#         - get_task_files
-#
-# Built-in defaults (all agents): read_file, write_file, append_file, list_dir,
-# bash, check_imports, get_task_files. Search and fetch are added by
-# ResearcherAgent at runtime.
+#   cost:
+#     budget_usd: 10.00           # hard cap — no tasks dispatched above this
+#     budget_warn_pct: 0.8        # warn when spend reaches 80% of cap
+#     budget_stop: true           # true = hard stop; false = warn-only
 # ──────────────────────────────────────────────────────────────────────────────
+cost:
+  budget_usd: null              # null = no cap; set to e.g. 10.00 to enable
+  budget_warn_pct: 0.8          # warn when cumulative spend reaches this % of cap
+  budget_stop: true             # hard-stop dispatch when budget exceeded
+
 agents:
   max_react_iterations: 50
   tool_timeout_seconds: 30

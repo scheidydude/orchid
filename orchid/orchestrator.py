@@ -26,6 +26,15 @@ from orchid.output.events import (
 )
 from orchid.session import Session
 from orchid.tools.models import Message, RouteDecision, call
+from orchid.cost.ledger import CostLedger, configure_cost_ledger, get_cost_ledger
+from orchid.cost.scheduler import (
+    CostScheduler,
+    BudgetBlockedError,
+    ThrottleBlockedError,
+    configure_cost_scheduler,
+    get_cost_scheduler,
+    reset_cost_scheduler,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +154,13 @@ class Orchestrator:
     T097: Hooks are also wired into session and phase transitions via:
     - Session._fire_session_start_hook() / _fire_session_end_hook()
     - ProjectLifecycle._fire_phase_transition_hook() etc.
+
+    T204: CostAwareScheduler is wired into provider resolution:
+    - Budget checks before task dispatch (check_budget)
+    - Rate-limit back-off checks (check_rate_limit)
+    - Cheapest-provider selection when budget is tight (select_cheapest_provider)
+    - Cost recording after task completion (record_cost)
+    - 429 detection and reset (record_429, reset_429)
     """
 
     def __init__(
@@ -188,6 +204,10 @@ class Orchestrator:
         self._mcp_manager: Any = None
         # T199: Agent pool for reusable agent instances
         self._agent_pool: Any = None
+        # T203: Cost ledger — persistent token/cost recording
+        self._cost_ledger: CostLedger | None = None
+        # T204: Cost scheduler — cost-aware task scheduling and provider selection
+        self._cost_scheduler: CostScheduler | None = None
 
     def _load_hooks(self) -> None:
         """Load and register hooks from project configuration."""
@@ -203,6 +223,28 @@ class Orchestrator:
                 logger.info("Loaded %d hook(s) for orchestrator", count)
         except Exception as e:
             logger.warning("Failed to load hooks: %s", e)
+
+    def _init_cost_ledger(self) -> None:
+        """T203: Initialise the CostLedger for this project (once per run)."""
+        if getattr(self, "_cost_ledger", None) is not None:
+            return
+        try:
+            self._cost_ledger = configure_cost_ledger(self.session.project_dir)
+            logger.debug("CostLedger initialised for %s", self.session.project_dir)
+        except Exception as exc:
+            logger.warning("CostLedger initialisation failed: %s", exc)
+            self._cost_ledger = None
+
+    def _init_cost_scheduler(self) -> None:
+        """T204: Initialise the CostScheduler for this project (once per run)."""
+        if getattr(self, "_cost_scheduler", None) is not None:
+            return
+        try:
+            self._cost_scheduler = configure_cost_scheduler(self.session.project_dir)
+            logger.debug("CostScheduler initialised for %s", self.session.project_dir)
+        except Exception as exc:
+            logger.warning("CostScheduler initialisation failed: %s", exc)
+            self._cost_scheduler = None
 
     # ── Public entry points ────────────────────────────────────────────────────
 
@@ -255,7 +297,9 @@ class Orchestrator:
     def _resolve_provider(self, task: Task) -> RouteDecision:
         """Resolve the provider/model for a task via the full routing chain.
 
-        Returns a RouteDecision with model, reason, and source fields.
+        T204: When budget is tight, the CostScheduler may select a cheaper
+        provider from the available set.  The final decision is returned as
+        a RouteDecision with model, reason, and source fields.
         """
         # Resolve agent type for per-agent-type provider overrides
         agent_cls = self._resolve_agent(task)
@@ -275,6 +319,37 @@ class Orchestrator:
             cli_override=per_agent_override or self.cli_model_override,
             task_title=task.title,
         )
+        # T204: Cost-aware provider selection — only when budget enforcement or
+        # local-pressure preference is explicitly enabled. Off by default so
+        # normal type-based routing is not overridden.
+        _cost_routing_enabled = (
+            cfg.get("cost.enforce_budget", False)
+            or cfg.get("cost.prefer_local_under_pressure", False)
+        )
+        if (
+            _cost_routing_enabled
+            and getattr(self, "_cost_scheduler", None) is not None
+            and not self.offline_mode
+        ):
+            try:
+                available = _get_provider_registry().all_status()
+                available_names = [
+                    entry["name"] for entry in available if entry.get("available")
+                ]
+                if available_names:
+                    cheapest = self._cost_scheduler.select_cheapest_provider(
+                        available_names, task.type,
+                    )
+                    if cheapest and cheapest != _provider_name:
+                        logger.info(
+                            "CostScheduler selected cheaper provider %s "
+                            "instead of %s for %s (budget tight)",
+                            cheapest, _provider_name, task.id,
+                        )
+                        _provider_name = cheapest
+            except Exception as _cost_exc:
+                logger.debug("CostScheduler provider selection failed: %s", _cost_exc)
+
         decision = RouteDecision(model=_provider_name, reason="registry", source="registry")
 
         # Offline mode forces local regardless of routing
@@ -300,6 +375,32 @@ class Orchestrator:
         # Also wire into task_injection thread-local so spawn_task works in agents.
         from orchid.tools.task_injection import set_active_session as _set_ti_session
         _set_ti_session(self.session)
+
+        # T204: Initialise cost scheduler (once per run)
+        self._init_cost_scheduler()
+
+        # T204: Pre-execution budget and rate-limit checks
+        if getattr(self, "_cost_scheduler", None) is not None:
+            try:
+                self._cost_scheduler.check_budget()
+            except BudgetBlockedError:
+                logger.warning("Task %s blocked by budget cap", task.id)
+                self.session.update_task_status(task.id, TaskStatus.BLOCKED)
+                self.session.log_event("task_failed", {
+                    "task_id": task.id,
+                    "reason": "Budget cap exceeded — no further tasks dispatched",
+                })
+                return {"task_id": task.id, "status": "blocked", "error": "Budget cap exceeded"}
+            try:
+                self._cost_scheduler.check_rate_limit()
+            except ThrottleBlockedError:
+                logger.warning("Task %s blocked by rate-limit throttle", task.id)
+                self.session.update_task_status(task.id, TaskStatus.BLOCKED)
+                self.session.log_event("task_failed", {
+                    "task_id": task.id,
+                    "reason": "Rate-limit back-off active — throttled",
+                })
+                return {"task_id": task.id, "status": "blocked", "error": "Rate-limit throttle active"}
 
         # Resolve provider via extracted method
         decision = self._resolve_provider(task)
@@ -417,6 +518,14 @@ class Orchestrator:
 
             _task_run_start = time.monotonic()
             result_text = agent.run(plan)
+            # T203/T204: Record token/cost in ledger and scheduler after agent run
+            # Token counts default to zero until provider metadata is wired (T203b)
+            self._record_cost_for_task(task, decision)
+
+            # T204: Reset 429 counter after a successful request
+            if getattr(self, "_cost_scheduler", None) is not None:
+                self._cost_scheduler.reset_429()
+
             _task_run_elapsed = time.monotonic() - _task_run_start
 
             # Detect failure sentinels returned by the agent run loop
@@ -509,6 +618,13 @@ class Orchestrator:
                 return {"task_id": task.id, "status": "done", "result": result_text, "files_written": files_written}
 
         except ProviderUnavailableError as e:
+            # T203b: mark provider rate-limited if 429 response
+            if "429" in str(e) or "rate" in str(e).lower():
+                try:
+                    from orchid.cost.scheduler import set_rate_pressure
+                    set_rate_pressure(decision.model, True)
+                except Exception:
+                    pass
             logger.error("Provider unavailable for task %s: %s — %s", task.id, e.missing, e.suggestion)
             self.session.update_task_status(task.id, TaskStatus.BLOCKED)
             error_msg = f"Provider '{e.provider_name}' unavailable: {e.missing}"
@@ -614,6 +730,61 @@ class Orchestrator:
         """Resolve agent class from agent_type string."""
         registry = _get_registry()
         return registry.get(agent_type.lower().strip(), registry["base"])
+
+
+    def _record_cost_for_task(
+        self,
+        task: Task,
+        decision: RouteDecision,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        prompt_tokens: int = 0,
+        cache_creation_input_tokens: int = 0,
+        cache_read_input_tokens: int = 0,
+        completion_tokens: int = 0,
+        cost_usd: float = 0.0,
+    ) -> None:
+        """T203/T204: Record token/cost data in both the ledger and scheduler.
+
+        Token counts default to zero until provider metadata is wired (T203b).
+        """
+        if getattr(self, "_cost_ledger", None) is None:
+            self._init_cost_ledger()
+        if getattr(self, "_cost_ledger", None) is not None:
+            try:
+                self._cost_ledger.record(
+                    task_id=task.id,
+                    title=task.title,
+                    model=decision.model,
+                    provider=decision.model,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    prompt_tokens=prompt_tokens,
+                    cache_creation_input_tokens=cache_creation_input_tokens,
+                    cache_read_input_tokens=cache_read_input_tokens,
+                    completion_tokens=completion_tokens,
+                    cost_usd=cost_usd,
+                )
+            except Exception as _cost_exc:
+                logger.debug("CostLedger recording failed for %s: %s", task.id, _cost_exc)
+
+        if getattr(self, "_cost_scheduler", None) is not None:
+            try:
+                self._cost_scheduler.record_cost(
+                    task_id=task.id,
+                    title=task.title,
+                    model=decision.model,
+                    provider=decision.model,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    prompt_tokens=prompt_tokens,
+                    cache_creation_input_tokens=cache_creation_input_tokens,
+                    cache_read_input_tokens=cache_read_input_tokens,
+                    completion_tokens=completion_tokens,
+                    cost_usd=cost_usd,
+                )
+            except Exception as _cost_exc:
+                logger.debug("CostScheduler recording failed for %s: %s", task.id, _cost_exc)
 
     # T096: Task lifecycle hook methods
     def _fire_task_start_hook(self, task: Task, model: str) -> None:
@@ -909,6 +1080,10 @@ class Orchestrator:
         # Determine output file path
         default_template = cfg.get("rollup.default_output", "ROLLUP-{task_id}.md")
         output_filename = task.output_file or default_template.replace("{task_id}", task.id)
+
+        # T203/T204: Record token/cost for rollup synthesis
+        self._record_cost_for_task(task, RouteDecision(model=model_key, reason="rollup", source="rollup"))
+
         output_path = self.session.project_dir / output_filename
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(synthesis, encoding="utf-8")
