@@ -1,171 +1,206 @@
 # HANDOFF.md
-_Written: 2026-05-05. Fresh session should read this + the repo; ask nothing that's answered here._
+_Written: 2026-05-07. The 7-phase improvement sprint is **complete**. Everything is committed, pushed, and passing. No uncommitted changes._
 
 ---
 
 ## 1. Mission
 
-Orchid is a standalone AI agent orchestration framework that runs multi-agent pipelines over external projects. We're executing a structured 7-phase improvement sprint: security hardening → native git → worktree isolation → parallelism → dynamic spawning → cross-project agent pool → cost scheduling. The sprint was designed this session; Phase 1 is now complete.
+Orchid is a standalone AI agent orchestration framework that manages multi-agent pipelines over external projects. This session completed a structured 7-phase hardening sprint: security → native git → worktree isolation → parallelism → dynamic task spawning → cross-project agent pool → cost scheduling. All phases are done, committed, and pushed to `main`. The next session starts fresh with no outstanding sprint work.
 
 ---
 
 ## 2. Current State
 
-### What's working and verified
-- **Phase 1 complete. 833 tests pass (`source .venv/bin/activate && python -m pytest tests/ -q`).**
-- Circuit breaker (`orchid/hooks/circuit_breaker.py`) — event-level state machine, 55 tests pass.
-- Audit logger (`orchid/hooks/audit.py`) — writes `.orchid/audit_log.jsonl` per hook invocation, 60 tests pass.
-- Both wired into `orchid/hooks/loader.py` via `_configure_circuit_breaker()` and `_configure_audit_logger()`.
-- Per-agent tool restrictions: `BaseAgent.allowed_tools` + `__init__` filter. TesterAgent/ReviewerAgent cannot call `write_file`/`append_file`. ResearcherAgent restricted to read/search/fetch. DeveloperAgent unrestricted. Config override via `agents.allowed_tools.<type>` in `.orchid.yaml`. 4 permission tests pass.
+### Sprint complete — all 7 phases committed and verified
 
-### What's uncommitted (IMMEDIATE ACTION REQUIRED)
-`git status` shows Phase 1 Orchid-created files sitting unstaged:
-```
-modified:   CLAUDE.md                     ← Orchid updated its own context
-modified:   orchid/hooks/loader.py        ← circuit breaker + audit wiring
-modified:   orchid/orchid.defaults.yaml   ← allowed_tools docs + circuit_breaker config
-modified:   tasks.md                      ← Phase 1 tasks marked [x]
-untracked:  orchid/hooks/audit.py
-untracked:  orchid/hooks/circuit_breaker.py
-untracked:  tests/test_circuit_breaker.py
-untracked:  tests/test_hook_audit.py
-```
-**Do NOT stage `.claude/settings.local.json`** — that's local harness config.
+- **Commit:** `4cd85be` — `feat(phase7): cost tracking and budget-aware scheduling`
+- **Tests:** 1152 pass, 1 skip (MCP integration, POSIX-only), 0 failures
+- **Working directory:** clean — only `.claude/settings.local.json` modified (local harness config, do not commit)
+- **tasks.md:** all tasks T151–T208 marked `[x]` in DONE section
 
-Commit command:
-```bash
-git add orchid/hooks/audit.py orchid/hooks/circuit_breaker.py \
-        orchid/hooks/loader.py orchid/orchid.defaults.yaml \
-        CLAUDE.md tasks.md \
-        tests/test_circuit_breaker.py tests/test_hook_audit.py
-git commit -m "feat(hooks): Phase 1 — circuit breaker, audit logging, wired into loader"
-git push
-```
+### What's built and verified (by phase)
 
-### Phase 2-7: planned, not started
-Task files `phase_2_tasks.md` through `phase_7_tasks.md` exist in the repo root. Committed at `1334115`. These are copied into `tasks.md` one phase at a time before running Orchid. Phase 2 is next.
+**Phase 1 — Security hardening (T151–T162)**
+- `orchid/hooks/circuit_breaker.py` — `CircuitBreakerRegistry` singleton, per-event-type breakers, 55 tests
+- `orchid/hooks/audit.py` — `AuditLogger` writing `.orchid/audit_log.jsonl`, 60 tests
+- Both wired into `orchid/hooks/loader.py` at load time
+- Per-agent `allowed_tools` frozensets on TesterAgent, ReviewerAgent, ResearcherAgent; DeveloperAgent intentionally unrestricted
 
-### Next action (after committing above)
-1. Optionally deploy Phase 1 to server (it's backward-compatible, safe to ship).
-2. Copy Phase 2 tasks into `tasks.md`, run `orchid --project . --mode auto`.
-3. After Phase 2 runs, validate with `pytest tests/test_git_tools.py` + `grep` checks.
+**Phase 2 — Native git tools (T163–T169)**
+- `orchid/tools/git.py` — 12 git functions (status, diff, log, commit, push, pull, branch ops)
+- Registered in `_make_project_tools()` behind `agents.git_tools_enabled: true` config guard
+- DeveloperAgent allowed_tools includes all git functions; 50 tests in `tests/test_git_tools.py`
+
+**Phase 3 — Worktree isolation (T170–T175)**
+- `orchid/worktree.py` — `WorktreeManager` LRU cache of git worktrees, 46 tests
+- `WorktreeError` exception exported (required for imports from delegator)
+- Wired into `AgentDelegator.delegate()` behind `worktree.enabled: false` (opt-in)
+- `task_id` sanitized against path escape (`/` and `..` → `_`)
+
+**Phase 4 — Parallel task dispatch (T176–T185)**
+- `orchid/scheduler.py` — `DependencyGraph`, `ParallelGroupDetector`, `Scheduler` with parallel group computation
+- `orchid/runner.py` — `BackgroundRunner._run_loop()` rewritten for parallel dispatch via ThreadPoolExecutor groups
+- `orchid/session.py` — `Lock()` → `RLock()` (re-entrancy from `_execute_task` + exception handlers)
+- Critical bug fixed: `completed_ids` was never updated in `_run_loop`, so tasks with completed parents never ran. Fixed by refreshing `completed_ids` from task statuses after each group.
+- Provider semaphores limit concurrent API calls per provider
+
+**Phase 5 — Dynamic task spawning (T186–T192)**
+- `Session.inject_task()` — thread-safe runtime task injection with RLock
+- `orchid/tools/task_injection.py` — `spawn_task()` agent tool using `threading.local()` for per-thread session ref (thread-safe for parallel dispatch); `set_active_session()` called by orchestrator before each task
+- `spawn_task` registered in `_make_project_tools()` (available to all agents; not in TesterAgent/ReviewerAgent frozensets)
+- DeveloperAgent system prompt documents spawn_task with usage rules
+
+**Phase 6 — Cross-project agent pool (T193–T199)**
+- `orchid/agent_pool.py` — `AgentPool` LRU cache of pre-instantiated agents keyed by (agent_type, model_key), idle eviction thread, thread-safe RLock; `AgentPoolError` exported
+- `get_agent_pool()` singleton; `reset_agent_pool()` for testing
+- Wired into `Orchestrator._get_agent()` with fallback to direct creation; also in `AgentDelegator._acquire_agent()`
+- `agent_pool.enabled: false` in defaults (opt-in); 32 tests
+
+**Phase 7 — Cost tracking and budget scheduling (T200–T208)**
+- `orchid/cost/ledger.py` — `CostLedger` in-memory + JSONL-backed token/cost recorder; `daily_spend()`, `daily_tokens()`, `budget_remaining()` use UTC timestamps
+- `orchid/cost/scheduler.py` — `CostScheduler` with budget cap enforcement (`BudgetBlockedError`), 429 rate-limit backoff (`ThrottleBlockedError`), `select_cheapest_provider()`; spec-compat shims: `CostAwareScheduler` alias, `set_rate_pressure()`, `_rate_flags` dict
+- Wired into `Orchestrator._execute_task()` (pre-task budget/rate checks, post-task cost recording, 429 detection)
+- **Critical:** cost-aware routing gated behind `cost.enforce_budget` or `cost.prefer_local_under_pressure` (both `false` by default). Without this gate, `select_cheapest_provider()` overrides type-based routing and sends `type:draft` tasks to Anthropic.
+- `getattr` guards on `_cost_ledger`/`_cost_scheduler` in orchestrator methods because some tests use `Orchestrator.__new__()` to bypass `__init__`
+- 123 tests in `tests/test_cost_ledger.py` + `tests/test_cost_scheduler.py`
+
+### Next action
+
+The sprint is complete. No immediate follow-up is required. The user's most recent message was asking to "append phase 7 tasks" — but those tasks are already in tasks.md and marked done. They may have been confused, or they want to start a new sprint. **Ask what's next before doing anything.**
 
 ---
 
 ## 3. Decisions Made (and Why)
 
-**Decision:** Per-agent `allowed_tools` as frozenset class variable + `__init__` filter, overridable via YAML.
-- **Alternatives:** Purely config-driven (no class defaults); purely hardcoded (no YAML override).
-- **Reason:** Class defaults give sensible out-of-box security; YAML override lets project-specific configs loosen constraints without touching source.
-- **Reversibility:** Easy to change frozensets or remove filter entirely.
+**Decision:** Orchid's local model built richer implementations than the phase specs. We validated and kept them rather than refactoring to match specs.
+- **Examples:** `CircuitBreakerRegistry` (event-level, not per-hook), `CostScheduler` (full budget cap + rate-limit, not just a selector), `AgentPool` (LRU cache, not queue-based dispatch), `WorktreeManager` (full lifecycle manager, not the minimal spec).
+- **Reason:** All implementations pass their tests and are functionally correct. Refactoring to match specs would break tests and ship nothing.
+- **Reversibility:** Each module is self-contained. Refactor only if a specific gap is identified.
 
-**Decision:** `ResearcherAgent.allowed_tools` includes `search` and `fetch` even though they're not in `self.tools` when the filter runs in `BaseAgent.__init__`.
-- **Reason:** `ResearcherAgent.__init__` calls `register_tool("search", ...)` *after* `super().__init__()`. The filter removes tools present-but-not-allowed; tools not yet registered simply aren't touched. They're added afterward and bypass the filter. This is correct: search/fetch ARE allowed, and they can't be added by a bad actor via `register_tool` on TesterAgent (no code does that).
-- **Reversibility:** If we want stricter enforcement, move filter to `_apply_tool_restrictions()` called at the end of each subclass `__init__`. T161 review flagged this; T162 has the fix template.
+**Decision:** Spec-required class/function names added as aliases/shims when Orchid built under different names.
+- **Examples:** `CostAwareScheduler = CostScheduler subclass`, `set_rate_pressure()` module fn, `WorktreeError(Exception)` added to worktree.py, `AgentPoolError(Exception)` added to agent_pool.py.
+- **Reason:** Imports in other modules and tests need these names. Adding shims is non-breaking.
+- **Reversibility:** Aliases cost nothing; keep them.
 
-**Decision:** Mandatory `bash grep` verification step added to every task that edits `base.py` or `orchestrator.py`.
-- **Reason:** T155/T156/T160 failure post-mortem: local model read those files, echoed raw code as Final Answer, and Orchid marked tasks DONE without any changes being made. Grep verification forces the model to confirm the symbol is actually on disk.
-- **Reversibility:** Cosmetic; doesn't affect runtime.
+**Decision:** `cost.enforce_budget` and `cost.prefer_local_under_pressure` default to `false` — cost-aware routing is opt-in.
+- **Reason:** Without this gate, `select_cheapest_provider()` overrode type-based routing (sending `type:draft` to Anthropic). This broke `tests/test_stream_json_cli.py` — verified by stash test.
+- **Reversibility:** Easy to change in `orchid.defaults.yaml`. But the gate must stay or routing regresses.
 
-**Decision:** Multi-file tasks (T188: base.py + orchestrator.py; T203/T203b; T166/T166b) split into single-file tasks.
-- **Reason:** Same failure mode — model gets confused on large files and produces garbage output for one of the files.
-- **Reversibility:** If Claude-class model handles them, the tasks can be merged. For local model, keep split.
+**Decision:** `session._lock = threading.RLock()` (was `Lock()`).
+- **Reason:** T184 review found that `_execute_task` calls `session.update_task_status()` and the exception handler in `_execute_task_with_semaphore` also calls it on the same thread. `Lock` would deadlock on re-entry; `RLock` doesn't.
+- **Reversibility:** Load-bearing. Don't revert.
 
-**Decision:** Circuit breaker implemented by Orchid as an event-level registry (`CircuitBreakerRegistry` singleton with per-event-type breakers) rather than the per-hook-name design specified in `phase_1_tasks.md`.
-- **Reason:** Orchid's local model chose a richer design autonomously. Tests pass, functionality correct. The loader wires it via `configure_circuit_breaker(config)` at load time.
-- **Reversibility:** The task spec was advisory; the implementation is load-bearing. Don't refactor unless there's a specific gap.
+**Decision:** `threading.local()` for `spawn_task`'s session reference, not a module-level global.
+- **Reason:** Phase 4 dispatches tasks in parallel threads. A module-level global would let task B's `set_active_session()` overwrite task A's reference mid-run. `threading.local()` gives each worker thread its own session.
+- **Reversibility:** Load-bearing. Don't revert.
 
-**Decision:** Audit log file is `.orchid/audit_log.jsonl` (Orchid chose this) vs `.orchid/hook_audit.jsonl` (spec said this).
-- **Reason:** Orchid autonomously chose the name. Tests pass against the actual path. No consumer reads this file yet.
-- **Reversibility:** Trivial rename if standardization matters later.
+**Decision:** `completed_ids` refreshed from task statuses after each parallel group in `_run_loop`.
+- **Reason:** `completed_ids` was initialized as `set()` and never updated. `DependencyGraph.get_ready_tasks(completed_ids)` checks `all_deps.issubset(completed_ids)` — with an empty set, tasks with completed parents were never ready. Bug made the scheduler functional for independent tasks only.
+- **Reversibility:** Load-bearing. Don't revert.
 
-**Decision:** Phase ordering: security → git → worktrees → parallelism → spawning → pool → cost.
-- **Reason:** Documented in `next-phases.md`. Short version: harden before expand; git before worktrees (worktrees are git); isolation before parallelism (parallel agents need separate trees); parallelism before dynamic spawning (spawning needs the dispatch layer).
-- **Reversibility:** Each phase is independent enough to skip or reorder. Phase 4 is highest risk.
+**Decision:** `Orchestrator._cost_ledger` and `_cost_scheduler` accessed via `getattr(..., None)` instead of direct attribute access.
+- **Reason:** Several tests use `Orchestrator.__new__(Orchestrator)` to bypass `__init__`, then manually set the attributes they need. Without the guard, `_record_cost_for_task` raises `AttributeError` on those test instances.
+- **Reversibility:** Defensive coding, keep it.
 
 ---
 
 ## 4. Architecture & Key Files
 
-### Created this session
+### Sprint deliverables (all new this sprint)
+
 | File | Purpose |
 |------|---------|
-| `phase_1_tasks.md` – `phase_7_tasks.md` | Sprint task lists T151–T208+. Copy one phase at a time into `tasks.md`. |
-| `next-phases.md` | Rationale for phase ordering. Reference doc, not executable. |
-| `todo-next.md` | Original backlog items that drove the 7 phases. |
-| `orchid/hooks/circuit_breaker.py` | Event-level circuit breaker. `CircuitBreakerRegistry` singleton, `CircuitBreakerConfig` dataclass, `configure_circuit_breaker()` fn. |
-| `orchid/hooks/audit.py` | `AuditLogger` singleton. Writes `.orchid/audit_log.jsonl`. `configure_audit_logger(project_dir)` wires it. |
-| `tests/test_circuit_breaker.py` | 55 tests for circuit breaker state machine. |
-| `tests/test_hook_audit.py` | 60 tests for audit logger. |
-| `tests/test_agent_permissions.py` | 4 tests verifying allowed_tools filtering. |
+| `orchid/hooks/circuit_breaker.py` | Event-level circuit breaker registry. 280 lines. |
+| `orchid/hooks/audit.py` | Audit logger → `.orchid/audit_log.jsonl`. 191 lines. |
+| `orchid/tools/git.py` | 12 git tool functions for agents. 288 lines. |
+| `orchid/worktree.py` | `WorktreeManager` LRU cache of git worktrees. 603 lines. |
+| `orchid/scheduler.py` | Dependency graph, topological sort, parallel group detection. 399 lines. |
+| `orchid/tools/task_injection.py` | `spawn_task()` agent tool + `set_active_session()` using `threading.local()`. 219 lines. |
+| `orchid/agent_pool.py` | LRU cache of pre-instantiated agent objects. `AgentPoolError`. 317 lines. |
+| `orchid/cost/ledger.py` | Token/cost ledger, JSONL persistence. `daily_spend()` uses UTC. 363 lines. |
+| `orchid/cost/scheduler.py` | Budget enforcement, rate-limit backoff, provider selection. `CostAwareScheduler` alias. 506 lines. |
+| `phase_1_tasks.md` – `phase_7_tasks.md` | Sprint task specs. Read-only reference. |
 
-### Modified this session
+### Modified significantly this sprint
+
 | File | What changed |
 |------|-------------|
-| `orchid/hooks/loader.py` | Added `_configure_circuit_breaker()` and `_configure_audit_logger()` called from `load()`. Also Orchid expanded `_create_http_handler` and `_create_shell_handler` with timing/status tracking. |
-| `orchid/orchid.defaults.yaml` | Added `allowed_tools` documentation (commented examples) and `allowed_tools: {}` under `agents:`. Added `circuit_breaker:` config block under `hooks:`. |
-| `orchid/agents/base.py` | Added `allowed_tools: frozenset[str] \| None = None` class var. Added filter block at end of `__init__`. |
-| `orchid/agents/tester.py` | Added `allowed_tools` frozenset: `{read_file, list_dir, bash, check_imports, get_task_files}`. |
-| `orchid/agents/reviewer.py` | Added `allowed_tools` frozenset: same as tester. |
-| `orchid/agents/researcher.py` | Added `allowed_tools` frozenset: `{read_file, list_dir, bash, search, fetch, get_task_files}`. |
-| `tasks.md` | Phase 1 tasks T151–T162 marked `[x]`. |
-| `CLAUDE.md` | Orchid compressed and updated its own context file. |
+| `orchid/hooks/loader.py` | Added circuit breaker + audit wiring; timing/status tracking in HTTP/shell handlers. |
+| `orchid/agents/base.py` | `allowed_tools` frozenset filter; `spawn_task` registered in `_make_project_tools()`; git tools registered behind config guard. |
+| `orchid/agents/developer.py` | System prompt extended with git tools section + dynamic task spawning section. |
+| `orchid/agents/delegator.py` | Worktree isolation opt-in path; pool-based agent acquisition via `_acquire_agent()`; delegation recording. |
+| `orchid/orchestrator.py` | `_resolve_provider()` extracted; `_get_agent()` uses pool; cost wiring (pre-task checks, post-task recording, 429 detection); `set_active_session()` before dispatch; gated cost-aware routing. 1204 lines. |
+| `orchid/runner.py` | `_run_loop()` rewritten for parallel groups; provider semaphores; `completed_ids` refresh fix. |
+| `orchid/session.py` | `Lock()` → `RLock()`; `inject_task()` method; `set_active_session()` instance method. |
+| `orchid/orchid.defaults.yaml` | `agent_pool`, `worktree`, `cost`, `agents.allowed_tools`, `git_tools_enabled`, `runner.provider_concurrency` config blocks. |
 
-### Do not touch
-- `orchid/agents/developer.py` — no `allowed_tools` by design (DeveloperAgent is unrestricted). Don't add one unless explicitly asked.
-- `orchid/hooks/circuit_breaker.py` and `orchid/hooks/audit.py` — Orchid's richer implementation supersedes the spec. Don't refactor to match the spec.
+### Do not touch (and why)
+
+- `orchid/agents/developer.py:allowed_tools` — DeveloperAgent is intentionally unrestricted (no frozenset). Don't add one.
+- `orchid/hooks/circuit_breaker.py` / `orchid/hooks/audit.py` — Orchid's richer implementation. Tests pass against it. Don't refactor to match the phase_1 spec.
+- `phase_N_tasks.md` files — read-only references. All tasks are done; editing them changes nothing useful.
+- `orchid/cost/scheduler.py:reset_cost_scheduler()` — sets `_scheduler_instance = None` after reset (this was a bug fix; a pre-existing test `test_reset_cost_scheduler_clears_singleton` verifies it). Don't "simplify" back to just calling `.reset()`.
 
 ---
 
 ## 5. Gotchas & Hard-Won Knowledge
 
-**Local model echoes file contents as Final Answer.** T155, T156, T160 were marked DONE in `tasks.md` with results containing raw code fragments from the files the model read — zero actual changes on disk. The model ran, read `base.py`, output its contents as Final Answer, Orchid marked DONE. **Mitigation:** every base.py/orchestrator.py edit task now ends with a mandatory `bash grep` verification step. If the model doesn't find its own symbol after "writing," it retried.
+**Local model marks tasks DONE without writing files.** The model reads a file, echoes its contents as Final Answer, Orchid marks DONE. Every task that edits `base.py` or `orchestrator.py` has a mandatory `bash grep` verification step at the end. If grep doesn't find the new symbol, the write failed. This is already in the phase task specs.
 
-**`task_results.json` is NDJSON, not JSON.** `json.load()` fails. Use `json.loads(line)` per line.
+**`Orchestrator.__new__()` pattern in tests.** `tests/test_rollup.py` (and a few others) create orchestrator instances via `__new__` to avoid the full init. New attributes added to `__init__` are invisible to these tests until accessed via `getattr(..., None)`. The Phase 7 cost attributes hit this — fixed with `getattr` guards. Watch for this when adding new `self._foo` attributes to `Orchestrator.__init__`.
 
-**`source .venv/bin/activate` required before `pytest`.** `python` is not on PATH; only `python3`, and the venv python is the one with test deps. Always run `source .venv/bin/activate && python -m pytest`.
+**`date.today()` vs UTC in cost ledger.** `TokenRecord.timestamp` uses `datetime.now(UTC).isoformat()`. `daily_spend()` must compare using `datetime.now(UTC).date()`, not `date.today()`. On machines where local timezone ≠ UTC, the dates differ across midnight. This tripped us up — test passed in CI (UTC) but failed locally.
 
-**ResearcherAgent tool filter timing.** The `allowed_tools` filter runs at end of `BaseAgent.__init__`. `ResearcherAgent` registers `search` and `fetch` in its own `__init__` *after* calling `super().__init__()`. This means `search`/`fetch` are added after the filter runs and are never filtered out — which is the correct behavior since they ARE in `ResearcherAgent.allowed_tools`. If you ever add an `_apply_tool_restrictions()` call to subclasses, be aware of this ordering.
+**`set_rate_pressure()` must NOT touch the CostScheduler singleton.** Earlier implementation called `singleton.record_429()` when setting rate pressure. This leaked state between tests: a test that set pressure would contaminate the next test's scheduler, causing `ThrottleBlockedError` and routing tasks to Anthropic. Now `set_rate_pressure()` only updates `_rate_flags` dict — completely isolated from the singleton.
 
-**T161 review identified the filter timing as Issue 5.** It was marked PASS (not a problem) because the behavior is correct. T162 exists as a fix task if it's ever re-evaluated as a FAIL.
+**Cost-aware routing must be gated.** `CostScheduler.select_cheapest_provider()` with no budget pressure returns `available_providers[0]`. If `anthropic` is listed as available first, ALL tasks get routed there regardless of type. The gate `cost.enforce_budget or cost.prefer_local_under_pressure` (both false by default) prevents this. Removing the gate breaks `test_stream_json_cli`.
 
-**Phase 1 Orchid-created files are NOT committed.** After this session they're sitting unstaged. See Current State section for exact commit command.
+**`source .venv/bin/activate` required for pytest.** `python` not on PATH; venv python has test deps. Always: `source .venv/bin/activate && python -m pytest`.
 
-**Audit log path mismatch.** Spec said `.orchid/hook_audit.jsonl`; Orchid built `.orchid/audit_log.jsonl`. Tests cover the actual path. Don't create a second file.
+**`task_results.json` is NDJSON.** `json.load()` fails. Parse line by line with `json.loads(line)`.
 
-**`needs:` deps on cross-phase tasks.** T165 in Phase 2 has `needs:T156` (Phase 1). When Phase 2 tasks are appended to `tasks.md`, T156 is already there as `[x]`. The `is_runnable()` check correctly sees it as completed. Don't remove this dep thinking it's stale.
+**`completed_ids` must be refreshed between parallel groups.** The scheduler's `compute_groups()` checks `graph._deps.get(tid) - completed_ids` to determine readiness. If `completed_ids` is empty (the pre-fix state), tasks with any dependency are never scheduled after their parent completes — groups would be `[[T1]]` on first pass and `[]` on second pass, causing early exit.
+
+**`tests/test_parallel_runner.py` and `tests/test_agent_pool.py` are slow.** The parallel runner tests sleep 0.05s per task; the agent pool tests have 18s of eviction waits. Exclude them for fast iteration: `pytest tests/ --ignore=tests/test_agent_pool.py --ignore=tests/test_parallel_runner.py`.
 
 ---
 
 ## 6. Conventions In Play
 
 - **Task format:** `- [ ] **T001** Title \`type:code_generate\` \`p1\` \`needs:T002\` \`model:local\``
-- **Model routing:** `model:local` → DeveloperAgent (local LLM); `type:code_review` → ReviewerAgent (Claude). No annotation → default routing per `orchid.defaults.yaml`.
-- **Commit style:** conventional commits (`feat:`, `fix:`, `docs:`, `refactor:`), co-authored with Claude.
-- **No comments in code** unless the WHY is non-obvious. No multi-line docstrings.
-- **Task descriptions** must be prescriptive enough that the local model makes zero decisions: exact file paths, class names, method signatures, field names, and a grep verification step for edits to large files.
-- **Single-file per task** for `orchid/agents/base.py` and `orchid/orchestrator.py` edits. These files are large enough that the local model gets confused on multi-file tasks.
-- **Phase files are read-only once execution starts.** Don't edit `phase_N_tasks.md` after copying into `tasks.md` — the tasks.md copy is the live version.
+- **Model routing:** `model:local` → DeveloperAgent (local LLM); `type:code_review` → ReviewerAgent (Claude API). No annotation → defaults from `orchid.defaults.yaml`.
+- **Commit style:** conventional commits (`feat:`, `fix:`, `docs:`, `chore:`), co-authored with Claude Sonnet 4.6.
+- **No code comments** unless the WHY is non-obvious. No multi-line docstrings.
+- **Single-file per task** for `orchid/agents/base.py` and `orchid/orchestrator.py` edits — local model gets confused on multi-file tasks for large files.
+- **Grep verification step** at end of every task editing base.py or orchestrator.py — local model frequently marks tasks done without writing anything.
+- **Phase files read-only** once execution starts. Edit `tasks.md`, not `phase_N_tasks.md`.
+- **Tests run from venv:** `source .venv/bin/activate && python -m pytest tests/ -q`
 
 ---
 
 ## 7. Open Questions
 
-None deferred from this session. The phase files are complete through Phase 7. When Phase 2 runs, the review task (T168) may produce FAILs that generate concrete questions — those will appear in `task_results.json`.
+The 7-phase sprint is complete. There is no planned follow-on work. Open questions for the next session:
+
+1. **What's next?** The user asked to "append phase 7 tasks" but those are already done. Was that a mistake, or is there a Phase 8 / new sprint in mind?
+2. **Deploy to server?** Phases 3–7 are marked "deploy after phase: yes" in their spec files. All are opt-in via config so backward-compatible. Has any of this been deployed, or is it all running only in local dev?
+3. **Phase 4 production readiness:** The parallel scheduler is new and handles dependency resolution differently than the old sequential loop. Has it been exercised on a real project (not just tests)?
 
 ---
 
 ## 8. Do Not Touch
 
-- **`orchid/agents/developer.py`** — no `allowed_tools`. DeveloperAgent is intentionally unrestricted.
-- **`orchid/hooks/circuit_breaker.py`** — Orchid's implementation is richer than the spec and all tests pass. Don't refactor to match `phase_1_tasks.md` spec.
-- **`orchid/hooks/audit.py`** — same. Audit log path is `.orchid/audit_log.jsonl`, not `hook_audit.jsonl`.
-- **`next-phases.md`** — rationale doc, not executable. Don't modify.
-- **Phase 1 `needs:` dependencies in Phase 2–7 task files** — e.g. T165 `needs:T156`. These cross-phase deps are intentional and correct.
-- **The 7-phase ordering** — settled in `next-phases.md`. Don't re-derive unless the user explicitly wants to revisit.
+- **`orchid/agents/developer.py`** — no `allowed_tools` frozenset. Intentionally unrestricted. Don't add one.
+- **`orchid/session.py:_lock`** — must be `RLock()`, not `Lock()`. Re-entrancy required.
+- **`orchid/runner.py:_run_loop`** — `completed_ids` refresh after each group is load-bearing. Don't "simplify" it away.
+- **`orchid/cost/scheduler.py:set_rate_pressure`** — must only update `_rate_flags`, never touch the singleton. Any change here risks test contamination and production routing bugs.
+- **`orchid/orchestrator.py:_resolve_provider`** cost-routing block — the `_cost_routing_enabled` gate must stay. Without it, all tasks route to Anthropic regardless of type.
+- **`orchid/tools/task_injection.py:_local`** — must be `threading.local()`, not a module-level variable. Parallel tasks share the module; `threading.local()` isolates per-thread session refs.
+- **`orchid/worktree.py:task_id` sanitization** — `task_id.replace("/", "_").replace("..", "_")` in `create()` and `remove()`. Path escape prevention.
+- **`HANDOFF-archive-2026-05-06-1400.md`** — the prior handoff from when Phase 1 was just complete. Historical reference only.
 
 ---
 
 ## 9. Resume Command
 
-> Read `HANDOFF.md`. First action: commit the uncommitted Phase 1 files exactly as specified in §2 (do NOT stage `.claude/settings.local.json`). Run `source .venv/bin/activate && python -m pytest tests/ -q --tb=no` to confirm 833 pass. Then ask the user: deploy Phase 1 now, or proceed directly to Phase 2? For Phase 2, copy `phase_2_tasks.md` contents into `tasks.md` and run `orchid --project . --mode auto`. Do not modify any `phase_N_tasks.md` file directly.
+> Read `HANDOFF.md`. The 7-phase sprint is complete: 1152 tests pass at commit `4cd85be`. Working directory is clean (only `.claude/settings.local.json` modified — do not commit it). **Before doing anything, ask the user what they want to work on next.** Don't start a new sprint, don't modify any existing files, and don't run Orchid until you know the scope. If the user wants a Phase 8, start by reading `phase_1_tasks.md` through `phase_7_tasks.md` to understand the task format before drafting new tasks.
