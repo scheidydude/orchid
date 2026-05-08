@@ -5,7 +5,7 @@
 
 ## Description
 
-AI agent orchestration framework with a lifecycle-driven planning engine. Install once, run against any project. V2 adds a full idea-to-execution pipeline: discuss requirements with an AI product manager, generate architecture docs, break work into milestones, then execute tasks with specialized agents.
+AI agent orchestration framework with a lifecycle-driven planning engine. Install once, run against any project. V2 adds a full idea-to-execution pipeline: discuss requirements with an AI product manager, generate architecture docs, break work into milestones, then execute tasks with specialized agents. V2.2 adds parallel task dispatch, native git tools, worktree isolation, dynamic task spawning, a cross-project agent pool, and cost-aware scheduling.
 
 ```
 ~/orchid/              ← install here
@@ -622,6 +622,181 @@ orchid hooks test --project ~/projects/webtron HOOK_ID
 orchid hooks stats --project ~/projects/webtron
 ```
 
+## Security
+
+### Circuit breaker
+
+HTTP hooks use a per-event-type circuit breaker. After 5 consecutive failures the breaker opens and blocks further requests for a configurable window. This prevents a failing webhook from stalling the agent loop.
+
+```yaml
+hooks:
+  tasks:
+    - event: task.complete
+      type: http
+      url: "https://hooks.slack.com/..."
+      circuit_breaker:
+        enabled: true
+        failure_threshold: 5
+        recovery_timeout_s: 60
+```
+
+### Audit logging
+
+Every shell and HTTP hook execution is written to `.orchid/audit_log.jsonl`:
+
+```jsonc
+{"timestamp": "...", "event": "task.complete", "hook_type": "shell",
+ "cmd": "notify-send ...", "exit_code": 0, "duration_ms": 12}
+```
+
+### Per-agent tool restrictions
+
+Agents are granted only the tools appropriate for their role:
+
+| Agent | Restrictions |
+|-------|-------------|
+| TesterAgent | Read tools + bash; no write\_file, no git commit/push |
+| ReviewerAgent | Read tools only; no write\_file, no bash, no git |
+| ResearcherAgent | Read tools + search; no write\_file |
+| DeveloperAgent | Unrestricted (intentional) |
+
+Configure overrides in `.orchid.yaml`:
+
+```yaml
+agents:
+  allowed_tools:
+    researcher: ["read_file", "list_dir", "bash", "search"]
+```
+
+## Native Git Tools
+
+Agents can read and write git state directly through built-in tool functions. Enable in `.orchid.yaml`:
+
+```yaml
+agents:
+  git_tools_enabled: true
+```
+
+Available tools injected into the agent ReAct loop:
+
+| Tool | Description |
+|------|-------------|
+| `git_status` | Working tree status |
+| `git_diff` | Staged and unstaged diffs |
+| `git_log` | Commit history with optional path filter |
+| `git_commit` | Stage and commit files |
+| `git_push` | Push to remote |
+| `git_pull` | Pull from remote |
+| `git_branch_list` | List branches |
+| `git_branch_create` | Create branch |
+| `git_branch_delete` | Delete branch |
+| `git_checkout` | Switch branch |
+| `git_stash` | Stash working changes |
+| `git_stash_pop` | Pop stash |
+
+Git tools are available to DeveloperAgent by default. TesterAgent and ReviewerAgent have restricted tool sets and cannot commit or push.
+
+## Parallel Task Execution
+
+### Dependency-aware scheduling
+
+Orchid builds a dependency graph from `needs:` annotations and dispatches tasks in parallel groups:
+
+```
+T001 (no deps)  ─┐
+T002 (no deps)  ─┤─ group 1 (parallel)
+T003 (no deps)  ─┘
+
+T004 needs:T001,T002  ─┐
+T005 needs:T003       ─┘─ group 2 (parallel, runs after group 1)
+
+T006 needs:T004,T005  ─── group 3 (sequential)
+```
+
+Tasks within a group run concurrently via `ThreadPoolExecutor`. Provider semaphores cap concurrent API calls:
+
+```yaml
+# orchid.defaults.yaml — override in .orchid.yaml
+runner:
+  max_parallel: 4
+  provider_concurrency:
+    claude: 3
+    openrouter: 3
+    openai: 3
+```
+
+### Worktree isolation
+
+Sub-tasks delegated by agents can run in isolated git worktrees:
+
+```yaml
+# .orchid.yaml
+worktree:
+  enabled: true          # false by default
+  max_worktrees: 10
+  auto_cleanup: true
+```
+
+Each delegated task gets its own checkout at `.orchid/worktrees/<task_id>/`. Worktrees are cleaned up after the task completes. Task IDs are path-sanitized to prevent directory traversal.
+
+## Dynamic Task Spawning
+
+Agents can create new tasks at runtime using the `spawn_task` tool:
+
+```
+Action: spawn_task
+Action Input: {"title": "Write integration test for auth module", "type": "code_generate", "priority": 2}
+```
+
+New tasks are injected into `tasks.md` with a unique ID, recorded in the session log, and picked up in the next dispatch cycle. The tool uses thread-local session references so parallel tasks can each spawn children independently.
+
+DeveloperAgent's system prompt documents `spawn_task` with usage rules (what to spawn, when to defer instead).
+
+## Agent Pool
+
+Pre-instantiated agents are cached and reused across tasks via an LRU pool. This eliminates repeated model initialization overhead on long runs.
+
+```yaml
+# .orchid.yaml
+agent_pool:
+  enabled: true          # false by default
+  max_size: 8
+  idle_ttl_seconds: 300
+```
+
+Pool is keyed by `(agent_type, model_key)`. LRU eviction removes least-recently-used agents when the pool is full. An idle-eviction thread removes agents that have been unused longer than `idle_ttl_seconds`. Falls back to direct instantiation if the pool is disabled or errors.
+
+## Cost Tracking and Budget Scheduling
+
+### Cost ledger
+
+Token usage and estimated cost are recorded per task in `.orchid/cost_ledger.jsonl`:
+
+```bash
+# Daily spend summary is logged at session end
+# Fields: task_id, model, input_tokens, output_tokens, cache_read_tokens,
+#         cache_write_tokens, cost_usd, timestamp
+```
+
+### Budget enforcement
+
+```yaml
+# .orchid.yaml
+cost:
+  budget_usd: 10.00         # daily budget cap (0 = no limit)
+  budget_warn_pct: 0.80     # warn at 80% of budget
+  budget_stop: true         # halt if budget exceeded
+
+  enforce_budget: false     # gate: enable cost-aware routing
+  prefer_local_under_pressure: false  # prefer local model when rate-limited
+```
+
+When `enforce_budget: true`, tasks that would exceed the daily budget raise `BudgetBlockedError` and halt execution. When `prefer_local_under_pressure: true`, 429 rate-limit responses trigger automatic fallback to the local model for subsequent tasks.
+
+### 429 detection
+
+HTTP 429 responses from any provider are detected and recorded. The cost scheduler tracks rate pressure per provider and can automatically select a cheaper alternative.
+
 ## MCP Adapter Layer
 
 Orchid can connect to any [Model Context Protocol](https://modelcontextprotocol.io/) server and expose its tools to the agent ReAct loop automatically.
@@ -697,23 +872,27 @@ The web server also exposes an NDJSON streaming endpoint at `GET /api/projects/{
 
 ```
 orchestrator.py      main loop: pick task → plan (Claude) → dispatch agent
-session.py           state lifecycle: load, save, compress hot memory
+session.py           state lifecycle: load, save, compress hot memory; RLock for parallel safety
 config.py            three-layer merge: defaults → .orchid.yaml → CLI flags
 lifecycle.py         V2 state machine: NEW → DISCUSSING → … → COMPLETE
 gates.py             human|auto gate system for lifecycle transitions
 machine_profile.py   developer preferences at ~/.config/orchid/machine-profile.yaml
 discovery.py         auto-discovery: scan watch_dirs, watchdog inotify watcher
 agent_manager.py     per-project agent loop threads, APScheduler cron support
+scheduler.py         DependencyGraph, parallel group detection, topological sort
+agent_pool.py        LRU cache of pre-instantiated agents; idle eviction thread
+worktree.py          WorktreeManager: isolated git worktrees per delegated task
 
 agents/
-  base.py            ReAct loop (Reason → Act → Observe), tool dispatch, env detection
+  base.py            ReAct loop (Reason → Act → Observe), tool dispatch, allowed_tools filter
   discussion_agent.py  elicits requirements via conversation (Claude, cached)
   product_manager.py   generates REQUIREMENTS.md + ARCHITECTURE.md
   project_manager.py   generates MILESTONES.md + tasks.md
-  developer.py       code generation/editing (local model)
+  developer.py       code generation/editing; unrestricted tools; git + spawn_task documented
   tester.py          QA verification: runs tests, structured output, no code writes
   researcher.py      search and summarize (local model)
   reviewer.py        critique and quality gate (Claude API)
+  delegator.py       delegate sub-tasks to agents; worktree isolation; pool-based acquisition
 
 memory/
   state.py           tasks.md + CLAUDE.md read/write
@@ -724,6 +903,8 @@ tools/
   models.py          unified call() for Claude API + llama.cpp
   filesystem.py      read_file, write_file, list_dir, append_file
   shell.py           bash execution with blocklist + optional allowlist + timeout
+  git.py             12 git tool functions: status, diff, log, commit, push, pull, branch ops
+  task_injection.py  spawn_task() agent tool; threading.local session ref for parallel safety
 
 interfaces/
   cli.py             Typer CLI entry point
@@ -747,8 +928,10 @@ hooks/
   events.py          hook event constants (session, phase, task, agent)
   types.py           ShellHook, HTTPHook, PythonHook dataclasses
   registry.py        hook registry: fire events, blocking/non-blocking execution
-  loader.py          load hooks from .orchid.yaml, per-project hooks.py
+  loader.py          load hooks from .orchid.yaml; circuit breaker + audit wired here
   schema.py          Pydantic validation for hook config
+  circuit_breaker.py CircuitBreakerRegistry: per-event-type breakers, open/half-open/closed states
+  audit.py           AuditLogger: thread-safe JSONL writer → .orchid/audit_log.jsonl
 
 mcp/
   types.py           MCPTool, MCPResult dataclasses
@@ -768,6 +951,10 @@ checkpoint/
   schema.py          CheckpointMetadata, Checkpoint, CheckpointEntry dataclasses
   store.py           CheckpointStore: save, load, list, delete, prune
   restore.py         rewind_session(), list_checkpoints()
+
+cost/
+  ledger.py          CostLedger: JSONL-backed token/cost recorder; daily_spend(); budget_remaining()
+  scheduler.py       CostScheduler: budget cap enforcement, 429 rate-limit backoff, provider selection
 ```
 
 ## Model routing
@@ -802,7 +989,7 @@ caching:
 ## Development
 
 ```bash
-pytest -m "not network"   # 656+ tests, no API calls required
+pytest -m "not network"   # 1152+ tests, no API calls required
 ruff check orchid/        # 0 errors
 ```
 
