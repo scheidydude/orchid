@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "orchid"
-version = "0.4.7"
+version = "2.2.0"
 description = "AI agent orchestration framework for persistent bare-metal deployment"
 readme = "README.md"
 requires-python = ">=3.12"
