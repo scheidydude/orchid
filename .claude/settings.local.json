@@ -18,7 +18,16 @@
       "Bash(cat)",
       "Read(//tmp/**)",
       "Bash(npm run *)",
-      "Bash(curl -s http://localhost:5174)"
+      "Bash(curl -s http://localhost:5174)",
+      "Bash(sed -n '1,30p' /home/dave/LocalAI/orchid/orchid/session.py)",
+      "Bash(sed -n '125,145p' /home/dave/LocalAI/orchid/orchid/session.py)",
+      "Bash(git -C /home/dave/LocalAI/orchid status)",
+      "Bash(git -C /home/dave/LocalAI/orchid log --oneline -3)",
+      "Bash(git -C /home/dave/LocalAI/orchid add next-phases.md phase_1_tasks.md phase_2_tasks.md phase_3_tasks.md phase_4_tasks.md phase_5_tasks.md phase_6_tasks.md phase_7_tasks.md todo-next.md)",
+      "Bash(git -C /home/dave/LocalAI/orchid commit -m ' *)",
+      "Bash(git *)",
+      "Bash(.venv/bin/python -m pytest tests/ -q --tb=short --ignore=tests/test_parallel_runner.py)",
+      "Bash(.venv/bin/python *)"
     ]
   }
 }
