@@ -118,6 +118,7 @@ class CostScheduler:
         self._rate_limit = RateLimitState()
         self._warned_budget: bool = False
         self._budget_stop: bool = cfg.get("cost.budget_stop", True)
+        self._ledger: Any = None
 
         # Load existing ledger data if project_dir is provided
         if project_dir is not None:
@@ -140,6 +141,7 @@ class CostScheduler:
                     per_model=per_model,
                     per_provider=per_provider,
                 )
+                self._ledger = ledger
                 logger.info(
                     "CostScheduler loaded spend: $%.4f (%d tokens) from ledger",
                     self._snapshot.total_cost_usd, self._snapshot.total_tokens,
@@ -170,6 +172,22 @@ class CostScheduler:
                     f"(spend: ${self._snapshot.total_cost_usd:.4f}). "
                     "Set cost.budget_stop=false to disable."
                 )
+
+    def check_user_budget(self, user_id: str, user_budget_usd: float) -> None:
+        """Raise BudgetBlockedError if user has exceeded their personal daily budget.
+
+        Only enforced if user_budget_usd > 0.
+        """
+        if user_budget_usd <= 0:
+            return
+        if self._ledger is None:
+            return
+        spent = self._ledger.daily_spend_for_user(user_id)
+        if spent >= user_budget_usd:
+            raise BudgetBlockedError(
+                f"User '{user_id}' has exceeded daily budget "
+                f"${user_budget_usd:.2f} (spent ${spent:.2f})"
+            )
 
     def check_rate_limit(self) -> None:
         """

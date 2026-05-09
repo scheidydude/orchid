@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 from orchid.locks import get_file_lock_registry
+from orchid.hooks.audit import log_file_write as _audit_file_write
 
 
 def read_file(path: str) -> str:
@@ -50,6 +51,10 @@ def write_file(path: str, content: str) -> str:
             except Exception as e:
                 msg += f"\nJS syntax check failed: {e}"
 
+        try:
+            _audit_file_write(task_id="", path=path, bytes_written=len(content.encode()), operation="write")
+        except Exception:
+            pass
         return msg
     finally:
         registry.release(path)
@@ -64,6 +69,10 @@ def append_file(path: str, content: str) -> str:
         p.parent.mkdir(parents=True, exist_ok=True)
         with open(p, "a", encoding="utf-8") as f:
             f.write(content)
+        try:
+            _audit_file_write(task_id="", path=path, bytes_written=len(content.encode()), operation="append")
+        except Exception:
+            pass
         return f"Appended {len(content)} bytes to {path}"
     finally:
         registry.release(path)

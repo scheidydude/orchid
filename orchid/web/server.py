@@ -1,11 +1,17 @@
 import asyncio
+import secrets
 from collections import deque
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
+from orchid.auth.middleware import get_current_user, get_optional_user
+from orchid.auth.store import UserStore
+from orchid.auth.types import AuthToken, User, AuthError
 from orchid.registry import ProjectRegistry
 
 from orchid.planning import PlanningSession
@@ -20,6 +26,234 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 registry = ProjectRegistry()
 runner = BackgroundRunner()
 
+# ------------------------------------------------------------------
+# Auth layer
+# ------------------------------------------------------------------
+
+_auth_store: UserStore | None = None
+_auth_tokens: dict[str, AuthToken] = {}  # token_str -> AuthToken
+_bearer = HTTPBearer(auto_error=False)
+
+
+def _get_auth_store() -> UserStore:
+    global _auth_store
+    if _auth_store is None:
+        _auth_store = UserStore()
+    return _auth_store
+
+
+def _issue_token(user: User) -> str:
+    """Create a random token and store it."""
+    token_str = secrets.token_urlsafe(32)
+    expires_at = datetime.now() + timedelta(hours=24)
+    auth_token = AuthToken(
+        token=token_str,
+        user_id=user.user_id,
+        expires_at=expires_at,
+    )
+    _auth_tokens[token_str] = auth_token
+    return token_str
+
+
+def _validate_token(token_str: str) -> User:
+    """Look up a token and return the associated active User."""
+    auth_token = _auth_tokens.get(token_str)
+    if auth_token is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if not auth_token.is_valid:
+        raise HTTPException(
+            status_code=401,
+            detail="Token revoked",
+        )
+    if auth_token.expires_at < datetime.now():
+        auth_token.is_valid = False
+        raise HTTPException(
+            status_code=401,
+            detail="Token expired",
+        )
+    store = _get_auth_store()
+    user = store.get_user(auth_token.user_id)
+    if user is None or not user.is_active:
+        auth_token.is_valid = False
+        raise HTTPException(
+            status_code=403,
+            detail="User inactive or not found",
+        )
+    return user
+
+
+# ------------------------------------------------------------------
+# Auth endpoints
+# ------------------------------------------------------------------
+
+@app.post("/api/auth/register")
+async def auth_register(data: dict):
+    """Register a new user. Returns user info (without sensitive fields)."""
+    store = _get_auth_store()
+    username = data.get("username", "").strip()
+    email = data.get("email", "").strip() or None
+    password = data.get("password", "").strip()
+    role = data.get("role", "user")
+
+    if not username:
+        raise HTTPException(400, "username required")
+    if not password:
+        raise HTTPException(400, "password required")
+
+    user_id = username  # simple: username == user_id
+
+    try:
+        user = User(
+            user_id=user_id,
+            username=username,
+            email=email,
+            role=role,
+        )
+        store.add_user(user)
+    except AuthError:
+        raise HTTPException(409, "User already exists")
+
+    return {"user_id": user.user_id, "username": user.username, "role": user.role}
+
+
+@app.post("/api/auth/login")
+async def auth_login(data: dict):
+    """Authenticate a user and return a bearer token."""
+    username = data.get("username", "").strip()
+    password = data.get("password", "").strip()
+
+    if not username or not password:
+        raise HTTPException(400, "username and password required")
+
+    store = _get_auth_store()
+    user = store.get_user(username) or store.get_user_by_username(username)
+
+    if user is None:
+        raise HTTPException(401, "Invalid credentials")
+
+    token_str = _issue_token(user)
+    return {"token": token_str, "user_id": user.user_id, "username": user.username}
+
+
+@app.post("/api/auth/token")
+async def auth_token(body: dict):
+    """Validate a raw bearer token and return user info."""
+    token = body.get("token", "")
+    if not token:
+        raise HTTPException(status_code=401, detail="token required")
+    try:
+        user = _get_auth_store().get_by_token(token)
+        return {"user_id": user.user_id, "valid": True}
+    except AuthError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+
+@app.get("/api/auth/me")
+async def auth_me(current_user: User | None = Depends(get_optional_user)):
+    """Return the currently authenticated user, or unauthenticated indicator."""
+    if current_user is None:
+        return {"authenticated": False}
+    return {
+        "user_id": current_user.user_id,
+        "username": getattr(current_user, "username", ""),
+        "email": getattr(current_user, "email", None),
+        "role": getattr(current_user, "role", "user"),
+    }
+
+
+@app.post("/api/auth/logout")
+async def auth_logout(credentials: HTTPAuthorizationCredentials | None = Depends(_bearer)):
+    """Revoke the current bearer token."""
+    if credentials is None:
+        raise HTTPException(401, "No token provided")
+    auth_token = _auth_tokens.get(credentials.credentials)
+    if auth_token:
+        auth_token.is_valid = False
+    return {"ok": True}
+
+
+@app.get("/api/auth/users")
+async def auth_list_users(current_user: User = Depends(get_current_user)):
+    """List all users (admin-only)."""
+    if current_user.role != "admin":
+        raise HTTPException(403, "Admin role required")
+    store = _get_auth_store()
+    users = store.list_users()
+    return {
+        "users": [
+            {
+                "user_id": u.user_id,
+                "username": u.username,
+                "email": u.email,
+                "role": u.role,
+                "is_active": u.is_active,
+            }
+            for u in users
+        ]
+    }
+
+
+# ------------------------------------------------------------------
+# Optional auth guard decorator
+# ------------------------------------------------------------------
+
+def auth_guard(
+    app_instance: FastAPI,
+    roles: list[str] | None = None,
+    exclude_paths: list[str] | None = None,
+) -> None:
+    """Attach an optional auth guard to *app_instance*.
+
+    Every incoming request is checked for a Bearer token.  If a token is
+    present it is validated; if validation fails the request is rejected
+    with 401/403.  If no token is present the request is allowed to
+    proceed (opt-in auth).
+
+    Args:
+        app_instance: The FastAPI application to protect.
+        roles: If given, only users whose role is in this list may access
+            protected endpoints.  ``None`` means any authenticated user.
+        exclude_paths: URL prefixes that should never be guarded
+            (e.g. ``["/api/auth", "/static"]``).
+    """
+    from fastapi.middleware.base import BaseHTTPMiddleware
+
+    exclude = set(exclude_paths or [])
+
+    class _AuthGuardMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            path = request.url.path
+            if any(path.startswith(ep) for ep in exclude):
+                return await call_next(request)
+
+            credentials: HTTPAuthorizationCredentials | None = None
+            auth_header = request.headers.get("authorization")
+            if auth_header and auth_header.startswith("Bearer "):
+                token_str = auth_header[7:]
+                try:
+                    user = _validate_token(token_str)
+                    if roles and user.role not in roles:
+                        return HTTPException(
+                            status_code=403,
+                            detail="Insufficient role",
+                        )
+                    # Attach user to request state for downstream use
+                    request.state.current_user = user
+                except HTTPException as exc:
+                    return exc
+            # No token → allow through (opt-in)
+            return await call_next(request)
+
+    app_instance.add_middleware(_AuthGuardMiddleware)
+
+
+# ------------------------------------------------------------------
+# Core application objects
+# ------------------------------------------------------------------
 
 class NDJSONStreamEmitter:
     """Thread-safe in-memory NDJSON emitter that pushes events into a deque.

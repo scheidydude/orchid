@@ -21,7 +21,7 @@ from datetime import datetime, UTC
 from pathlib import Path
 from typing import Any
 
-from orchid import config as cfg
+from orchid.config import get
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +44,7 @@ class TokenRecord:
     total_tokens: int = 0
     cost_usd: float = 0.0
     timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    user_id: str = ""
 
     @property
     def input_token_total(self) -> int:
@@ -103,8 +104,8 @@ class CostLedger:
         self._ledger_path = self._project_dir / ".orchid" / "cost_ledger.jsonl"
         self._lock = threading.RLock()
         self._records: list[TokenRecord] = []  # in-memory cache
-        self._budget_usd: float | None = cfg.get("cost.budget_usd", None)
-        self._budget_warn_pct: float = cfg.get("cost.budget_warn_pct", 0.8)
+        self._budget_usd: float | None = get("cost.budget_usd", None)
+        self._budget_warn_pct: float = get("cost.budget_warn_pct", 0.8)
         self._load()  # read existing records on construction
 
     # ── Public API ──────────────────────────────────────────────────────────
@@ -122,6 +123,7 @@ class CostLedger:
         cache_read_input_tokens: int = 0,
         completion_tokens: int = 0,
         cost_usd: float = 0.0,
+        user_id: str = "",
     ) -> TokenRecord:
         """
         Record a single token-cost entry.
@@ -141,6 +143,7 @@ class CostLedger:
             cache_read_input_tokens=cache_read_input_tokens,
             completion_tokens=completion_tokens,
             cost_usd=cost_usd,
+            user_id=user_id,
         )
 
         with self._lock:
@@ -258,6 +261,15 @@ class CostLedger:
                 if r.provider == provider and r.timestamp[:10] == today
             )
 
+    def daily_spend_for_user(self, user_id: str) -> float:
+        """Return total cost_usd recorded today (UTC) for a specific user."""
+        today = datetime.now(UTC).date().isoformat()
+        with self._lock:
+            return sum(
+                r.cost_usd for r in self._records
+                if r.user_id == user_id and r.timestamp[:10] == today
+            )
+
     def daily_tokens(self, provider: str) -> int:
         """Return total input+output tokens recorded today (UTC) for provider."""
         today = datetime.now(UTC).date().isoformat()
@@ -270,7 +282,7 @@ class CostLedger:
 
     def budget_remaining(self, provider: str) -> float | None:
         """Return remaining daily budget for provider, or None if no budget set."""
-        budget = cfg.get(f"cost.daily_budget_usd.{provider}", None)
+        budget = get(f"cost.daily_budget_usd.{provider}", None)
         if budget is None:
             return None
         return budget - self.daily_spend(provider)

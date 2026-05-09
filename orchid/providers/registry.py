@@ -1,4 +1,4 @@
-"""ProviderRegistry — 5-layer provider resolution for Orchid agents."""
+"""ProviderRegistry - 5-layer provider resolution for Orchid agents."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from orchid.providers.base import ProviderBase, ProviderUnavailableError
 
 logger = logging.getLogger(__name__)
 
-# ── Registry singleton ────────────────────────────────────────────────────────
+# - Registry singleton -
 
 _registry: ProviderRegistry | None = None
 
@@ -29,11 +29,7 @@ def reset_registry() -> None:
     _registry = None
 
 
-# ── Resolution defaults ───────────────────────────────────────────────────────
-# These Python dicts are emergency fallbacks only — used when the config file
-# is missing or a key is absent.  The authoritative defaults live in
-# orchid.defaults.yaml under providers.agent_defaults / providers.task_type_defaults,
-# where they can be changed without touching code.
+# - Resolution defaults -
 
 _AGENT_DEFAULTS: dict[str, str] = {
     "orchestrator":    "claude",
@@ -41,7 +37,6 @@ _AGENT_DEFAULTS: dict[str, str] = {
     "developer":       "local",
     "researcher":      "local",
     "base":            "local",
-    # V2 strategic agents
     "discussion":      "claude",
     "product_manager": "claude",
     "project_manager": "claude",
@@ -63,7 +58,7 @@ _TASK_TYPE_DEFAULTS: dict[str, str] = {
 }
 
 
-# ── Provider instantiation helpers ────────────────────────────────────────────
+# - Provider instantiation helpers -
 
 def _expand_env(value: str) -> str:
     """Expand ${VAR:-default} style shell substitutions."""
@@ -77,8 +72,6 @@ def _expand_env(value: str) -> str:
 def _instantiate(name: str, pcfg: dict[str, Any]) -> ProviderBase | None:
     """Create a ProviderBase from a configured block."""
     ptype = pcfg.get("type", name)
-
-    # Expand env vars in string config values
     cfg_expanded = {
         k: _expand_env(v) if isinstance(v, str) else v
         for k, v in pcfg.items()
@@ -102,7 +95,7 @@ def _instantiate(name: str, pcfg: dict[str, Any]) -> ProviderBase | None:
             max_tokens=int(cfg_expanded.get("max_tokens", 4096)),
             temperature=float(cfg_expanded.get("temperature", 0.5)),
         )
-        p.name = name  # allow aliasing (e.g. name="local" or custom name)
+        p.name = name
         return p
 
     if ptype == "ollama":
@@ -140,11 +133,11 @@ def _instantiate(name: str, pcfg: dict[str, Any]) -> ProviderBase | None:
         p.name = name
         return p
 
-    logger.warning("Unknown provider type %r for %r — skipping.", ptype, name)
+    logger.warning("Unknown provider type %r for %r - skipping.", ptype, name)
     return None
 
 
-# ── Registry class ────────────────────────────────────────────────────────────
+# - Registry class -
 
 class ProviderRegistry:
     """Maps provider names to ProviderBase instances and resolves per-agent routing."""
@@ -152,8 +145,6 @@ class ProviderRegistry:
     def __init__(self) -> None:
         self._providers: dict[str, ProviderBase] = {}
         self._offline_mode: bool = False
-
-    # ── Loading ───────────────────────────────────────────────────────────────
 
     @classmethod
     def load(cls) -> ProviderRegistry:
@@ -165,7 +156,6 @@ class ProviderRegistry:
             os.environ.get("ORCHID_OFFLINE_MODE", "false").lower() in ("true", "1", "yes")
         )
 
-        # Load named provider configs
         provider_cfgs: dict[str, Any] = cfg.get("providers.configured", {})
         for name, pcfg in provider_cfgs.items():
             if not isinstance(pcfg, dict):
@@ -174,7 +164,6 @@ class ProviderRegistry:
             if provider is not None:
                 registry._providers[name] = provider
 
-        # Always ensure built-in "claude" and "local" exist
         if "claude" not in registry._providers:
             from orchid.providers.anthropic import AnthropicProvider
             registry._providers["claude"] = AnthropicProvider()
@@ -190,7 +179,7 @@ class ProviderRegistry:
         )
         return registry
 
-    # ── Resolution ────────────────────────────────────────────────────────────
+    # - Resolution -
 
     def resolve_name(
         self,
@@ -200,18 +189,26 @@ class ProviderRegistry:
         task_model: str | None = None,
         cli_override: str | None = None,
         task_title: str = "",
+        user_api_keys: dict[str, str] | None = None,
     ) -> str:
         """Return the provider name to use, following the 8-layer priority chain.
 
         Priority (highest to lowest):
           1. CLI --provider flag
-          2. Project .orchid.yaml providers.<agent_name>  ← project policy wins
+          2. Project .orchid.yaml providers.<agent_name>
           3. Project .orchid.yaml providers.task_types.<task_type>
-          4. Task model: annotation  (model:claude in tasks.md)
+          4. Task model: annotation
           5. Machine env ORCHID_<AGENT_TYPE>_PROVIDER
-          5b. Keyword-heuristic escalation (routing.escalation config)
-          6. Config task-type default  (providers.task_type_defaults in orchid.defaults.yaml)
-          7. Config agent-type default (providers.agent_defaults in orchid.defaults.yaml)
+          5b. Keyword-heuristic escalation
+          6. Config task-type default
+          7. Config agent-type default
+
+        Args:
+            user_api_keys: Optional mapping of provider name -> API key.
+                Only applied when returning a ProviderBase via :meth:`resolve`.
+
+        Returns:
+            The resolved provider name.
         """
         if self._offline_mode:
             return "local"
@@ -222,7 +219,7 @@ class ProviderRegistry:
         if cli_override and cli_override not in ("", "auto"):
             return cli_override
 
-        # 2. Project config: providers.<agent_name> (agent_name falls back to agent_type)
+        # 2. Project config: providers.<agent_name>
         _name_key = agent_name or agent_type
         proj_val = cfg.get(f"providers.{_name_key}")
         if proj_val and isinstance(proj_val, str):
@@ -234,7 +231,7 @@ class ProviderRegistry:
             if task_val and isinstance(task_val, str):
                 return task_val
 
-        # 4. Task model: annotation (model:claude / model:local in tasks.md)
+        # 4. Task model: annotation
         if task_model and task_model not in ("", "auto"):
             return task_model
 
@@ -243,7 +240,7 @@ class ProviderRegistry:
         if env_val:
             return env_val
 
-        # 5b. Keyword-heuristic escalation — only fires when no explicit override set above
+        # 5b. Keyword-heuristic escalation
         if task_title:
             escalation_cfg = cfg.get("routing.escalation", {})
             if escalation_cfg.get("enabled", True):
@@ -253,7 +250,7 @@ class ProviderRegistry:
                 if sum(1 for kw in keywords if kw in title_lower) >= threshold:
                     return cfg.get("providers.agent_defaults.orchestrator", "claude")
 
-        # 6. Config-driven task-type default (orchid.defaults.yaml providers.task_type_defaults)
+        # 6. Config-driven task-type default
         if task_type:
             cfg_task_default = cfg.get(f"providers.task_type_defaults.{task_type}")
             if cfg_task_default and isinstance(cfg_task_default, str):
@@ -261,7 +258,7 @@ class ProviderRegistry:
             if task_type in _TASK_TYPE_DEFAULTS:
                 return _TASK_TYPE_DEFAULTS[task_type]
 
-        # 7. Config-driven agent-type default (orchid.defaults.yaml providers.agent_defaults)
+        # 7. Config-driven agent-type default
         cfg_agent_default = cfg.get(f"providers.agent_defaults.{agent_type}")
         if cfg_agent_default and isinstance(cfg_agent_default, str):
             return cfg_agent_default
@@ -275,16 +272,45 @@ class ProviderRegistry:
         task_model: str | None = None,
         cli_override: str | None = None,
         task_title: str = "",
+        user_api_keys: dict[str, str] | None = None,
     ) -> ProviderBase:
-        """Resolve and return a ready ProviderBase for the given context."""
-        name = self.resolve_name(agent_type, agent_name, task_type, task_model, cli_override, task_title)
-        return self._get(name)
+        """Resolve and return a ready ProviderBase for the given context.
+
+        If user_api_keys is provided and the resolved provider name is a key
+        in that dict, the provider's api_key attribute is overwritten with
+        the user-supplied value.
+
+        Args:
+            user_api_keys: Optional mapping of provider name -> API key.
+
+        Returns:
+            A ready-to-use ProviderBase instance.
+        """
+        name = self.resolve_name(
+            agent_type,
+            agent_name,
+            task_type,
+            task_model,
+            cli_override,
+            task_title,
+        )
+        provider = self._get(name)
+
+        # Apply per-user API key override when requested
+        if user_api_keys and name in user_api_keys:
+            user_key = user_api_keys[name]
+            if hasattr(provider, "api_key"):
+                provider.api_key = user_key
+            else:
+                logger.debug(
+                    "Provider %r has no 'api_key' attribute - user key for %s ignored.",
+                    name, name,
+                )
+
+        return provider
 
     def get_by_key(self, model_key: str) -> ProviderBase:
-        """Get a provider directly by name (e.g. 'claude', 'local', 'ollama').
-
-        Used by models.call() for backward compatibility.
-        """
+        """Get a provider directly by name (e.g. 'claude', 'local', 'ollama')."""
         return self._get(model_key)
 
     def _get(self, name: str) -> ProviderBase:
@@ -303,7 +329,7 @@ class ProviderRegistry:
             )
         return provider
 
-    # ── Introspection ─────────────────────────────────────────────────────────
+    # - Introspection -
 
     def all_status(self) -> list[dict[str, Any]]:
         """Return availability status for all configured providers."""

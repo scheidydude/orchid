@@ -23,6 +23,15 @@ class SubprocessRunner:
         The parent writes the serialized TaskContext to the worker's stdin,
         then reads JSON events from stdout line-by-line.
         """
+        from orchid import config as cfg
+        if cfg.get("isolation.container_enabled", False):
+            from orchid.container_runner import ContainerRunner
+            _cr = ContainerRunner()
+            if _cr.is_available():
+                return _cr.run_task_isolated(ctx, stream_callback=stream_callback, timeout_s=timeout_s)
+            else:
+                logger.warning("container_enabled=true but docker not found — falling back to subprocess")
+
         proc = subprocess.Popen(
             [sys.executable, "-m", "orchid.worker_subprocess"],
             stdin=subprocess.PIPE,

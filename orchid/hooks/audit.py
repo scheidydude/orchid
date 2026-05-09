@@ -112,6 +112,31 @@ class AuditLogger:
         )
         self.log(entry)
 
+    def log_file_write(
+        self,
+        task_id: str,
+        path: str,
+        agent_id: str = "",
+        bytes_written: int = 0,
+        operation: str = "write",   # "write" or "append"
+    ) -> None:
+        """Log a file write or append operation to the audit log."""
+        self._write({
+            "event": "file_write",
+            "task_id": task_id,
+            "path": path,
+            "agent_id": agent_id,
+            "bytes_written": bytes_written,
+            "operation": operation,
+        })
+
+    def _write(self, data: dict) -> None:
+        """Write a JSON object to the audit log."""
+        line = json.dumps(data) + "\n"
+        with self._lock:
+            with open(self._log_path, "a", encoding="utf-8") as f:
+                f.write(line)
+
     def read_entries(self, limit: int = 100) -> list[AuditEntry]:
         """Read the last *limit* entries from the audit log."""
         if not self._log_path.exists():
@@ -157,6 +182,13 @@ def configure_audit_logger(project_dir: Path) -> AuditLogger:
 def get_audit_logger() -> AuditLogger | None:
     """Return the configured global audit logger, or None."""
     return _logger
+
+
+def log_file_write(task_id: str, path: str, agent_id: str = "", bytes_written: int = 0, operation: str = "write") -> None:
+    """Module-level convenience wrapper around the singleton AuditLogger."""
+    al = get_audit_logger()
+    if al is not None:
+        al.log_file_write(task_id=task_id, path=path, agent_id=agent_id, bytes_written=bytes_written, operation=operation)
 
 
 def audit_hook(
