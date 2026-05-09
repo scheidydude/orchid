@@ -611,6 +611,133 @@ The central bot supports **channel-to-project mapping** for team workflows. Each
 
 ---
 
+## 14. Auth & Multi-User Support (V2.3)
+
+Orchid's web server ships a complete auth stack. It's **opt-in**: without `JWT_SECRET` set, the server runs unauthenticated (localhost-only use case).
+
+### Quick Setup
+
+Add to `~/.config/orchid/.env`:
+
+```bash
+JWT_SECRET=<random-64-char-string>   # generate with: openssl rand -hex 32
+```
+
+Register the first (admin) user via the API:
+
+```bash
+curl -s -X POST http://localhost:7842/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "strong-password", "role": "admin"}'
+
+curl -s -X POST http://localhost:7842/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "strong-password"}'
+# → sets orchid_access and orchid_refresh HttpOnly cookies
+```
+
+### Token Flow
+
+```
+POST /api/auth/login     → orchid_access cookie (JWT, 15 min)
+                           orchid_refresh cookie (opaque, 30 days)
+
+GET  /api/*              → Bearer <token> header OR orchid_access cookie
+POST /api/auth/refresh   → rotate refresh token, issue new pair
+POST /api/auth/logout    → revoke refresh token, clear cookies
+```
+
+### API Keys (for CI / Scripts)
+
+```bash
+# Create a scoped key (secret returned once — store it)
+curl -s -X POST http://localhost:7842/api/auth/apikeys \
+  -H "Content-Type: application/json" \
+  -d '{"name": "github-actions", "scopes": ["tasks:run"]}'
+
+# Use it
+curl -H "Authorization: Bearer ok_<key>" http://localhost:7842/api/auth/me
+```
+
+Available scopes: `tasks:run`, `tasks:read`, `*` (wildcard). Interactive JWT sessions bypass scope checks entirely.
+
+### OAuth / SSO (Google, Entra, OIDC)
+
+Configure providers in `~/.config/orchid/config.yaml`:
+
+```yaml
+auth:
+  providers:
+    - type: google
+      client_id: "${GOOGLE_CLIENT_ID}"
+      client_secret: "${GOOGLE_CLIENT_SECRET}"
+      redirect_uri: "https://your-host/api/auth/oauth/google/callback"
+
+    - type: entra
+      tenant_id: "${AZURE_TENANT_ID}"
+      client_id: "${AZURE_CLIENT_ID}"
+      client_secret: "${AZURE_CLIENT_SECRET}"
+      redirect_uri: "https://your-host/api/auth/oauth/entra/callback"
+
+    - type: oidc
+      name: "company-sso"
+      discovery_url: "https://sso.company.com/.well-known/openid-configuration"
+      client_id: "${SSO_CLIENT_ID}"
+      client_secret: "${SSO_CLIENT_SECRET}"
+      redirect_uri: "https://your-host/api/auth/oauth/company-sso/callback"
+```
+
+Users who sign in via OAuth for the first time get a new Orchid account. If their email already exists, the OAuth account is linked to it.
+
+### Mobile PKCE Flow
+
+```
+Mobile generates code_verifier + code_challenge (S256)
+
+GET  /api/auth/oauth/{provider}/start?code_challenge=...&code_challenge_method=S256
+     → 302 to provider (challenge forwarded)
+
+Provider → deep link: orchid://auth/callback?code=...&state=...
+
+POST /api/auth/oauth/{provider}/token
+     {code, state, code_verifier}
+     ← {access_token, refresh_token, token_type, expires_in}
+```
+
+No client secret ever leaves the server. PKCE S256 is verified server-side before the provider exchange.
+
+### User Management (Admin)
+
+```bash
+# Update role, projects, or active status
+curl -X PUT http://localhost:7842/api/auth/users/alice \
+  -H "Authorization: Bearer <admin-token>" \
+  -d '{"role": "readonly", "projects": ["proj-a", "proj-b"]}'
+
+# Deactivate user (sessions revoked, record preserved)
+curl -X DELETE http://localhost:7842/api/auth/users/alice \
+  -H "Authorization: Bearer <admin-token>"
+```
+
+**Per-project scoping:** if `projects` is a non-empty list, the user can only run tasks against those project IDs. Admins always bypass scoping. Empty list = unrestricted.
+
+### Audit Log
+
+Every security event (login, logout, register, token refresh, API key create/revoke, OAuth login, task run, user update/deactivate) is appended to:
+
+```
+~/.config/orchid/audit/audit-YYYY-MM-DD.jsonl
+```
+
+Files rotate daily and are **never deleted**. Query via the API:
+
+```bash
+curl "http://localhost:7842/api/audit?limit=50&action=login_failed" \
+  -H "Authorization: Bearer <admin-token>"
+```
+
+---
+
 ## Workflow Summary
 
 **V2 planning workflow (new projects):**

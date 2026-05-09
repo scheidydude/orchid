@@ -1,7 +1,7 @@
 # Auth & Multi-User Support Plan
 
-**Status:** Planning  
-**Date:** 2026-05-09  
+**Status:** ✅ Complete (V2.3)
+**Implemented:** 2026-05-09
 **Scope:** Web UI, REST API, mobile clients, Telegram/Slack interfaces
 
 ---

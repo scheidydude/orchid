@@ -5,7 +5,7 @@
 
 ## Description
 
-AI agent orchestration framework with a lifecycle-driven planning engine. Install once, run against any project. V2 adds a full idea-to-execution pipeline: discuss requirements with an AI product manager, generate architecture docs, break work into milestones, then execute tasks with specialized agents. V2.2 adds parallel task dispatch, native git tools, worktree isolation, dynamic task spawning, a cross-project agent pool, and cost-aware scheduling.
+AI agent orchestration framework with a lifecycle-driven planning engine. Install once, run against any project. V2 adds a full idea-to-execution pipeline: discuss requirements with an AI product manager, generate architecture docs, break work into milestones, then execute tasks with specialized agents. V2.2 adds parallel task dispatch, native git tools, worktree isolation, dynamic task spawning, a cross-project agent pool, and cost-aware scheduling. V2.3 adds full multi-user auth: JWT sessions, argon2id passwords, API keys with scope enforcement, Google/Entra/OIDC SSO, PKCE mobile flow, append-only audit log, and per-user project scoping.
 
 ```
 ~/orchid/              ← install here
@@ -950,16 +950,37 @@ orchid worker --port 8001
 
 Worker nodes expose `/health`, `/task` (POST), and `/ledger` (GET) endpoints via FastAPI (`orchid/remote/worker_server.py`).
 
-### Auth Layer and Per-User Quotas
+### Auth & Multi-User Support (V2.3)
 
-`orchid serve` supports token-based auth via `UserStore` and `AuthMiddleware`. Each user token maps to an account with per-user API key scoping and a daily USD budget enforced by `CostScheduler.check_user_budget()`.
+`orchid serve` ships a complete JWT auth stack. Set `JWT_SECRET` in `~/.config/orchid/.env` to activate it.
+
+**Token flow:** `POST /api/auth/login` → HttpOnly `orchid_access` cookie (JWT, 15 min) + `orchid_refresh` cookie (30 days). The middleware accepts either cookie or `Authorization: Bearer` header, and recognises API keys by the `ok_` prefix.
+
+**Roles:** `user` (default), `admin`, `readonly`. Admins can update any user's role, project list, or active status via `PUT /api/auth/users/{id}`. Deactivated users lose all sessions; records are preserved for audit.
+
+**API keys** (`POST /api/auth/apikeys`): scoped bearer tokens for CI/scripts. Secret shown once. Use `require_scope("tasks:run")` on any endpoint to enforce scope. JWT sessions (interactive logins) always bypass scope checks.
+
+**OAuth / SSO:** Google, Microsoft Entra ID, or any OIDC provider. Configure in `~/.config/orchid/config.yaml`:
 
 ```yaml
-# .orchid.yaml
 auth:
-  enabled: false    # default: false (localhost only)
-  token_ttl_hours: 24
+  providers:
+    - type: google
+      client_id: "${GOOGLE_CLIENT_ID}"
+      client_secret: "${GOOGLE_CLIENT_SECRET}"
+      redirect_uri: "https://your-host/api/auth/oauth/google/callback"
+    - type: entra
+      tenant_id: "${AZURE_TENANT_ID}"
+      client_id: "${AZURE_CLIENT_ID}"
+      client_secret: "${AZURE_CLIENT_SECRET}"
+      redirect_uri: "https://your-host/api/auth/oauth/entra/callback"
 ```
+
+**Mobile / PKCE:** `GET /api/auth/oauth/{p}/start?code_challenge=…` stores the S256 challenge; `POST /api/auth/oauth/{p}/token` requires `code_verifier` and returns JSON tokens (no cookies).
+
+**Audit log:** every login, logout, token refresh, API key create/revoke, OAuth login, task run, and admin action is appended to `~/.config/orchid/audit/audit-YYYY-MM-DD.jsonl`. Files are rotated daily and never deleted. `GET /api/audit` (admin-only, paginated) exposes the log.
+
+**Per-user project scoping:** set `User.projects` via `PUT /api/auth/users/{id}` to restrict which projects a user can run tasks against. Empty list = unrestricted. Admins bypass all restrictions.
 
 ### Container Isolation
 
@@ -1070,9 +1091,17 @@ remote/
   dispatcher.py      RemoteDispatcher: node selection, retry, ledger merge
 
 auth/
-  types.py           User, AuthError dataclasses
-  store.py           UserStore: JSON-backed user registry with all fields
-  middleware.py      AuthMiddleware: token validation, get_current_user dependency
+  types.py           User, RefreshToken, ApiKey, OAuthAccount, AuditEvent dataclasses
+  store.py           UserStore: thread-safe JSON-backed; users + refresh tokens + API keys + OAuth accounts
+  jwt.py             hash_password, verify_password, issue/verify access tokens, issue/verify refresh tokens, issue/verify API keys
+  middleware.py      get_current_user, get_optional_user, require_auth(role=), require_scope(scope=)
+  audit.py           AuditStore: append-only JSONL daily rotation; AuditAction constants; make_event()
+  providers/
+    base.py          OIDCProvider ABC; link_or_create_user() with email-match linking
+    oidc_generic.py  GenericOIDCProvider: discovery doc fetch, code exchange, userinfo; PKCE S256
+    google.py        GoogleOIDCProvider (pre-set discovery URL)
+    entra.py         EntraOIDCProvider (tenant-aware discovery URL)
+    registry.py      ProviderRegistry: register() + from_config(yaml)
 
 output/
   events.py          typed event dataclasses (SessionStart, TaskStart, AgentThought, …)
