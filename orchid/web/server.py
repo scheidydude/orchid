@@ -1,17 +1,23 @@
 import asyncio
-import secrets
 from collections import deque
-from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, StreamingResponse
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
+from orchid.auth.jwt import (
+    hash_password,
+    issue_access_token,
+    issue_refresh_token,
+    verify_access_token,
+    verify_password,
+    verify_refresh_token,
+)
 from orchid.auth.middleware import get_current_user, get_optional_user
 from orchid.auth.store import UserStore
-from orchid.auth.types import AuthToken, User, AuthError
+from orchid.auth.types import AuthError, User
 from orchid.registry import ProjectRegistry
 
 from orchid.planning import PlanningSession
@@ -31,8 +37,11 @@ runner = BackgroundRunner()
 # ------------------------------------------------------------------
 
 _auth_store: UserStore | None = None
-_auth_tokens: dict[str, AuthToken] = {}  # token_str -> AuthToken
 _bearer = HTTPBearer(auto_error=False)
+
+_COOKIE_ACCESS = "orchid_access"
+_COOKIE_REFRESH = "orchid_refresh"
+_COOKIE_OPTS: dict = {"httponly": True, "samesite": "strict"}
 
 
 def _get_auth_store() -> UserStore:
@@ -42,47 +51,21 @@ def _get_auth_store() -> UserStore:
     return _auth_store
 
 
-def _issue_token(user: User) -> str:
-    """Create a random token and store it."""
-    token_str = secrets.token_urlsafe(32)
-    expires_at = datetime.now() + timedelta(hours=24)
-    auth_token = AuthToken(
-        token=token_str,
-        user_id=user.user_id,
-        expires_at=expires_at,
-    )
-    _auth_tokens[token_str] = auth_token
-    return token_str
+def _set_auth_cookies(response: Response, access_token: str, refresh_raw: str) -> None:
+    response.set_cookie(_COOKIE_ACCESS, access_token, max_age=900, **_COOKIE_OPTS)
+    response.set_cookie(_COOKIE_REFRESH, refresh_raw, max_age=2_592_000, **_COOKIE_OPTS)
 
 
 def _validate_token(token_str: str) -> User:
-    """Look up a token and return the associated active User."""
-    auth_token = _auth_tokens.get(token_str)
-    if auth_token is None:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    if not auth_token.is_valid:
-        raise HTTPException(
-            status_code=401,
-            detail="Token revoked",
-        )
-    if auth_token.expires_at < datetime.now():
-        auth_token.is_valid = False
-        raise HTTPException(
-            status_code=401,
-            detail="Token expired",
-        )
+    """JWT-based token validation used by auth_guard middleware."""
+    try:
+        payload = verify_access_token(token_str)
+    except AuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc), headers={"WWW-Authenticate": "Bearer"})
     store = _get_auth_store()
-    user = store.get_user(auth_token.user_id)
+    user = store.get_user(payload["sub"])
     if user is None or not user.is_active:
-        auth_token.is_valid = False
-        raise HTTPException(
-            status_code=403,
-            detail="User inactive or not found",
-        )
+        raise HTTPException(status_code=403, detail="User inactive or not found")
     return user
 
 
@@ -92,7 +75,7 @@ def _validate_token(token_str: str) -> User:
 
 @app.post("/api/auth/register")
 async def auth_register(data: dict):
-    """Register a new user. Returns user info (without sensitive fields)."""
+    """Register a new user. Returns user info (no sensitive fields)."""
     store = _get_auth_store()
     username = data.get("username", "").strip()
     email = data.get("email", "").strip() or None
@@ -103,15 +86,16 @@ async def auth_register(data: dict):
         raise HTTPException(400, "username required")
     if not password:
         raise HTTPException(400, "password required")
-
-    user_id = username  # simple: username == user_id
+    if role not in ("user", "admin", "readonly"):
+        raise HTTPException(400, "role must be user, admin, or readonly")
 
     try:
         user = User(
-            user_id=user_id,
+            user_id=username,
             username=username,
             email=email,
             role=role,
+            password_hash=hash_password(password),
         )
         store.add_user(user)
     except AuthError:
@@ -121,8 +105,8 @@ async def auth_register(data: dict):
 
 
 @app.post("/api/auth/login")
-async def auth_login(data: dict):
-    """Authenticate a user and return a bearer token."""
+async def auth_login(data: dict, response: Response):
+    """Authenticate with username+password. Sets HttpOnly cookies and returns user info."""
     username = data.get("username", "").strip()
     password = data.get("password", "").strip()
 
@@ -132,22 +116,67 @@ async def auth_login(data: dict):
     store = _get_auth_store()
     user = store.get_user(username) or store.get_user_by_username(username)
 
-    if user is None:
+    if user is None or not user.is_active:
+        raise HTTPException(401, "Invalid credentials")
+    if not user.password_hash or not verify_password(password, user.password_hash):
         raise HTTPException(401, "Invalid credentials")
 
-    token_str = _issue_token(user)
-    return {"token": token_str, "user_id": user.user_id, "username": user.username}
+    access_token = issue_access_token(user)
+    refresh_raw, rt = issue_refresh_token(user)
+    store.store_refresh_token(rt)
+    _set_auth_cookies(response, access_token, refresh_raw)
+
+    return {
+        "user_id": user.user_id,
+        "username": user.username,
+        "role": user.role,
+        "access_token": access_token,
+    }
+
+
+@app.post("/api/auth/refresh")
+async def auth_refresh(request: Request, response: Response):
+    """Rotate a refresh token. Issues new access + refresh tokens (old refresh invalidated)."""
+    raw = request.cookies.get(_COOKIE_REFRESH)
+    if not raw:
+        body = {}
+        try:
+            body = await request.json()
+        except Exception:
+            pass
+        raw = body.get("refresh_token", "")
+    if not raw:
+        raise HTTPException(401, "No refresh token")
+
+    store = _get_auth_store()
+    try:
+        rt = verify_refresh_token(raw, store)
+    except AuthError as exc:
+        raise HTTPException(401, str(exc))
+
+    store.revoke_refresh_token(rt.token_id)
+
+    user = store.get_user(rt.user_id)
+    if user is None or not user.is_active:
+        raise HTTPException(403, "User inactive or not found")
+
+    new_access = issue_access_token(user)
+    new_raw, new_rt = issue_refresh_token(user)
+    store.store_refresh_token(new_rt)
+    _set_auth_cookies(response, new_access, new_raw)
+
+    return {"user_id": user.user_id, "username": user.username, "access_token": new_access}
 
 
 @app.post("/api/auth/token")
 async def auth_token(body: dict):
-    """Validate a raw bearer token and return user info."""
+    """Verify a JWT access token and return user info."""
     token = body.get("token", "")
     if not token:
         raise HTTPException(status_code=401, detail="token required")
     try:
-        user = _get_auth_store().get_by_token(token)
-        return {"user_id": user.user_id, "valid": True}
+        payload = verify_access_token(token)
+        return {"user_id": payload["sub"], "valid": True}
     except AuthError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
@@ -158,21 +187,27 @@ async def auth_me(current_user: User | None = Depends(get_optional_user)):
     if current_user is None:
         return {"authenticated": False}
     return {
+        "authenticated": True,
         "user_id": current_user.user_id,
-        "username": getattr(current_user, "username", ""),
-        "email": getattr(current_user, "email", None),
-        "role": getattr(current_user, "role", "user"),
+        "username": current_user.username,
+        "email": current_user.email,
+        "role": current_user.role,
     }
 
 
 @app.post("/api/auth/logout")
-async def auth_logout(credentials: HTTPAuthorizationCredentials | None = Depends(_bearer)):
-    """Revoke the current bearer token."""
-    if credentials is None:
-        raise HTTPException(401, "No token provided")
-    auth_token = _auth_tokens.get(credentials.credentials)
-    if auth_token:
-        auth_token.is_valid = False
+async def auth_logout(request: Request, response: Response):
+    """Revoke the refresh token and clear auth cookies."""
+    raw = request.cookies.get(_COOKIE_REFRESH)
+    if raw:
+        store = _get_auth_store()
+        try:
+            rt = verify_refresh_token(raw, store)
+            store.revoke_refresh_token(rt.token_id)
+        except AuthError:
+            pass  # token already invalid — still clear cookies
+    response.delete_cookie(_COOKIE_ACCESS)
+    response.delete_cookie(_COOKIE_REFRESH)
     return {"ok": True}
 
 
@@ -230,22 +265,22 @@ def auth_guard(
             if any(path.startswith(ep) for ep in exclude):
                 return await call_next(request)
 
-            credentials: HTTPAuthorizationCredentials | None = None
-            auth_header = request.headers.get("authorization")
-            if auth_header and auth_header.startswith("Bearer "):
-                token_str = auth_header[7:]
+            token_str = request.cookies.get(_COOKIE_ACCESS)
+            if not token_str:
+                auth_header = request.headers.get("authorization", "")
+                if auth_header.startswith("Bearer "):
+                    token_str = auth_header[7:]
+            if token_str:
                 try:
                     user = _validate_token(token_str)
                     if roles and user.role not in roles:
-                        return HTTPException(
-                            status_code=403,
-                            detail="Insufficient role",
-                        )
-                    # Attach user to request state for downstream use
+                        from fastapi.responses import JSONResponse
+                        return JSONResponse({"detail": "Insufficient role"}, status_code=403)
                     request.state.current_user = user
                 except HTTPException as exc:
-                    return exc
-            # No token → allow through (opt-in)
+                    from fastapi.responses import JSONResponse
+                    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+            # No token → allow through (opt-in auth)
             return await call_next(request)
 
     app_instance.add_middleware(_AuthGuardMiddleware)

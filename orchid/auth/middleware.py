@@ -1,101 +1,106 @@
-# Orchid auth middleware — FastAPI dependency for token-based auth.
+"""FastAPI auth dependencies.
 
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+Token resolution order: orchid_access cookie → Authorization: Bearer header.
+JWT is verified locally (no DB hit). User record fetched from store only to
+check is_active.
+"""
+
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+from orchid.auth.jwt import verify_access_token
 from orchid.auth.store import UserStore
-from orchid.auth.types import User
+from orchid.auth.types import AuthError, User
 
-# Singleton HTTPBearer scheme (no custom header name needed)
 _bearer = HTTPBearer(auto_error=False)
 
-# Default store path — will be overridden if the caller injects one.
 _default_store: UserStore | None = None
 
 
 def _get_store() -> UserStore:
-    """Return the global UserStore singleton, creating it on first call."""
     global _default_store
     if _default_store is None:
         _default_store = UserStore()
     return _default_store
 
 
+def _extract_token(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None,
+) -> str | None:
+    token = request.cookies.get("orchid_access")
+    if not token and credentials:
+        token = credentials.credentials
+    return token
+
+
 async def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
     store: UserStore = Depends(_get_store),
 ) -> User:
-    """FastAPI dependency that validates the Bearer token and returns the user.
+    """Validate the access token (cookie or Bearer) and return the active user.
 
-    Raises HTTPException 401 when no token is present or the token is invalid.
-    Raises HTTPException 403 when the user is inactive.
+    Raises 401 when no token is present or verification fails.
+    Raises 403 when the user is inactive.
     """
-    if credentials is None:
+    token = _extract_token(request, credentials)
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing authentication token",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    token = credentials.credentials
+    try:
+        payload = verify_access_token(token)
+    except AuthError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(exc),
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
-    # Look up the user whose token matches.
-    for user in store.list_users():
-        if user.token == token:
-            if not user.is_active:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="User account is inactive",
-                )
-            return user
-
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid authentication token",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+    user = store.get_user(payload["sub"])
+    if user is None or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account is inactive or not found",
+        )
+    return user
 
 
 async def get_optional_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
     store: UserStore = Depends(_get_store),
 ) -> User | None:
-    """FastAPI dependency that returns the user if a valid Bearer token is
-    present, or ``None`` when no token is provided.
+    """Return the authenticated user, or None if no token is present.
 
-    Unlike ``get_current_user`` this function never raises 401 — it
-    silently returns ``None`` so downstream endpoints can decide whether
-    to enforce auth or treat the request as anonymous.
-
-    Usage::
-
-        @app.get("/api/items")
-        async def list_items(current_user: User | None = Depends(get_optional_user)):
-            if current_user:
-                return _private_items(current_user)
-            return _public_items()
+    Never raises 401 — downstream endpoints decide whether to enforce auth.
     """
-    if credentials is None:
+    token = _extract_token(request, credentials)
+    if not token:
         return None
 
-    token = credentials.credentials
+    try:
+        payload = verify_access_token(token)
+    except AuthError:
+        return None
 
-    for user in store.list_users():
-        if user.token == token:
-            if not user.is_active:
-                return None
-            return user
-
-    return None
+    user = store.get_user(payload["sub"])
+    if user is None or not user.is_active:
+        return None
+    return user
 
 
 def require_auth(role: str | None = None):
-    """Return a FastAPI dependency that enforces authentication and optionally
-    checks the user's role.
+    """Dependency factory that enforces auth and optionally checks role.
 
     Usage::
 
-        @app.get("/protected")
-        async def protected(current_user: User = Depends(require_auth(role="admin"))):
+        @app.get("/admin")
+        async def admin(user: User = Depends(require_auth(role="admin"))):
             ...
     """
     async def _dep(current_user: User = Depends(get_current_user)) -> User:

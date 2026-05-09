@@ -11,7 +11,6 @@ class AuthError(Exception):
 class User:
     """Represents an authenticated user in Orchid."""
     user_id: str
-    token: str
     username: str = ""
     email: Optional[str] = None
     role: str = "user"  # "user", "admin", "readonly"
@@ -20,13 +19,26 @@ class User:
     projects: list = field(default_factory=list)
     api_keys: dict = field(default_factory=dict)
     budget_usd: float = 0.0
+    password_hash: Optional[str] = None
+    token: str = ""  # legacy field — superseded by JWT; kept for backward compat
 
 
 @dataclass
 class AuthToken:
-    """Represents an authentication token."""
+    """Legacy bearer token — superseded by JWT in Phase 1. Kept for backward compat."""
     token: str
     user_id: str
     expires_at: datetime
     created_at: datetime = field(default_factory=datetime.now)
     is_valid: bool = True
+
+
+@dataclass
+class RefreshToken:
+    """Persisted refresh token record. The raw token is never stored — only its hash."""
+    token_id: str        # UUID; embedded in the raw token for O(1) lookup
+    user_id: str
+    token_hash: str      # argon2 hash of the secret portion of the raw token
+    expires_at: datetime
+    created_at: datetime = field(default_factory=datetime.now)
+    is_revoked: bool = False
