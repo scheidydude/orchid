@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from orchid.memory.state import Task, TaskStatus
+from orchid.watchdog import TaskWatchdog
 
 logger = logging.getLogger(__name__)
 
@@ -197,43 +198,52 @@ class BackgroundRunner:
         batch.  This repeats until no more TODO tasks remain or the cancel
         event is set.
         """
+        from orchid import config as cfg
         from orchid.scheduler import Scheduler
 
         scheduler = Scheduler(session.tasks)
         completed_ids: set[str] = set()
 
-        while not state.cancel_event.is_set():
-            # Re-schedule to pick up the next parallel group
-            result = scheduler.schedule(completed_ids=completed_ids)
+        # T219: Start stuck-task watchdog
+        _watchdog_threshold = cfg.get("isolation.watchdog_threshold_s", 1800)
+        _watchdog = TaskWatchdog(session, stuck_threshold_s=_watchdog_threshold)
+        _watchdog.start()
 
-            # No more runnable tasks
-            if not result.parallel_groups and not result.ordered:
-                break
+        try:
+            while not state.cancel_event.is_set():
+                # Re-schedule to pick up the next parallel group
+                result = scheduler.schedule(completed_ids=completed_ids)
 
-            # Execute the next parallel group
-            group = result.parallel_groups[0] if result.parallel_groups else [result.ordered[0]]
+                # No more runnable tasks
+                if not result.parallel_groups and not result.ordered:
+                    break
 
-            if not group:
-                break
+                # Execute the next parallel group
+                group = result.parallel_groups[0] if result.parallel_groups else [result.ordered[0]]
 
-            logger.info(
-                "Dispatching parallel group of %d task(s) for %s",
-                len(group), project_path,
-            )
+                if not group:
+                    break
 
-            # Execute tasks in this group concurrently
-            self._execute_group(project_path, state, session, orch, group, completed_ids)
+                logger.info(
+                    "Dispatching parallel group of %d task(s) for %s",
+                    len(group), project_path,
+                )
 
-            # Update completed_ids from actual task statuses so the next schedule()
-            # call can correctly resolve dependencies for tasks whose parents just
-            # finished. Without this, tasks with completed parents are never ready.
-            completed_ids = {
-                t.id for t in session.tasks
-                if t.status in (TaskStatus.DONE, TaskStatus.SKIPPED)
-            }
+                # Execute tasks in this group concurrently
+                self._execute_group(project_path, state, session, orch, group, completed_ids)
 
-            # Rebuild scheduler with updated task statuses
-            scheduler.reset_cache()
+                # Update completed_ids from actual task statuses so the next schedule()
+                # call can correctly resolve dependencies for tasks whose parents just
+                # finished. Without this, tasks with completed parents are never ready.
+                completed_ids = {
+                    t.id for t in session.tasks
+                    if t.status in (TaskStatus.DONE, TaskStatus.SKIPPED)
+                }
+
+                # Rebuild scheduler with updated task statuses
+                scheduler.reset_cache()
+        finally:
+            _watchdog.stop()
 
     def _execute_group(
         self,

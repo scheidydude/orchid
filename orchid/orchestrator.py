@@ -294,6 +294,38 @@ class Orchestrator:
 
     # ── Task execution ─────────────────────────────────────────────────────────
 
+    def _run_task_isolated(
+        self,
+        task: Task,
+        plan: str,
+        session_context: str,
+        stream_cb,
+        agent_type: str,
+        decision: "RouteDecision",
+    ) -> str:
+        from orchid.worker_protocol import TaskContext
+        from orchid.subprocess_runner import SubprocessRunner
+        from orchid import config as cfg
+        injection_queue = self.session.project_dir / ".orchid" / "inject.queue"
+        ctx = TaskContext(
+            task_id=task.id,
+            task_description=plan,
+            session_context=session_context,
+            agent_type=agent_type,
+            model_key=decision.model,
+            project_dir=str(self.session.project_dir),
+            injection_queue_path=str(injection_queue),
+        )
+        max_s = cfg.get("isolation.max_task_seconds", 0)
+        runner = SubprocessRunner()
+        wresult = runner.run_task_isolated(
+            ctx=ctx,
+            stream_callback=stream_cb,
+            timeout_s=float(max_s) if max_s else None,
+        )
+        if not wresult.success:
+            raise RuntimeError(f"Worker subprocess failed: {wresult.error}")
+        return wresult.result
 
     def _resolve_provider(self, task: Task) -> RouteDecision:
         """Resolve the provider/model for a task via the full routing chain.

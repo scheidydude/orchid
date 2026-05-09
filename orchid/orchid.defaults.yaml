@@ -322,6 +322,13 @@ runner:
     bedrock: 3
     openai: 3
 
+# Isolation — subprocess sandbox and watchdog settings (T212-T219)
+isolation:
+  subprocess_enabled: false           # true = each task runs in a child process
+  max_task_seconds: 0                 # wall-clock timeout per task (0 = no limit)
+  container_enabled: false            # true = use docker container (Tier 3)
+  watchdog_threshold_s: 1800          # seconds before a stuck task is marked BLOCKED
+
 # Agent Pool — reusable agent instance caching (T193)
 agent_pool:
   enabled: false                  # set true to enable; off by default (opt-in)
