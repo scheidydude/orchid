@@ -1,8 +1,202 @@
 # Tasks
 
 
+## TODO
+
 ## DONE
 
+- [x] **T248** Rollup Tier 2 results `type:rollup` `p2` `model:claude` `rollup:T230,T231,T232,T233,T234,T235,T236,T237,T238,T239,T240,T241,T242,T243,T244,T245,T246,T247` `output:TIER2-REPORT.md`
+
+- [x] **T247** Fix all issues found in T246. Read the T246 result first. Make exactly the fixes listed. `type:code_generate` `p1` `needs:T246` `model:local`
+
+- [x] **T246** Review Tier 2 implementation (T230-T245). Check: file locks are thread-safe, mid-task checkpoint saves/loads correctly, mailbox is thread-safe, shell permission check works, max_iterations hard cap is read correctly. `type:review` `p1` `needs:T242,T243,T244,T245` `model:claude`
+  - - - - - Run `python -c "from orchid.locks import FileLockRegistry, get_file_lock_registry"` — must not error
+- [x] **T230** Create `orchid/locks.py`. One class: `FileLockRegistry`. `type:code_generate` `p1` `model:local`
+  - - - - - Imports: `import threading, logging` from stdlib. `from pathlib import Path` from stdlib. `from collections import defaultdict`
+- [x] **T231** Extend `orchid/tools/filesystem.py` — use `FileLockRegistry` in `write_file()` and `append_file()`. Read the file first. `type:code_generate` `p1` `needs:T230` `model:local`
+  - - - - - Add import at the top: `from orchid.locks import get_file_lock_registry`
+- [x] **T232** Extend `orchid/checkpoint/schema.py` — add `ReActCheckpoint` dataclass. Read the file first. Find the end of the file (after existing dataclasses). `type:code_generate` `p1` `model:local`
+  - - - - - Add this dataclass at the end of the file (after existing definitions):
+```python
+@dataclass
+class ReActCheckpoint:
+"""Mid-task ReAct loop checkpoint — saved every N iterations."""
+task_id: str
+iteration: int
+conversation_history: list[dict]   # list of {"role": str, "content": str} dicts
+partial_result: str = ""
+timestamp: str = ""                # ISO 8601 UTC, set by store
+```
+- [x] **T233** Extend `orchid/checkpoint/store.py` — add `save_react_checkpoint()` and `load_react_checkpoint()` methods. Read the file first. Add after the `prune()` method. `type:code_generate` `p1` `needs:T232` `model:local`
+  - - - - - Add `from orchid.checkpoint.schema import ReActCheckpoint` to the imports (check if schema is already imported; if so, add `ReActCheckpoint` to the existing import)
+- [x] **T234** Extend `orchid/agents/base.py` — save a ReAct checkpoint every 5 iterations. Read the file first. Find the `run()` method and the `for iteration in range(self.max_iterations):` loop. `type:code_generate` `p1` `needs:T233` `model:local`
+  - - - - - At the TOP of `BaseAgent.__init__()`, add: `self._checkpoint_store: Any = None` (use `from typing import Any` if not already imported)
+- [x] **T235** Extend `orchid/orchestrator.py` — wire checkpoint_store and task_id into agent before run. Read the file first. Find the block where `agent` is assigned (via `self._get_agent(...)`) and before `agent.run(plan)` is called. `type:code_generate` `p1` `needs:T234` `model:local`
+  - - - - - After `agent = self._get_agent(...)` and BEFORE the `if cfg.get("isolation.subprocess_enabled"...)` block, add:
+```python
+# T235: Wire ReAct checkpoint store and task_id into agent
+try:
+from orchid.checkpoint.store import CheckpointStore
+agent.set_checkpoint_store(CheckpointStore(self.session.project_dir))
+agent._current_task_id = task.id
+except Exception as _cs_err:
+logger.debug("Could not wire checkpoint store into agent: %s", _cs_err)
+```
+- [x] **T236** Create `orchid/mailbox.py`. One class: `AgentMailbox`. `type:code_generate` `p1` `model:local`
+  - - - - - Imports: `import queue, threading, logging` from stdlib. `from dataclasses import dataclass, field`. `from typing import Any`
+- [x] **T237** Extend `orchid/agents/base.py` — add `send_message` and `receive_message` tools. Read the file first. Find `_make_project_tools()` method. `type:code_generate` `p1` `needs:T236` `model:local`
+  - - - - - Add `from orchid.mailbox import get_mailbox` import at the top of the file
+- [x] **T238** Extend `orchid/orchestrator.py` — drop agent mailbox at task end. Read the file first. Find the `finally:` block inside `_execute_task()` (the block that runs after the agent finishes). `type:code_generate` `p1` `needs:T237` `model:local`
+  - - - - - In the `finally:` block of `_execute_task()`, add:
+```python
+# T238: Clean up agent mailbox
+try:
+from orchid.mailbox import drop_mailbox
+if hasattr(agent, "_mailbox_id"):
+drop_mailbox(agent._mailbox_id)
+except Exception:
+pass
+```
+- [x] **T239** Extend `orchid/tools/shell.py` — add `agent_id` parameter to `bash()`. Read the file first. Find `def bash(command: str, timeout: int | None = None) -> str:` at line 120. `type:code_generate` `p1` `model:local`
+  - - - - - Change the signature to: `def bash(command: str, timeout: int | None = None, agent_id: str = "") -> str:`
+- [x] **T240** Add `agents.max_iterations` config block to `orchid/orchid.defaults.yaml`. Read the file first. Find the `agents:` section. Add under it. `type:code_generate` `p1` `model:local`
+  - - - - - Under the `agents:` key (after existing agent config lines), add:
+```yaml
+max_iterations:          # per-agent-type hard cap on ReAct iterations (0 = use agents.max_react_iterations)
+developer: 0
+tester: 0
+researcher: 0
+reviewer: 0
+base: 0
+```
+- [x] **T241** Extend `orchid/agents/base.py` — read per-agent-type `max_iterations` from config and enforce hard cap. Read the file first. Find `__init__()`. `type:code_generate` `p1` `needs:T240` `model:local`
+  - - - - - In `__init__()`, AFTER `self.max_iterations = cfg.get("agents.max_react_iterations", 25)`, add:
+```python
+# T241: Per-agent-type hard cap from agents.max_iterations config
+_agent_type_key = self.__class__.__name__.lower().replace("agent", "")
+_hard_cap = cfg.get(f"agents.max_iterations.{_agent_type_key}", 0)
+if _hard_cap and _hard_cap > 0:
+self.max_iterations = _hard_cap
+```
+- [x] **T209** Create `orchid/worker_protocol.py`. Define exactly 3 dataclasses using `@dataclass` from `dataclasses`. Import `json`, `field`, `asdict` from `dataclasses`. `type:code_generate` `p1` `model:local`
+  - - - - - - `TaskContext(task_id: str, task_description: str, session_context: str, agent_type: str, model_key: str, project_dir: str, injection_queue_path: str)` — all required, no defaults
+- [x] **T210** Create `orchid/worker_subprocess.py`. This is the subprocess entry point — run by the parent via `sys.executable -m orchid.worker_subprocess`. `type:code_generate` `p1` `needs:T209` `model:local`
+  - - - - - - Imports: `import json, sys, time, logging` from stdlib. `from pathlib import Path`. `from orchid.worker_protocol import TaskContext, WorkerEvent, WorkerResult`
+- [x] **T211** Create `orchid/subprocess_runner.py`. One class: `SubprocessRunner`. `type:code_generate` `p1` `needs:T209` `model:local`
+  - - - - - - Imports: `import json, logging, subprocess, sys` from stdlib. `from collections.abc import Callable`. `from orchid.worker_protocol import TaskContext, WorkerEvent, WorkerResult`
+- [x] **T212** Append isolation config block to `orchid/orchid.defaults.yaml`. Read the file first to find its end. Append exactly this block at the bottom. `type:code_generate` `p1` `model:local`
+  - - - - - - Append exactly:
+```yaml
+# T212: Subprocess isolation settings
+isolation:
+subprocess_enabled: false   # true = each task runs in a child process
+max_task_seconds: 0         # wall-clock timeout per task (0 = no limit)
+container_enabled: false    # true = use docker container (Tier 3)
+```
+- [x] **T213** Extend `orchid/orchestrator.py` — add `_run_task_isolated()` method. Read the file first. Find the method `_resolve_provider` (around line 297). Add the new method BEFORE `_resolve_provider`. `type:code_generate` `p1` `needs:T211` `model:local`
+  - - - - - - Add this method to the `Orchestrator` class:
+```
+def _run_task_isolated(
+self,
+task: Task,
+plan: str,
+session_context: str,
+stream_cb: Callable | None,
+agent_type: str,
+decision: RouteDecision,
+) -> str:
+from orchid.worker_protocol import TaskContext
+from orchid.subprocess_runner import SubprocessRunner
+injection_queue = self.session.project_dir / ".orchid" / "inject.queue"
+ctx = TaskContext(
+task_id=task.id,
+task_description=plan,
+session_context=session_context,
+agent_type=agent_type,
+model_key=decision.model,
+project_dir=str(self.session.project_dir),
+injection_queue_path=str(injection_queue),
+)
+max_s = cfg.get("isolation.max_task_seconds", 0)
+runner = SubprocessRunner()
+wresult = runner.run_task_isolated(
+ctx=ctx,
+stream_callback=stream_cb,
+timeout_s=float(max_s) if max_s else None,
+)
+if not wresult.success:
+raise RuntimeError(f"Worker subprocess failed: {wresult.error}")
+return wresult.result
+```
+- [x] **T214** Extend `orchid/orchestrator.py` — wire subprocess opt-in into `_execute_task()`. Read the file first. Find the block where `agent.run(plan)` is called (search for `agent.run(`). Replace the `result = agent.run(plan)` call (or equivalent call to run the agent) with an if/else that checks config. `type:code_generate` `p1` `needs:T213` `model:local`
+  - - - - - - Find the line that calls `agent.run(` in `_execute_task()`. Wrap it as follows:
+```python
+if cfg.get("isolation.subprocess_enabled", False):
+result = self._run_task_isolated(
+task=task,
+plan=plan,
+session_context=session_context,
+stream_cb=stream_cb,
+agent_type=agent_type,
+decision=decision,
+)
+else:
+result = agent.run(plan)
+```
+- [x] **T215** Extend `orchid/agents/base.py` — add `AgentCancelledError` exception class and `cancel_event` attribute. Read the file first. Find the class definitions near the top (look for other exception classes or the BaseAgent class definition around line 288). `type:code_generate` `p1` `model:local`
+  - - - - - - Add `import threading` to the imports at the top of the file if not already present
+- [x] **T216** Extend `orchid/agents/base.py` — check cancel_event at the top of each ReAct iteration. Read the file first. Find the `run()` method and the `for iteration in range(self.max_iterations):` loop (around line 484). `type:code_generate` `p1` `needs:T215` `model:local`
+  - - - - - - Add this check as the FIRST statement inside the for loop body, BEFORE the existing `self._check_injection_queue()` call:
+```python
+if self._cancel_event.is_set():
+raise AgentCancelledError(f"Task cancelled after {iteration} iterations")
+```
+- [x] **T217** Extend `orchid/orchestrator.py` — start a cancellation timer before calling `agent.run()`. Read the file first. Find where `agent.run(plan)` is called in `_execute_task()` (the `else:` branch added in T214). `type:code_generate` `p1` `needs:T216` `model:local`
+  - - - - - - Add these lines BEFORE the `if cfg.get("isolation.subprocess_enabled"...)` block:
+```python
+# T217: Start wall-clock cancellation timer if max_task_seconds is set
+_max_s = cfg.get("isolation.max_task_seconds", 0)
+_cancel_timer: threading.Timer | None = None
+if _max_s and _max_s > 0 and not cfg.get("isolation.subprocess_enabled", False):
+_cancel_timer = threading.Timer(_max_s, agent.cancel)
+_cancel_timer.daemon = True
+_cancel_timer.start()
+```
+- [x] **T218** Create `orchid/watchdog.py`. One class: `TaskWatchdog`. `type:code_generate` `p1` `model:local`
+  - - - - - - Imports: `import logging, threading, time`. `from orchid.session import Session`. `from orchid.memory.state import TaskStatus`
+- [x] **T219** Extend `orchid/runner.py` — wire `TaskWatchdog` into `_run_loop()`. Read the file first. Find `_run_loop()` at line 184. `type:code_generate` `p1` `needs:T218` `model:local`
+  - - - - - - Add `from orchid.watchdog import TaskWatchdog` to the imports at the top of the file
+- [x] **T220** Extend `orchid/scheduler.py` — add `has_cycle()` to `DependencyGraph`. Read the file first. Find the `DependencyGraph` class (line 53). Add the method after `get_ready_tasks()`. `type:code_generate` `p1` `model:local`
+  - - - - - - Add this method to `DependencyGraph`:
+```python
+def has_cycle(self) -> bool:
+"""Return True if the dependency graph contains a cycle (DFS)."""
+visited: set[str] = set()
+path: set[str] = set()
+
+def _dfs(node: str) -> bool:
+visited.add(node)
+path.add(node)
+for dep in self._deps.get(node, set()):
+if dep not in visited:
+if _dfs(dep):
+return True
+elif dep in path:
+return True
+path.discard(node)
+return False
+
+for node in list(self._deps):
+if node not in visited:
+if _dfs(node):
+return True
+return False
+```
+- [x] **T221** Extend `orchid/tools/task_injection.py` — call `has_cycle()` after successful task injection to catch runtime cycles. Read the file first. Find the `inject_task()` function at line 59. `type:code_generate` `p1` `needs:T220` `model:local`
+  - - - - - - Add these imports at the top of the file if not already present: `from orchid.scheduler import DependencyGraph, CyclicDependencyError`
+- [x] **T227** Review Tier 1 implementation (T209-T226). Check: subprocess isolation compiles and is importable, cancellation token raises AgentCancelledError, watchdog marks stuck tasks BLOCKED, cycle detection finds cycles, all new tests pass. `type:review` `p1` `needs:T222,T223,T224,T225,T226` `model:claude`
+  - - - - - - Run `python -c "from orchid.worker_protocol import TaskContext, WorkerEvent, WorkerResult"` — must not error
+- [x] **T228** Fix all issues found in T227. Read the T227 result first. Make exactly the fixes listed. `type:code_generate` `p1` `needs:T227` `model:local`
 - [x] **T200** Create `orchid/cost/` package with `__init__.py` and `ledger.py` `type:code_generate` `p1` `model:local`
 - [x] **T201** Create `orchid/cost/scheduler.py` `type:code_generate` `p1` `needs:T200` `model:local`
 - [x] **T202** Add cost config to `orchid/orchid.defaults.yaml` `type:code_generate` `p1` `model:local`
@@ -115,6 +309,25 @@
 - [x] **T008** Fix decisions.json parse error - likely JSON Lines vs single JSON document format mismatch `type:code_generate` `p1`
 - [x] **T002** Hook LLM summarizer into session compression `type:code_generate` `p1`
 - [x] **T001** Review the session.py compression logic and suggest improvements `type:review` `p1`
+- [x] **T245** Create `tests/test_shell_agent_id.py`. Write exactly 3 test functions. `type:code_generate` `p2` `needs:T239` `model:local`
+  - - - - - `test_bash_with_no_agent_id_executes_normally()` — call `bash("echo hello")` with no `agent_id`. Assert result contains "hello".
+- [x] **T242** Create `tests/test_file_locks.py`. Write exactly 5 test functions. `type:code_generate` `p2` `needs:T230` `model:local`
+  - - - - - `test_acquire_and_release_no_exception()` — create `FileLockRegistry()`, call `acquire("test.py")`, call `release("test.py")`, assert no exception
+- [x] **T243** Create `tests/test_react_checkpoint.py`. Write exactly 3 test functions using `tmp_path`. `type:code_generate` `p2` `needs:T232,T233` `model:local`
+  - - - - - `test_save_react_checkpoint_writes_file(tmp_path)` — create `CheckpointStore(tmp_path)`, create `ReActCheckpoint(task_id="T001", iteration=5, conversation_history=[{"role": "user", "content": "hi"}])`, call `store.save_react_checkpoint(cp)`, assert the file `tmp_path / "checkpoints" / "react_T001.json"` exists (or wherever the store saves it — check CheckpointStore `__init__` for `_base_dir`)
+- [x] **T244** Create `tests/test_mailbox.py`. Write exactly 4 test functions. `type:code_generate` `p2` `needs:T236` `model:local`
+  - - - - - `test_send_and_receive()` — get mailbox for "agent-A", send a message with content "hello", call receive, assert `msg.content == "hello"` and `msg.sender == "sender-X"`
+- [x] **T222** Create `tests/test_worker_protocol.py`. Write exactly 4 test functions, no fixtures. `type:code_generate` `p2` `needs:T209` `model:local`
+  - - - - - - `test_taskcontext_to_json_and_from_json()` — create a `TaskContext` with dummy string values, call `to_json()`, call `from_json()` on the result, assert all fields equal the original
+- [x] **T223** Create `tests/test_subprocess_runner.py`. Write exactly 3 test functions using `unittest.mock.patch`. `type:code_generate` `p2` `needs:T211` `model:local`
+  - - - - - - `test_run_task_isolated_success()` — patch `subprocess.Popen` to return a mock whose `.stdout` yields two lines: `WorkerEvent(type="agent_step", task_id="T001", payload={"thought":"x"}).to_json()` and `WorkerResult(task_id="T001", success=True, result="done").to_json()`. Patch `.wait()` to return 0. Assert `SubprocessRunner().run_task_isolated(ctx, None, None).success is True`
+- [x] **T224** Create `tests/test_agent_cancel.py`. Write exactly 3 test functions. `type:code_generate` `p2` `needs:T215,T216` `model:local`
+  - - - - - - `test_cancel_sets_event()` — import `BaseAgent` (or a concrete subclass like `DeveloperAgent`). Create an instance with minimal args (mock project_dir, empty session_context). Call `.cancel()`. Assert `agent._cancel_event.is_set() is True`
+- [x] **T225** Create `tests/test_watchdog.py`. Write exactly 4 test functions using `tmp_path` and mocks. `type:code_generate` `p2` `needs:T218` `model:local`
+  - - - - - - `test_watchdog_starts_and_stops()` — create a mock Session with `tasks=[]`. Create `TaskWatchdog(session, stuck_threshold_s=60)`. Call `start()` then `stop()`. Assert no exception is raised.
+- [x] **T226** Create `tests/test_cycle_detection.py`. Write exactly 3 test functions. `type:code_generate` `p2` `needs:T220` `model:local`
+  - - - - - - Import `DependencyGraph, CyclicDependencyError, Scheduler` from `orchid.scheduler`. Use mock Task objects with `id`, `depends_on`, `rollup_sources`, `status`, `priority` attributes.
+- [x] **T229** Rollup Tier 1 results `type:rollup` `p2` `model:claude` `rollup:T209,T210,T211,T212,T213,T214,T215,T216,T217,T218,T219,T220,T221,T222,T223,T224,T225,T226,T227,T228` `output:TIER1-REPORT.md`
 - [x] **T139** Create `orchid/checkpoint/store.py`. Implement exactly this class: `type:draft` `p2`
 - [x] **T140** Create `orchid/checkpoint/restore.py`. Implement exactly these two functions: `type:draft` `p2`
 - [x] **T141** Extend `orchid/orchestrator.py` — capture checkpoint before each task. Read the file first. In `_execute_task` (line 192), find the line `self.session.update_task_status(task.id, TaskStatus.IN_PROGRESS)`. Add the following block **before** that line: `type:draft` `p2`

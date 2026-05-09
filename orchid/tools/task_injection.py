@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 from orchid import config as cfg
 from orchid.memory.state import Task, TaskStatus, load_tasks, save_tasks
+from orchid.scheduler import DependencyGraph, CyclicDependencyError
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +147,16 @@ def inject_task(
     )
     tasks.append(task)
     save_tasks(tasks, project_dir)
+
+    # T221: Detect dependency cycles introduced by this injection
+    _graph = DependencyGraph(tasks)
+    if _graph.has_cycle():
+        # Roll back the injected task
+        tasks = [t for t in tasks if t.id != new_id]
+        save_tasks(tasks, project_dir)
+        raise CyclicDependencyError(
+            f"inject_task('{title}') would create a dependency cycle — task not added"
+        )
 
     logger.info(
         "Task injected: %s — %s (type=%s, priority=%d, depends_on=%s)",

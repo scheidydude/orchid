@@ -5,6 +5,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from orchid.locks import get_file_lock_registry
+
 
 def read_file(path: str) -> str:
     """Return file contents as a string. Raises FileNotFoundError if missing."""
@@ -13,48 +15,58 @@ def read_file(path: str) -> str:
 
 def write_file(path: str, content: str) -> str:
     """Write content to path, creating parent dirs as needed. Runs syntax check after write."""
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(content, encoding="utf-8")
-    msg = f"Wrote {len(content)} bytes to {path}"
+    registry = get_file_lock_registry()
+    registry.acquire(path)
+    try:
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+        msg = f"Wrote {len(content)} bytes to {path}"
 
-    suffix = p.suffix.lower()
-    if suffix == ".py":
-        try:
-            result = subprocess.run(
-                ["python3", "-m", "py_compile", str(p)],
-                capture_output=True, text=True, timeout=10,
-            )
-            if result.returncode == 0:
-                msg += "\nPython syntax: OK"
-            else:
-                msg += f"\nPython syntax ERROR: {result.stderr.strip()}"
-        except Exception as e:
-            msg += f"\nPython syntax check failed: {e}"
-    elif suffix == ".js":
-        try:
-            result = subprocess.run(
-                ["node", "--check", str(p)],
-                capture_output=True, text=True, timeout=10,
-            )
-            if result.returncode == 0:
-                msg += "\nJS syntax: OK"
-            else:
-                err = (result.stderr or result.stdout).strip()
-                msg += f"\nJS syntax ERROR: {err}"
-        except Exception as e:
-            msg += f"\nJS syntax check failed: {e}"
+        suffix = p.suffix.lower()
+        if suffix == ".py":
+            try:
+                result = subprocess.run(
+                    ["python3", "-m", "py_compile", str(p)],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if result.returncode == 0:
+                    msg += "\nPython syntax: OK"
+                else:
+                    msg += f"\nPython syntax ERROR: {result.stderr.strip()}"
+            except Exception as e:
+                msg += f"\nPython syntax check failed: {e}"
+        elif suffix == ".js":
+            try:
+                result = subprocess.run(
+                    ["node", "--check", str(p)],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if result.returncode == 0:
+                    msg += "\nJS syntax: OK"
+                else:
+                    err = (result.stderr or result.stdout).strip()
+                    msg += f"\nJS syntax ERROR: {err}"
+            except Exception as e:
+                msg += f"\nJS syntax check failed: {e}"
 
-    return msg
+        return msg
+    finally:
+        registry.release(path)
 
 
 def append_file(path: str, content: str) -> str:
     """Append content to path."""
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    with open(p, "a", encoding="utf-8") as f:
-        f.write(content)
-    return f"Appended {len(content)} bytes to {path}"
+    registry = get_file_lock_registry()
+    registry.acquire(path)
+    try:
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "a", encoding="utf-8") as f:
+            f.write(content)
+        return f"Appended {len(content)} bytes to {path}"
+    finally:
+        registry.release(path)
 
 
 def list_dir(path: str = ".") -> str:

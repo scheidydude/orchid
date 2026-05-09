@@ -117,7 +117,7 @@ def _first_word(command: str) -> str:
     return ""
 
 
-def bash(command: str, timeout: int | None = None) -> str:
+def bash(command: str, timeout: int | None = None, agent_id: str = "") -> str:
     """
     Run a bash command and return combined stdout+stderr.
 
@@ -128,6 +128,13 @@ def bash(command: str, timeout: int | None = None) -> str:
     The blocklist patterns always apply regardless of mode.
     Non-zero exit codes are reported in the output, not raised.
     """
+    # T239: Per-agent shell capability check
+    if agent_id:
+        from orchid.agents.base import _get_agent_allowed_tools
+        allowed = _get_agent_allowed_tools(agent_id)
+        if allowed is not None and "bash" not in allowed:
+            return f"[permission denied] Agent '{agent_id}' does not have bash access"
+
     # Blocklist always runs first
     for pattern in _BLOCKED_PATTERNS:
         if pattern.search(command):

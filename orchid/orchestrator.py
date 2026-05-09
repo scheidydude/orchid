@@ -517,6 +517,14 @@ class Orchestrator:
             agent.model_key = decision.model
             agent.delegator = self._delegator
 
+            # T235: Wire ReAct checkpoint store and task_id into agent
+            try:
+                from orchid.checkpoint.store import CheckpointStore
+                agent.set_checkpoint_store(CheckpointStore(self.session.project_dir))
+                agent._current_task_id = task.id
+            except Exception as _cs_err:
+                logger.debug("Could not wire checkpoint store into agent: %s", _cs_err)
+
             # T113: Inject MCP tools into the agent's tool registry
             if self._mcp_manager is not None:
                 mcp_tools = self._mcp_manager.list_tools()
@@ -714,7 +722,14 @@ class Orchestrator:
                 error=str(e)[:500],
             ))
             return {"task_id": task.id, "status": "error", "error": str(e)}
-
+        finally:
+            # T238: Clean up agent mailbox
+            try:
+                if hasattr(agent, "_mailbox_id"):
+                    from orchid.mailbox import drop_mailbox
+                    drop_mailbox(agent._mailbox_id)
+            except Exception:
+                pass
 
     def _get_agent(
         self,

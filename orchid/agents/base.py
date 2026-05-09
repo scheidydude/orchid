@@ -1,6 +1,7 @@
 """Base agent — ReAct loop (Reason → Act → Observe) with pluggable tools."""
 
 from __future__ import annotations
+import threading
 
 import json
 import logging
@@ -98,6 +99,20 @@ def _make_project_tools(project_dir: Path) -> dict[str, ToolFn]:
 
     from orchid.tools.task_injection import spawn_task as _spawn_task_fn
 
+    def _send_message(agent_id: str, content: str) -> str:
+        from orchid.mailbox import get_mailbox
+        mailbox = get_mailbox(agent_id)
+        mailbox.send(sender="agent", content=content)
+        return f"Message sent to agent '{agent_id}'"
+
+    def _receive_message(agent_id: str, timeout_s: float = 0.0) -> str:
+        from orchid.mailbox import get_mailbox
+        mailbox = get_mailbox(agent_id)
+        msg = mailbox.receive(timeout_s=timeout_s)
+        if msg is None:
+            return "[no messages in mailbox]"
+        return f"From {msg.sender}: {msg.content}"
+
     return {
         "read_file": _rr_file,
         "write_file": _rw_file,
@@ -107,6 +122,8 @@ def _make_project_tools(project_dir: Path) -> dict[str, ToolFn]:
         "check_imports": _check_imports,
         "get_task_files": _get_task_files,
         "spawn_task": _spawn_task_fn,
+        "send_message": _send_message,
+        "receive_message": _receive_message,
     }
 
 def _get_task_files_for_project(task_id: str, project_dir: Path) -> str:
@@ -285,6 +302,9 @@ def _extract_json_object(text: str) -> str | None:
     return None
 
 
+class AgentCancelledError(Exception):
+    """Raised when the agent's cancel_event is set mid-run."""
+
 class BaseAgent:
     """
     ReAct agent base class.
@@ -330,6 +350,15 @@ class BaseAgent:
         self.session_context = session_context
         self.history: list[Message] = []
         self.max_iterations = cfg.get("agents.max_react_iterations", 25)
+        # T241: Per-agent-type hard cap from agents.max_iterations config
+        _agent_type_key = self.__class__.__name__.lower().replace("agent", "")
+        _hard_cap = cfg.get(f"agents.max_iterations.{_agent_type_key}", 0)
+        if _hard_cap and _hard_cap > 0:
+            self.max_iterations = _hard_cap
+        self._cancel_event: threading.Event = threading.Event()
+        self._mailbox_id: str = f"{self.__class__.__name__}-{id(self)}"
+        # T234: ReAct checkpoint store — set by orchestrator before run()
+        self._checkpoint_store: Any = None
         # Delegation — set by AgentDelegator when spawning sub-agents
         self.delegator: Any = None
         self.delegation_depth: int = 0
@@ -359,6 +388,32 @@ class BaseAgent:
                     "[%s] allowed_tools restricted; removed: %s",
                     self.__class__.__name__, _removed,
                 )
+
+    def cancel(self) -> None:
+        """Signal the agent to stop after the current iteration."""
+        self._cancel_event.set()
+
+    def set_checkpoint_store(self, store: Any) -> None:
+        """Wire a CheckpointStore into this agent for mid-task ReAct checkpointing."""
+        self._checkpoint_store = store
+
+
+def _get_agent_allowed_tools(agent_id: str) -> frozenset[str] | None:
+    """Return the allowed_tools frozenset for an agent instance by its class name prefix, or None if unrestricted."""
+    # agent_id is typically "ClassName-<id(self)>"
+    class_name = agent_id.split("-")[0].lower()
+    # Map class name to known frozensets
+    # Import subclasses here to avoid circular imports
+    from orchid.agents.tester import TesterAgent
+    from orchid.agents.reviewer import ReviewerAgent
+    from orchid.agents.researcher import ResearcherAgent
+    _AGENT_TOOL_MAP = {
+        "testeragent": TesterAgent.allowed_tools,
+        "revieweragent": ReviewerAgent.allowed_tools,
+        "researcheragent": ResearcherAgent.allowed_tools,
+    }
+    return _AGENT_TOOL_MAP.get(class_name, None)
+
 
     def register_tool(self, name: str, fn: ToolFn) -> None:
         self.tools[name] = fn
@@ -483,7 +538,24 @@ class BaseAgent:
 
         for iteration in range(self.max_iterations):
             # Check for injected context before each iteration
+            # Cancellation check — first statement, before injection queue
+            if self._cancel_event.is_set():
+                raise AgentCancelledError(f"Task cancelled after {iteration} iterations")
+
             self._check_injection_queue()
+
+            # T234: Save mid-task checkpoint every 5 iterations
+            if self._checkpoint_store is not None and iteration > 0 and iteration % 5 == 0:
+                from orchid.checkpoint.schema import ReActCheckpoint
+                _cp = ReActCheckpoint(
+                    task_id=getattr(self, "_current_task_id", "unknown"),
+                    iteration=iteration,
+                    conversation_history=[{"role": m.role, "content": m.content} for m in self.history],
+                )
+                try:
+                    self._checkpoint_store.save_react_checkpoint(_cp)
+                except Exception as _cp_err:
+                    logger.debug("ReAct checkpoint failed at iter %d: %s", iteration, _cp_err)
 
             response = call(
                 messages=self.history,

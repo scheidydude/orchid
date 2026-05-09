@@ -104,6 +104,12 @@ agents:
   verify_syntax_only: false  # T081: when true, skip runtime tests — only run py_compile/node --check
   environment: null          # T080: override auto-detected env (docker|venv|node|python|unknown)
   git_tools_enabled: true    # T166: register git tools (status, diff, log, commit, push, pull, branch)
+  max_iterations:            # per-agent-type hard cap on ReAct iterations (0 = use agents.max_react_iterations)
+    developer: 0
+    tester: 0
+    researcher: 0
+    reviewer: 0
+    base: 0
 
   # Per-agent-type tool allowlists (override in .orchid.yaml)
   # Example:

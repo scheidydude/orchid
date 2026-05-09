@@ -109,3 +109,14 @@ class CheckpointEntry:
             task_id=data.get("task_id", ""),
             size_bytes=data.get("size_bytes", 0),
         )
+
+
+@dataclass
+class ReActCheckpoint:
+    """Mid-task ReAct loop checkpoint — saved every N iterations."""
+
+    task_id: str
+    iteration: int
+    conversation_history: list[dict]  # list of {"role": str, "content": str} dicts
+    partial_result: str = ""
+    timestamp: str = ""  # ISO 8601 UTC, set by store

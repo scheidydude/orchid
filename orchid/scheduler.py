@@ -47,6 +47,13 @@ class ScheduleResult:
         return len(self.ordered)
 
 
+# ── Exception ──────────────────────────────────────────────────────────────────
+
+
+class CyclicDependencyError(Exception):
+    """Raised when inject_task would create a dependency cycle."""
+
+
 # ── Dependency graph ───────────────────────────────────────────────────────────
 
 
@@ -152,6 +159,29 @@ class DependencyGraph:
             if unresolvable:
                 blocked.append(task)
         return blocked
+
+    def has_cycle(self) -> bool:
+        """Return True if the dependency graph contains a cycle (DFS)."""
+        visited: set[str] = set()
+        path: set[str] = set()
+
+        def _dfs(node: str) -> bool:
+            visited.add(node)
+            path.add(node)
+            for dep in self._deps.get(node, set()):
+                if dep not in visited:
+                    if _dfs(dep):
+                        return True
+                elif dep in path:
+                    return True
+            path.discard(node)
+            return False
+
+        for node in list(self._deps):
+            if node not in visited:
+                if _dfs(node):
+                    return True
+        return False
 
 
 # ── Parallel group detector ────────────────────────────────────────────────────

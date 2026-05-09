@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from datetime import datetime, UTC
 from pathlib import Path
 from typing import Any
 
-from orchid.checkpoint.schema import Checkpoint, CheckpointEntry, CheckpointMetadata
+from dataclasses import asdict
+from orchid.checkpoint.schema import Checkpoint, CheckpointEntry, CheckpointMetadata, ReActCheckpoint
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +150,23 @@ class CheckpointStore:
         if removed:
             logger.info("Pruned %d old checkpoint(s), kept %d", removed, keep)
         return removed
+
+    # ── ReAct checkpoint methods ────────────────────────────────────────────────
+
+    def save_react_checkpoint(self, cp: ReActCheckpoint) -> Path:
+        """Save a mid-task ReAct checkpoint. Overwrites previous checkpoint for same task_id."""
+        cp.timestamp = datetime.now(UTC).isoformat()
+        dest = self._dir / f"react_{cp.task_id}.json"
+        dest.write_text(json.dumps(asdict(cp)))
+        return dest
+
+    def load_react_checkpoint(self, task_id: str) -> ReActCheckpoint | None:
+        """Load a mid-task ReAct checkpoint for task_id, or None if not found."""
+        path = self._dir / f"react_{task_id}.json"
+        if not path.exists():
+            return None
+        data = json.loads(path.read_text())
+        return ReActCheckpoint(**data)
 
     # ── Internal helpers ────────────────────────────────────────────────────────
 
