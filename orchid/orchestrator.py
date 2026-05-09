@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json as _json
 import logging
+import threading
 import time
 from collections import defaultdict
 from collections.abc import Callable
@@ -517,7 +518,31 @@ class Orchestrator:
                 agent.tools["write_file"] = _tracking_write
 
             _task_run_start = time.monotonic()
-            result_text = agent.run(plan)
+
+            # T217: Start wall-clock cancellation timer if max_task_seconds is set
+            _max_s = cfg.get("isolation.max_task_seconds", 0)
+            _cancel_timer: threading.Timer | None = None
+            if _max_s and _max_s > 0 and not cfg.get("isolation.subprocess_enabled", False):
+                _cancel_timer = threading.Timer(_max_s, agent.cancel)
+                _cancel_timer.daemon = True
+                _cancel_timer.start()
+
+            if cfg.get("isolation.subprocess_enabled", False):
+                result_text = self._run_task_isolated(
+                    task=task,
+                    plan=plan,
+                    session_context=session_context,
+                    stream_cb=stream_cb,
+                    agent_type=agent_type,
+                    decision=decision,
+                )
+            else:
+                result_text = agent.run(plan)
+
+            # T217: Cancel the wall-clock timer after agent run completes
+            if _cancel_timer is not None:
+                _cancel_timer.cancel()
+
             # T203/T204: Record token/cost in ledger and scheduler after agent run
             # Token counts default to zero until provider metadata is wired (T203b)
             self._record_cost_for_task(task, decision)
@@ -562,7 +587,6 @@ class Orchestrator:
                     "reason": result_text[:500],
                     "delegations": delegation_count,
                 })
-                self._update_hot_memory(task, f"FAILED: {result_text}")
                 self._write_task_metrics(
                     task=task,
                     status="blocked",
@@ -598,7 +622,6 @@ class Orchestrator:
                 TaskResultStore(self.session.project_dir).append(
                     task.id, task.title, task.type, result_text
                 )
-                self._update_hot_memory(task, result_text)
                 self._write_task_metrics(
                     task=task,
                     status="done",
@@ -1097,7 +1120,6 @@ class Orchestrator:
             "output_file": output_filename,
         })
         store.append(task.id, task.title, task.type, result_msg)
-        self._update_hot_memory(task, result_msg)
         # T096: Fire task_complete hook
         self._fire_task_complete_hook(task, result_msg, [output_filename])
         # Emit typed TaskCompleteEvent via stream emitter
@@ -1152,13 +1174,6 @@ class Orchestrator:
         # Insert at front of pending tasks (after any already in-progress)
         self.session.tasks.insert(0, verify_task)
         logger.info("Auto-verify task inserted: %s targeting %s", verify_task.id, files_str[:80])
-
-    def _update_hot_memory(self, task: Task, result: str) -> None:
-        summary_line = f"\n- [{task.id}] {task.title}: {result[:200].strip()}\n"
-        if "## Recent Completions" in self.session.hot_memory:
-            self.session.hot_memory += summary_line
-        else:
-            self.session.hot_memory += "\n## Recent Completions\n" + summary_line
 
     def _write_task_metrics(
         self,

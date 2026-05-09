@@ -373,7 +373,6 @@ class Orchestrator:
                     "reason": result_text[:500],
                     "delegations": delegation_count,
                 })
-                self._update_hot_memory(task, f"FAILED: {result_text}")
                 self._write_task_metrics(
                     task=task,
                     status="blocked",
@@ -403,7 +402,6 @@ class Orchestrator:
                 TaskResultStore(self.session.project_dir).append(
                     task.id, task.title, task.type, result_text
                 )
-                self._update_hot_memory(task, result_text)
                 self._write_task_metrics(
                     task=task,
                     status="done",
@@ -705,7 +703,6 @@ class Orchestrator:
             "output_file": output_filename,
         })
         store.append(task.id, task.title, task.type, result_msg)
-        self._update_hot_memory(task, result_msg)
         # T096: Fire task_complete hook
         self._fire_task_complete_hook(task, result_msg, [output_filename])
 
@@ -753,13 +750,6 @@ class Orchestrator:
         # Insert at front of pending tasks (after any already in-progress)
         self.session.tasks.insert(0, verify_task)
         logger.info("Auto-verify task inserted: %s targeting %s", verify_task.id, files_str[:80])
-
-    def _update_hot_memory(self, task: Task, result: str) -> None:
-        summary_line = f"\n- [{task.id}] {task.title}: {result[:200].strip()}\n"
-        if "## Recent Completions" in self.session.hot_memory:
-            self.session.hot_memory += summary_line
-        else:
-            self.session.hot_memory += "\n## Recent Completions\n" + summary_line
 
     def _write_task_metrics(
         self,

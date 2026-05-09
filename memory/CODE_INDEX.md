@@ -43,7 +43,6 @@ _Last updated: 2026-05-03 (T092–T104 gap fixes)_
   - `_execute_rollup_task(task)` — synthesize multi-task results
   - `_insert_auto_review_task()` — inject auto-review (T043)
   - `_insert_auto_verify_task(source_task, files)` — inject verify (T083)
-  - `_update_hot_memory(task, result)`
   - `_write_task_metrics(...)`
 
 ### orchid/session.py

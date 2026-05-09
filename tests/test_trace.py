@@ -156,8 +156,7 @@ def test_orchestrator_trace_log_written_on_task(tmp_path):
          patch.object(session, "log_event"), \
          patch.object(session, "context_block", return_value="## Context\nTest project"), \
          patch("orchid.memory.state.TaskResultStore.append"), \
-         patch("orchid.memory.state.save_tasks"), \
-         patch.object(orch, "_update_hot_memory"):
+         patch("orchid.memory.state.save_tasks"):
         mock_call.return_value = "Final Answer: done"
         task = session.tasks[0]
         orch._execute_task(task)
