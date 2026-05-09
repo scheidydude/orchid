@@ -3,6 +3,10 @@
 Uses the discovery document (.well-known/openid-configuration) to find
 authorization, token, and userinfo endpoints. Google and Entra ID are
 subclasses that pre-set the discovery URL.
+
+PKCE (S256) is supported end-to-end: code_challenge is added to the
+authorization URL and code_verifier is forwarded to the token endpoint so
+the provider can verify it.
 """
 from __future__ import annotations
 
@@ -51,24 +55,33 @@ class GenericOIDCProvider(OIDCProvider):
                 self._metadata = r.json()
         return self._metadata
 
-    async def authorization_url(self, state: str) -> str:
+    async def authorization_url(
+        self,
+        state: str,
+        code_challenge: str = "",
+        code_challenge_method: str = "S256",
+    ) -> str:
         meta = await self._get_metadata()
-        params = {
+        params: dict = {
             "response_type": "code",
             "client_id": self.client_id,
             "redirect_uri": self.redirect_uri,
             "scope": self.scopes,
             "state": state,
         }
+        if code_challenge:
+            params["code_challenge"] = code_challenge
+            params["code_challenge_method"] = code_challenge_method
         return f"{meta['authorization_endpoint']}?{urlencode(params)}"
 
     async def handle_callback(
         self,
         code: str,
         store: "UserStore",
+        code_verifier: str = "",
     ) -> tuple[User, OAuthAccount]:
         meta = await self._get_metadata()
-        tokens = await self._exchange_code(meta["token_endpoint"], code)
+        tokens = await self._exchange_code(meta["token_endpoint"], code, code_verifier)
         userinfo = await self._fetch_userinfo(meta["userinfo_endpoint"], tokens["access_token"])
 
         provider_user_id = userinfo.get("sub", "")
@@ -90,19 +103,18 @@ class GenericOIDCProvider(OIDCProvider):
             expires_at=expires_at,
         )
 
-    async def _exchange_code(self, token_endpoint: str, code: str) -> dict:
+    async def _exchange_code(self, token_endpoint: str, code: str, code_verifier: str = "") -> dict:
+        data: dict = {
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": self.redirect_uri,
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+        }
+        if code_verifier:
+            data["code_verifier"] = code_verifier
         async with httpx.AsyncClient() as client:
-            r = await client.post(
-                token_endpoint,
-                data={
-                    "grant_type": "authorization_code",
-                    "code": code,
-                    "redirect_uri": self.redirect_uri,
-                    "client_id": self.client_id,
-                    "client_secret": self.client_secret,
-                },
-                timeout=15,
-            )
+            r = await client.post(token_endpoint, data=data, timeout=15)
             r.raise_for_status()
             tokens = r.json()
         if "access_token" not in tokens:

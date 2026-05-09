@@ -21,16 +21,29 @@ class OIDCProvider(ABC):
         """URL-safe identifier used in /api/auth/oauth/{slug}/start."""
 
     @abstractmethod
-    async def authorization_url(self, state: str) -> str:
-        """Return the provider's authorization URL to redirect the browser to."""
+    async def authorization_url(
+        self,
+        state: str,
+        code_challenge: str = "",
+        code_challenge_method: str = "S256",
+    ) -> str:
+        """Return the provider's authorization URL.
+
+        When code_challenge is provided (PKCE/mobile flow), it is included
+        in the authorization URL for the provider to verify later.
+        """
 
     @abstractmethod
     async def handle_callback(
         self,
         code: str,
         store: "UserStore",
+        code_verifier: str = "",
     ) -> tuple[User, OAuthAccount]:
-        """Exchange authorization code → tokens → userinfo → (user, oauth_account)."""
+        """Exchange authorization code → tokens → userinfo → (user, oauth_account).
+
+        code_verifier is passed to the token endpoint when PKCE is in use.
+        """
 
 
 def link_or_create_user(
@@ -47,13 +60,13 @@ def link_or_create_user(
     Priority:
     1. Existing OAuthAccount with same provider + provider_user_id → reuse.
     2. Existing User with same email → link the new OAuth account to them.
-    3. Create a new User (no password — OAuth-only).
+    3. Create a new User (no password — OAuth-only account).
     """
     existing_oa = store.get_oauth_account(provider, provider_user_id)
     if existing_oa:
         user = store.get_user(existing_oa.user_id)
         if user and user.is_active:
-            # Refresh stored access/refresh tokens
+            # Refresh stored provider tokens
             existing_oa.access_token = access_token
             if refresh_token:
                 existing_oa.refresh_token = refresh_token
@@ -61,7 +74,6 @@ def link_or_create_user(
             store.store_oauth_account(existing_oa)
             return user, existing_oa
 
-    # Find by email
     user = store.get_user_by_email(email) if email else None
 
     if user is None:
@@ -89,7 +101,6 @@ def link_or_create_user(
 
 
 def _derive_username(store: "UserStore", email: str, fallback: str) -> str:
-    """Derive a unique username from email, appending a counter if needed."""
     base = email.split("@")[0] if email else fallback
     candidate = base
     counter = 1

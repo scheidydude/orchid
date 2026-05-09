@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import hashlib
 import secrets
 from collections import deque
 from datetime import datetime, timedelta, timezone
@@ -323,11 +325,17 @@ async def revoke_api_key(key_id: str, current_user: User = Depends(get_current_u
 # OAuth 2.0 / OIDC endpoints (Phase 3)
 # ------------------------------------------------------------------
 
-def _create_oauth_state(provider_slug: str) -> str:
+def _create_oauth_state(
+    provider_slug: str,
+    code_challenge: str = "",
+    code_challenge_method: str = "S256",
+) -> str:
     state = secrets.token_urlsafe(32)
     _oauth_states[state] = {
         "provider": provider_slug,
         "expires_at": datetime.now(timezone.utc) + timedelta(minutes=10),
+        "code_challenge": code_challenge,
+        "code_challenge_method": code_challenge_method,
     }
     return state
 
@@ -341,14 +349,32 @@ def _consume_oauth_state(state: str) -> dict:
     return data
 
 
+def _verify_pkce_s256(code_verifier: str, code_challenge: str) -> bool:
+    """Verify PKCE S256 challenge. Timing-safe comparison."""
+    digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
+    computed = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    return secrets.compare_digest(computed, code_challenge)
+
+
 @app.get("/api/auth/oauth/{provider_slug}/start")
-async def oauth_start(provider_slug: str):
-    """Redirect the browser to the provider's authorization page."""
+async def oauth_start(
+    provider_slug: str,
+    code_challenge: str = "",
+    code_challenge_method: str = "S256",
+):
+    """Redirect the browser to the provider's authorization page.
+
+    For mobile PKCE flows, pass code_challenge and code_challenge_method
+    as query params. The challenge is forwarded to the provider and stored
+    in state for later verification.
+    """
     provider = _provider_registry.get(provider_slug)
     if provider is None:
         raise HTTPException(404, f"OAuth provider '{provider_slug}' not configured")
-    state = _create_oauth_state(provider_slug)
-    url = await provider.authorization_url(state)
+    if code_challenge and code_challenge_method != "S256":
+        raise HTTPException(400, "Only code_challenge_method=S256 is supported")
+    state = _create_oauth_state(provider_slug, code_challenge, code_challenge_method)
+    url = await provider.authorization_url(state, code_challenge, code_challenge_method)
     return RedirectResponse(url, status_code=302)
 
 
@@ -356,8 +382,9 @@ async def _resolve_oauth_callback(
     provider_slug: str,
     code: str,
     state: str,
+    code_verifier: str = "",
 ) -> tuple[str, str]:
-    """Validate state, exchange code, issue Orchid tokens.
+    """Validate state + PKCE, exchange code, issue Orchid tokens.
 
     Returns (access_token, refresh_raw).
     """
@@ -369,13 +396,20 @@ async def _resolve_oauth_callback(
     if state_data["provider"] != provider_slug:
         raise HTTPException(400, "OAuth state provider mismatch")
 
+    stored_challenge = state_data.get("code_challenge", "")
+    if stored_challenge:
+        if not code_verifier:
+            raise HTTPException(400, "code_verifier required for PKCE flow")
+        if not _verify_pkce_s256(code_verifier, stored_challenge):
+            raise HTTPException(400, "PKCE verification failed: invalid code_verifier")
+
     provider = _provider_registry.get(provider_slug)
     if provider is None:
         raise HTTPException(404, f"OAuth provider '{provider_slug}' not configured")
 
     store = _get_auth_store()
     try:
-        user, _oa = await provider.handle_callback(code, store)
+        user, _oa = await provider.handle_callback(code, store, code_verifier=code_verifier)
     except AuthError as exc:
         raise HTTPException(401, str(exc))
     except Exception as exc:
@@ -409,7 +443,7 @@ async def oauth_callback_get(provider_slug: str, request: Request):
 
 @app.post("/api/auth/oauth/{provider_slug}/callback")
 async def oauth_callback_post(provider_slug: str, request: Request, response: Response):
-    """Handle OAuth callback via POST (some providers; also mobile token exchange)."""
+    """Handle OAuth callback via POST (some providers use POST redirects)."""
     try:
         body = await request.json()
         code = body.get("code", "")
@@ -423,6 +457,39 @@ async def oauth_callback_post(provider_slug: str, request: Request, response: Re
     access_token, refresh_raw = await _resolve_oauth_callback(provider_slug, code, state)
     _set_auth_cookies(response, access_token, refresh_raw)
     return {"access_token": access_token}
+
+
+@app.post("/api/auth/oauth/{provider_slug}/token")
+async def oauth_token_mobile(provider_slug: str, data: dict):
+    """Mobile PKCE token exchange endpoint (Phase 4).
+
+    After the provider redirects to the app's deep link with the authorization
+    code, the mobile app calls this endpoint with the code and code_verifier.
+    Returns JSON tokens (no cookies — mobile apps manage tokens directly).
+
+    Flow:
+      Mobile → GET /start?code_challenge=... → provider → deep link with code
+      Mobile → POST /token {code, state, code_verifier}
+             ← {access_token, refresh_token, token_type, expires_in}
+    """
+    code = data.get("code", "").strip()
+    state = data.get("state", "").strip()
+    code_verifier = data.get("code_verifier", "").strip()
+
+    if not code or not state:
+        raise HTTPException(400, "code and state required")
+    if not code_verifier:
+        raise HTTPException(400, "code_verifier required for mobile PKCE flow")
+
+    access_token, refresh_raw = await _resolve_oauth_callback(
+        provider_slug, code, state, code_verifier=code_verifier
+    )
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_raw,
+        "token_type": "Bearer",
+        "expires_in": 900,
+    }
 
 
 @app.get("/api/auth/oauth/providers")
@@ -744,3 +811,66 @@ def _get_project_or_none(project_id: str):
         if p['id'] == project_id:
             return p
     return None
+
+
+# ------------------------------------------------------------------
+# Mobile task endpoints (Phase 4)
+# ------------------------------------------------------------------
+
+@app.post("/api/projects/{project_id}/run/authenticated")
+async def run_project_authenticated(
+    project_id: str,
+    current_user: User = Depends(require_scope("tasks:run")),
+):
+    """Scope-gated project run for mobile/API key clients.
+
+    Identical to POST /api/projects/{project_id}/run but requires
+    'tasks:run' scope. API keys without this scope are rejected.
+    """
+    project = _get_project(project_id)
+    runner.start(project["path"])
+    return {"ok": True, "project_id": project_id}
+
+
+@app.get("/api/projects/{project_id}/stream/sse")
+async def stream_project_sse(
+    project_id: str,
+    request: Request,
+    current_user: User = Depends(require_scope("tasks:read")),
+):
+    """SSE stream of project run output.
+
+    Mobile-compatible alternative to the NDJSON WebSocket stream.
+    Each event is a Server-Sent Event with a JSON payload.
+    The stream ends when the run finishes or the client disconnects.
+    """
+    project = _get_project(project_id)
+    project_path = project["path"]
+
+    async def event_generator():
+        log_file = Path(project_path) / ".orchid" / "current.log"
+        last_pos = 0
+
+        yield f"data: {{}}\n\n"  # connection established heartbeat
+
+        while True:
+            if await request.is_disconnected():
+                break
+            if log_file.exists():
+                size = log_file.stat().st_size
+                if size > last_pos:
+                    with open(log_file) as f:
+                        f.seek(last_pos)
+                        new_content = f.read()
+                    last_pos = size
+                    for line in new_content.splitlines():
+                        if line:
+                            import json as _json
+                            yield f"data: {_json.dumps({'line': line})}\n\n"
+            status = runner.get_status(project_path)
+            if not status.get("running", False) and last_pos > 0:
+                yield "event: done\ndata: {}\n\n"
+                break
+            await asyncio.sleep(0.3)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")

@@ -1008,3 +1008,281 @@ class TestOAuthEndpoints:
         import asyncio
         u1, u2 = asyncio.get_event_loop().run_until_complete(do_callback())
         assert u1.user_id == u2.user_id
+
+
+# ── Phase 4: PKCE / Mobile ────────────────────────────────────────────────────
+
+class TestPKCEHelpers:
+    """Unit tests for PKCE S256 verification."""
+
+    def test_valid_verifier_passes(self):
+        import hashlib, base64
+        verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+        digest = hashlib.sha256(verifier.encode("ascii")).digest()
+        challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+        import orchid.web.server as srv
+        assert srv._verify_pkce_s256(verifier, challenge) is True
+
+    def test_wrong_verifier_fails(self):
+        import hashlib, base64
+        verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+        digest = hashlib.sha256(verifier.encode("ascii")).digest()
+        challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+        import orchid.web.server as srv
+        assert srv._verify_pkce_s256("wrong-verifier", challenge) is False
+
+    def test_rfc7636_test_vector(self):
+        """RFC 7636 Appendix B test vector."""
+        import hashlib, base64
+        verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+        expected_challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+
+        import orchid.web.server as srv
+        assert srv._verify_pkce_s256(verifier, expected_challenge) is True
+
+
+class TestPKCEOAuthFlow:
+    """Integration tests for PKCE-enabled OAuth start → /token flow."""
+
+    @respx.mock
+    def test_start_with_pkce_includes_challenge_in_redirect(self, oauth_client):
+        import hashlib, base64
+        verifier = "test-code-verifier-long-enough-for-pkce-flow"
+        digest = hashlib.sha256(verifier.encode("ascii")).digest()
+        challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+        respx.get("https://mock-idp.example.com/.well-known/openid-configuration").mock(
+            return_value=_httpx.Response(200, json=_DISCOVERY)
+        )
+        r = oauth_client.get(
+            f"/api/auth/oauth/mock-idp/start"
+            f"?code_challenge={challenge}&code_challenge_method=S256"
+        )
+        assert r.status_code == 302
+        location = r.headers["location"]
+        assert f"code_challenge={challenge}" in location
+        assert "code_challenge_method=S256" in location
+
+    @respx.mock
+    def test_start_rejects_non_s256_method(self, oauth_client):
+        r = oauth_client.get(
+            "/api/auth/oauth/mock-idp/start"
+            "?code_challenge=abc&code_challenge_method=plain"
+        )
+        assert r.status_code == 400
+
+    @respx.mock
+    def test_state_stores_pkce_challenge(self, oauth_client):
+        import hashlib, base64, orchid.web.server as srv
+
+        verifier = "test-verifier-long-enough-for-pkce-abc123"
+        digest = hashlib.sha256(verifier.encode("ascii")).digest()
+        challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+        respx.get("https://mock-idp.example.com/.well-known/openid-configuration").mock(
+            return_value=_httpx.Response(200, json=_DISCOVERY)
+        )
+        r = oauth_client.get(
+            f"/api/auth/oauth/mock-idp/start?code_challenge={challenge}&code_challenge_method=S256"
+        )
+        from urllib.parse import urlparse, parse_qs
+        state = parse_qs(urlparse(r.headers["location"]).query)["state"][0]
+
+        stored = srv._oauth_states.get(state)
+        assert stored is not None
+        assert stored["code_challenge"] == challenge
+
+    @respx.mock
+    def test_mobile_token_endpoint_success(self, oauth_client):
+        """Full PKCE mobile flow: /start → state → POST /token with verifier."""
+        import hashlib, base64, orchid.web.server as srv
+
+        verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+        digest = hashlib.sha256(verifier.encode("ascii")).digest()
+        challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+        respx.get("https://mock-idp.example.com/.well-known/openid-configuration").mock(
+            return_value=_httpx.Response(200, json=_DISCOVERY)
+        )
+        respx.post("https://mock-idp.example.com/token").mock(
+            return_value=_httpx.Response(200, json=_TOKEN_RESPONSE)
+        )
+        respx.get("https://mock-idp.example.com/userinfo").mock(
+            return_value=_httpx.Response(200, json=_USERINFO)
+        )
+
+        start = oauth_client.get(
+            f"/api/auth/oauth/mock-idp/start?code_challenge={challenge}&code_challenge_method=S256"
+        )
+        from urllib.parse import urlparse, parse_qs
+        state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
+
+        r = oauth_client.post(
+            "/api/auth/oauth/mock-idp/token",
+            json={"code": "authcode", "state": state, "code_verifier": verifier},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert "access_token" in body
+        assert "refresh_token" in body
+        assert body["token_type"] == "Bearer"
+        assert body["expires_in"] == 900
+
+    @respx.mock
+    def test_mobile_token_wrong_verifier_rejected(self, oauth_client):
+        """PKCE fails when code_verifier doesn't match stored challenge."""
+        import hashlib, base64, orchid.web.server as srv
+
+        real_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+        digest = hashlib.sha256(real_verifier.encode("ascii")).digest()
+        challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+        respx.get("https://mock-idp.example.com/.well-known/openid-configuration").mock(
+            return_value=_httpx.Response(200, json=_DISCOVERY)
+        )
+        start = oauth_client.get(
+            f"/api/auth/oauth/mock-idp/start?code_challenge={challenge}&code_challenge_method=S256"
+        )
+        from urllib.parse import urlparse, parse_qs
+        state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
+
+        r = oauth_client.post(
+            "/api/auth/oauth/mock-idp/token",
+            json={"code": "code", "state": state, "code_verifier": "wrong-verifier"},
+        )
+        assert r.status_code == 400
+        assert "PKCE" in r.json()["detail"]
+
+    @respx.mock
+    def test_mobile_token_missing_verifier_rejected(self, oauth_client):
+        import hashlib, base64, orchid.web.server as srv
+
+        verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+        digest = hashlib.sha256(verifier.encode("ascii")).digest()
+        challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+        respx.get("https://mock-idp.example.com/.well-known/openid-configuration").mock(
+            return_value=_httpx.Response(200, json=_DISCOVERY)
+        )
+        start = oauth_client.get(
+            f"/api/auth/oauth/mock-idp/start?code_challenge={challenge}&code_challenge_method=S256"
+        )
+        from urllib.parse import urlparse, parse_qs
+        state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
+
+        # Missing code_verifier
+        r = oauth_client.post(
+            "/api/auth/oauth/mock-idp/token",
+            json={"code": "code", "state": state},
+        )
+        assert r.status_code == 400
+
+    @respx.mock
+    def test_pkce_not_required_without_challenge(self, oauth_client):
+        """Without code_challenge in state, /token flow works without verifier."""
+        import orchid.web.server as srv
+
+        respx.get("https://mock-idp.example.com/.well-known/openid-configuration").mock(
+            return_value=_httpx.Response(200, json=_DISCOVERY)
+        )
+        # Inject state manually with no PKCE
+        state = "no-pkce-state"
+        srv._oauth_states[state] = {
+            "provider": "mock-idp",
+            "expires_at": datetime.now(timezone.utc) + timedelta(minutes=5),
+            "code_challenge": "",
+            "code_challenge_method": "S256",
+        }
+        # Without PKCE challenge, verifier not required, but /token still requires it
+        # (mobile endpoint always demands code_verifier)
+        r = oauth_client.post(
+            "/api/auth/oauth/mock-idp/token",
+            json={"code": "c", "state": state},  # no code_verifier
+        )
+        assert r.status_code == 400  # /token always requires code_verifier
+
+    @respx.mock
+    def test_oidc_provider_forwards_code_verifier_to_token_exchange(self, oauth_client):
+        """Verify code_verifier is included in the token exchange request to provider."""
+        import orchid.web.server as srv
+
+        verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+
+        token_mock = respx.post("https://mock-idp.example.com/token").mock(
+            return_value=_httpx.Response(200, json=_TOKEN_RESPONSE)
+        )
+        respx.get("https://mock-idp.example.com/.well-known/openid-configuration").mock(
+            return_value=_httpx.Response(200, json=_DISCOVERY)
+        )
+        respx.get("https://mock-idp.example.com/userinfo").mock(
+            return_value=_httpx.Response(200, json=_USERINFO)
+        )
+
+        async def do_exchange():
+            provider = srv._provider_registry.get("mock-idp")
+            store = srv._auth_store
+            return await provider.handle_callback("authcode", store, code_verifier=verifier)
+
+        import asyncio
+        asyncio.get_event_loop().run_until_complete(do_exchange())
+
+        assert token_mock.called
+        sent_body = token_mock.calls[0].request.content.decode()
+        assert "code_verifier" in sent_body
+        assert verifier in sent_body
+
+
+class TestMobileTaskEndpoints:
+    """Scope-gated project run and SSE stream."""
+
+    def _login(self, client, username="dave", password="pw"):
+        client.post("/api/auth/register", json={"username": username, "password": password})
+        client.post("/api/auth/login", json={"username": username, "password": password})
+
+    def test_run_with_tasks_run_scope(self, client, monkeypatch):
+        import orchid.web.server as srv
+        monkeypatch.setattr(srv.runner, "start", lambda path: None)
+
+        self._login(client)
+        r = client.post("/api/auth/apikeys", json={"name": "ci", "scopes": ["tasks:run"]})
+        key = r.json()["secret"]
+        client.post("/api/auth/logout")
+        client.cookies.clear()
+
+        r = client.post(
+            "/api/projects/proj1/run/authenticated",
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        # 404 because registry.list_projects() returns mock — that's expected
+        # The important thing is it doesn't return 401/403
+        assert r.status_code != 401
+        assert r.status_code != 403
+
+    def test_run_without_tasks_run_scope_blocked(self, client):
+        self._login(client)
+        r = client.post("/api/auth/apikeys", json={"name": "ro", "scopes": ["tasks:read"]})
+        key = r.json()["secret"]
+        client.post("/api/auth/logout")
+        client.cookies.clear()
+
+        r = client.post(
+            "/api/projects/proj1/run/authenticated",
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        assert r.status_code == 403
+
+    def test_run_unauthenticated_blocked(self, client):
+        r = client.post("/api/projects/proj1/run/authenticated")
+        assert r.status_code == 401
+
+    def test_jwt_session_can_run(self, client, monkeypatch):
+        """Logged-in users (JWT) pass scope check for tasks:run."""
+        import orchid.web.server as srv
+        monkeypatch.setattr(srv.runner, "start", lambda path: None)
+
+        self._login(client)
+        r = client.post("/api/projects/proj1/run/authenticated")
+        assert r.status_code != 401
+        assert r.status_code != 403
