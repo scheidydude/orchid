@@ -868,6 +868,122 @@ orchid --project ~/projects/webtron --mode auto --output-format stream-json | jq
 
 The web server also exposes an NDJSON streaming endpoint at `GET /api/projects/{id}/stream`.
 
+## Agentic OS Runtime
+
+Orchid V2.2 closes a full set of OS-grade reliability and isolation gaps, making it safe to run in production and viable for team/shared deployments.
+
+### Process Isolation and Cancellation
+
+Tasks can be run in isolated child processes. A cancellation token flows through the entire ReAct loop so any iteration can be interrupted cleanly.
+
+```yaml
+# .orchid.yaml
+isolation:
+  subprocess: true         # run each task in a child process (default: false)
+  max_task_seconds: 300    # wall-clock timeout; kills child after N seconds
+```
+
+The `SubprocessRunner` passes task context as stdin JSON and receives typed NDJSON events from the child. An in-process `threading.Event` cancellation path is also available for non-subprocess mode.
+
+### Stuck-Task Watchdog
+
+`TaskWatchdog` runs as a background daemon thread. If a task remains `IN_PROGRESS` for longer than the configured threshold with no iteration progress, it fires a `task.stuck` hook event and marks the task `BLOCKED`.
+
+```yaml
+watchdog:
+  enabled: true
+  stall_threshold_minutes: 30
+```
+
+### Dependency Cycle Detection
+
+`DependencyGraph.has_cycle()` is checked after every `spawn_task()` call at runtime. A dynamically-injected task that would create a cycle raises `CycleError` immediately, preventing silent scheduler deadlock.
+
+### File Advisory Locks
+
+`FileLockRegistry` (`orchid/locks.py`) serializes parallel agents writing to the same file. `write_file` and `append_file` acquire a per-path `threading.Lock` before writing and release it on completion. Last-write-wins corruption in parallel task groups is eliminated.
+
+### Mid-Task ReAct Checkpointing
+
+`BaseAgent` saves a `ReActCheckpoint` every 5 iterations to `.orchid/checkpoints/mid-<task_id>.json`. On crash or cancellation the orchestrator can resume the ReAct loop from the last saved iteration rather than restarting the task from scratch.
+
+### Agent Mailbox (IPC)
+
+Each agent instance has an `AgentMailbox` — a thread-safe message queue. Agents can send and receive structured messages via `send_message` / `receive_message` ReAct tools, enabling synchronous inter-agent coordination without spawning new tasks.
+
+### Max-Iterations Hard Cap
+
+`BaseAgent.run()` enforces a per-agent-type `max_iterations` limit defined in `orchid.defaults.yaml` (and overridable in `.orchid.yaml`). Exceeding the cap raises `MaxIterationsError`, caught by the orchestrator and recorded as a blocked task. This bounds runaway agents regardless of token spend.
+
+```yaml
+agents:
+  max_iterations:
+    developer: 50
+    researcher: 30
+    reviewer: 20
+```
+
+### Capability Registry
+
+`CAPABILITY_REGISTRY` (`orchid/capability.py`) declares the required tools, memory access, and network permissions for each agent type as `AgentCapability` dataclasses. The orchestrator validates agent capabilities at spawn time against the project's tool registry.
+
+### Remote Worker Protocol
+
+Orchid can dispatch tasks to remote worker nodes via HTTP. The `RemoteDispatcher` selects an available node from a pool, sends a `RemoteTaskRequest`, streams back typed events, and merges the remote worker's cost ledger into the local ledger.
+
+```yaml
+# .orchid.yaml
+remote:
+  workers:
+    - url: "http://worker-1:8001"
+      max_parallel: 2
+    - url: "http://worker-2:8001"
+      max_parallel: 2
+```
+
+Start a worker node:
+
+```bash
+# On the remote machine
+orchid worker --port 8001
+```
+
+Worker nodes expose `/health`, `/task` (POST), and `/ledger` (GET) endpoints via FastAPI (`orchid/remote/worker_server.py`).
+
+### Auth Layer and Per-User Quotas
+
+`orchid serve` supports token-based auth via `UserStore` and `AuthMiddleware`. Each user token maps to an account with per-user API key scoping and a daily USD budget enforced by `CostScheduler.check_user_budget()`.
+
+```yaml
+# .orchid.yaml
+auth:
+  enabled: false    # default: false (localhost only)
+  token_ttl_hours: 24
+```
+
+### Container Isolation
+
+When Docker is available, tasks can run inside a minimal container image for the strongest isolation boundary.
+
+```yaml
+isolation:
+  container: true          # requires Docker on host
+  container_image: "python:3.12-slim"
+```
+
+`ContainerRunner` (`orchid/container_runner.py`) falls back gracefully to subprocess isolation when Docker is unavailable.
+
+### Checkpoint Export
+
+Checkpoints can be exported to a portable JSON file for transfer between machines or archival:
+
+```bash
+orchid --project PATH --export-checkpoint CP-20260508-T042 > checkpoint.json
+orchid --project PATH --import-checkpoint checkpoint.json
+```
+
+---
+
 ## Architecture
 
 ```
@@ -879,9 +995,16 @@ gates.py             human|auto gate system for lifecycle transitions
 machine_profile.py   developer preferences at ~/.config/orchid/machine-profile.yaml
 discovery.py         auto-discovery: scan watch_dirs, watchdog inotify watcher
 agent_manager.py     per-project agent loop threads, APScheduler cron support
-scheduler.py         DependencyGraph, parallel group detection, topological sort
+scheduler.py         DependencyGraph, parallel group detection, topological sort; has_cycle()
 agent_pool.py        LRU cache of pre-instantiated agents; idle eviction thread
 worktree.py          WorktreeManager: isolated git worktrees per delegated task
+subprocess_runner.py SubprocessRunner: child-process task isolation, stdin/stdout NDJSON
+worker_protocol.py   TaskContext, WorkerEvent, WorkerResult dataclasses for subprocess protocol
+watchdog.py          TaskWatchdog: background thread; fires task.stuck hook on stall
+locks.py             FileLockRegistry: per-path threading.Lock for parallel write safety
+mailbox.py           AgentMailbox: thread-safe per-agent message queue
+capability.py        CAPABILITY_REGISTRY: AgentCapability declarations, get_capability()
+container_runner.py  ContainerRunner: Docker-based isolation (opt-in, graceful fallback)
 
 agents/
   base.py            ReAct loop (Reason → Act → Observe), tool dispatch, allowed_tools filter
@@ -941,6 +1064,16 @@ mcp/
   adapter.py         MCPAdapter: wraps client, caches tool list
   manager.py         MCPManager: multi-server lifecycle, tool injection
 
+remote/
+  types.py           WorkerNode, RemoteTaskRequest, RemoteTaskResponse dataclasses
+  worker_server.py   FastAPI worker node server (/health, /task, /ledger)
+  dispatcher.py      RemoteDispatcher: node selection, retry, ledger merge
+
+auth/
+  types.py           User, AuthError dataclasses
+  store.py           UserStore: JSON-backed user registry with all fields
+  middleware.py      AuthMiddleware: token validation, get_current_user dependency
+
 output/
   events.py          typed event dataclasses (SessionStart, TaskStart, AgentThought, …)
   emitter.py         EmitterProtocol + NullEmitter
@@ -948,13 +1081,13 @@ output/
   ws_emitter.py      WebSocket emitter for web server streaming
 
 checkpoint/
-  schema.py          CheckpointMetadata, Checkpoint, CheckpointEntry dataclasses
-  store.py           CheckpointStore: save, load, list, delete, prune
-  restore.py         rewind_session(), list_checkpoints()
+  schema.py          CheckpointMetadata, Checkpoint, CheckpointEntry, ReActCheckpoint dataclasses
+  store.py           CheckpointStore: save, load, list, delete, prune; save/load_react_checkpoint
+  restore.py         rewind_session(), list_checkpoints(), export_checkpoint()
 
 cost/
-  ledger.py          CostLedger: JSONL-backed token/cost recorder; daily_spend(); budget_remaining()
-  scheduler.py       CostScheduler: budget cap enforcement, 429 rate-limit backoff, provider selection
+  ledger.py          CostLedger: JSONL-backed token/cost recorder; node_id field; merge_from_file() for remote ledger merge
+  scheduler.py       CostScheduler: budget cap enforcement, per-user quotas, 429 rate-limit backoff, provider selection
 ```
 
 ## Model routing
@@ -989,7 +1122,7 @@ caching:
 ## Development
 
 ```bash
-pytest -m "not network"   # 1152+ tests, no API calls required
+pytest -m "not network"   # 1207+ tests, no API calls required
 ruff check orchid/        # 0 errors
 ```
 

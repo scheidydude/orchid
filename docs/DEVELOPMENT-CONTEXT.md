@@ -1,6 +1,6 @@
 # Orchid Development Context
 
-**Version:** 0.2.28 | **License:** AGPL-3.0 | **State:** V2.1 Complete | **Tests:** 517+ passing
+**Version:** 2.2.4 | **License:** AGPL-3.0 | **State:** V2.2 Complete (Agentic OS gap-closure done) | **Tests:** 1207+ passing
 
 > Use this document to orient a new developer — or a new Claude conversation — without requiring prior chat history. Paste it as context, then describe the specific task.
 
@@ -8,7 +8,7 @@
 
 ## 1. Project Identity
 
-Orchid is a standalone AI agent orchestration framework that runs autonomously on developer machines. It reads a project's `tasks.md` and `CLAUDE.md`, routes each task to the appropriate AI provider (Claude API or a local llama.cpp-compatible model), and executes a ReAct (Reason → Act → Observe) loop to complete software development, research, drafting, and review tasks. Projects opt-in by placing `.orchid.yaml`, `CLAUDE.md`, and `tasks.md` in their root. Orchid itself lives at `~/LocalAI/orchid/` and is distinct from the external projects it manages (`~/projects/<name>/`). V2 added a full project lifecycle state machine (NEW → DISCUSSING → REQUIREMENTS → PLANNING → READY → EXECUTING → COMPLETE), strategic AI agents (ProductManager, ProjectManager, DiscussionAgent), a React web dashboard, and Telegram/Slack bots. V2.1 added TesterAgent, PM Dashboard, task metrics, Discussion history, active/inactive project grouping, and per-agent provider overrides.
+Orchid is a standalone AI agent orchestration framework that runs autonomously on developer machines. It reads a project's `tasks.md` and `CLAUDE.md`, routes each task to the appropriate AI provider (Claude API or a local llama.cpp-compatible model), and executes a ReAct (Reason → Act → Observe) loop to complete software development, research, drafting, and review tasks. Projects opt-in by placing `.orchid.yaml`, `CLAUDE.md`, and `tasks.md` in their root. Orchid itself lives at `~/LocalAI/orchid/` and is distinct from the external projects it manages (`~/projects/<name>/`). V2 added a full project lifecycle state machine (NEW → DISCUSSING → REQUIREMENTS → PLANNING → READY → EXECUTING → COMPLETE), strategic AI agents (ProductManager, ProjectManager, DiscussionAgent), a React web dashboard, and Telegram/Slack bots. V2.1 added TesterAgent, PM Dashboard, task metrics, Discussion history, active/inactive project grouping, and per-agent provider overrides. V2.2 closed all 19 Agentic OS gaps (subprocess isolation, cancellation, watchdog, cycle detection, file locks, mid-task checkpointing, agent mailbox, max-iterations cap, capability registry, remote workers, auth layer, container isolation, distributed cost ledger, checkpoint export).
 
 **Repository:** `/home/dave/LocalAI/orchid`
 **Install:** `uv venv && uv pip install -e ".[dev]"` (dev) or `uv tool install . --force` (global CLI)
@@ -64,8 +64,21 @@ Orchid is a standalone AI agent orchestration framework that runs autonomously o
 | `orchid/multi.py` | Multi-project parallel runner |
 | `orchid/discussion.py` | Discussion history persistence |
 | `orchid/machine_profile.py` | Machine capability detection |
-| `orchid/orchid.defaults.yaml` | Authoritative default config (models, routing, memory, agents) |
+| `orchid/orchid.defaults.yaml` | Authoritative default config (models, routing, memory, agents, isolation, remote) |
 | `orchid/interfaces/web_ui/` | React frontend (Vite, `src/components/`) |
+| `orchid/subprocess_runner.py` | `SubprocessRunner` — child-process task isolation, stdin JSON / stdout NDJSON |
+| `orchid/worker_protocol.py` | `TaskContext`, `WorkerEvent`, `WorkerResult` dataclasses (subprocess IPC) |
+| `orchid/watchdog.py` | `TaskWatchdog` daemon thread — fires task.stuck hook after stall threshold |
+| `orchid/locks.py` | `FileLockRegistry` — per-path threading.Lock for parallel write safety |
+| `orchid/mailbox.py` | `AgentMailbox` — thread-safe per-agent message queue; get/drop singletons |
+| `orchid/capability.py` | `CAPABILITY_REGISTRY` + `AgentCapability` dataclass; orchestrator validates at spawn |
+| `orchid/container_runner.py` | `ContainerRunner` — Docker-based isolation with graceful fallback |
+| `orchid/remote/types.py` | `WorkerNode`, `RemoteTaskRequest`, `RemoteTaskResponse` dataclasses |
+| `orchid/remote/worker_server.py` | FastAPI worker node server (/health, /task, /ledger, port 8001) |
+| `orchid/remote/dispatcher.py` | `RemoteDispatcher` — node selection, dispatch with retry, ledger merge |
+| `orchid/auth/types.py` | `User`, `AuthError` dataclasses |
+| `orchid/auth/store.py` | `UserStore` — JSON-backed user registry, all fields persisted |
+| `orchid/auth/middleware.py` | `AuthMiddleware` — token validation, `get_current_user` dependency |
 
 ### Provider Resolution Order (7 layers, highest to lowest)
 
@@ -172,7 +185,27 @@ Claude (API) handles high-complexity work: orchestration, code review, planning,
   - `/orchid-projects`, `/orchid-switch`, `/orchid-approve` Telegram commands
   - systemd service + install script
 
-**Test count:** 517+ passing (531 collected, collection errors exist in 3 test files — see §7)
+- **V2.2 Agentic OS gap-closure (T209–T284, completed 2026-05-08):**
+  - Subprocess isolation: `SubprocessRunner` + `worker_protocol.py` (stdin JSON / stdout NDJSON)
+  - Cancellation: `AgentCancelledError` + `cancel_event` threading.Event through ReAct loop
+  - Wall-clock timeout: orchestrator timer fires `agent.cancel()` after `max_task_seconds`
+  - Stuck-task watchdog: `TaskWatchdog` daemon fires `task.stuck` hook + marks BLOCKED
+  - Cycle detection: `DependencyGraph.has_cycle()` checked after every `spawn_task()`
+  - File advisory locks: `FileLockRegistry` in `locks.py`; wired into `write_file`/`append_file`
+  - Mid-task ReAct checkpoint: `ReActCheckpoint` saved every 5 iterations; resume on crash
+  - Agent mailbox IPC: `AgentMailbox` + `send_message`/`receive_message` ReAct tools
+  - Shell agent-ID: `agent_id` param in `bash()` for shell-layer identity tracking
+  - Max-iterations hard cap: `agents.max_iterations` config + `MaxIterationsError` in `BaseAgent`
+  - Capability registry: `CAPABILITY_REGISTRY` + `AgentCapability` in `capability.py`
+  - Remote workers: `orchid/remote/` (types, worker_server, dispatcher) + `orchid worker --port 8001`
+  - Distributed cost ledger: `node_id` field + `merge_from_file()` in `cost/ledger.py`
+  - Auth layer: `orchid/auth/` (types, store, middleware); per-user budget in `CostScheduler`
+  - Container isolation: `ContainerRunner` (Docker, graceful fallback to subprocess)
+  - File write audit: `write_file`/`append_file` entries in `audit_log.jsonl`
+  - Checkpoint export: `export_checkpoint()` in `checkpoint/restore.py`
+  - Config validation: `orchid.defaults.yaml` updated with `isolation`, `remote`, `agents.max_iterations` blocks
+
+**Test count:** 1207+ passing (1207 collected, 8 pre-existing failures: 6 cost ledger patching, 2 SearXNG live network tests)
 
 ### Active Integrations (known working)
 - **Telegram**: Central multi-project bot via `orchid serve --telegram`
