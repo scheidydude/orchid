@@ -279,9 +279,14 @@ def client(tmp_path, monkeypatch):
             sys.modules[mod] = stub
 
     import orchid.web.server as srv
+    from orchid.auth.audit import AuditStore
 
     new_store = UserStore(path=tmp_path / "users.json")
     monkeypatch.setattr(srv, "_auth_store", new_store)
+
+    # Audit store backed by tmp_path so tests don't write to real fs
+    new_audit = AuditStore(audit_dir=tmp_path / "audit")
+    monkeypatch.setattr(srv, "_audit_store", new_audit)
 
     # Also patch middleware singleton so cookie-based auth uses same store
     import orchid.auth.middleware as mw
@@ -1286,3 +1291,304 @@ class TestMobileTaskEndpoints:
         r = client.post("/api/projects/proj1/run/authenticated")
         assert r.status_code != 401
         assert r.status_code != 403
+
+
+# ── Phase 5: Audit Log & Per-User Project Scoping ────────────────────────────
+
+from orchid.auth.audit import AuditAction, AuditStore, make_event
+
+
+class TestAuditStore:
+    def test_log_and_read(self, tmp_path):
+        store = AuditStore(audit_dir=tmp_path / "audit")
+        event = make_event("alice", AuditAction.LOGIN, "alice", "success", ip="127.0.0.1")
+        store.log(event)
+
+        events, total = store.read()
+        assert total == 1
+        assert events[0].user_id == "alice"
+        assert events[0].action == AuditAction.LOGIN
+        assert events[0].result == "success"
+
+    def test_empty_store_returns_empty(self, tmp_path):
+        store = AuditStore(audit_dir=tmp_path / "audit")
+        events, total = store.read()
+        assert events == []
+        assert total == 0
+
+    def test_filter_by_user_id(self, tmp_path):
+        store = AuditStore(audit_dir=tmp_path / "audit")
+        store.log(make_event("alice", AuditAction.LOGIN, "alice", "success"))
+        store.log(make_event("bob", AuditAction.LOGIN, "bob", "success"))
+        store.log(make_event("alice", AuditAction.LOGOUT, "alice", "success"))
+
+        events, total = store.read(user_id="alice")
+        assert total == 2
+        assert all(e.user_id == "alice" for e in events)
+
+    def test_filter_by_action(self, tmp_path):
+        store = AuditStore(audit_dir=tmp_path / "audit")
+        store.log(make_event("alice", AuditAction.LOGIN, "alice", "success"))
+        store.log(make_event("alice", AuditAction.LOGOUT, "alice", "success"))
+        store.log(make_event("bob", AuditAction.LOGIN, "bob", "success"))
+
+        events, total = store.read(action=AuditAction.LOGIN)
+        assert total == 2
+        assert all(e.action == AuditAction.LOGIN for e in events)
+
+    def test_pagination(self, tmp_path):
+        store = AuditStore(audit_dir=tmp_path / "audit")
+        for i in range(10):
+            store.log(make_event(f"user{i}", AuditAction.LOGIN, f"user{i}", "success"))
+
+        page1, total = store.read(limit=4, offset=0)
+        assert total == 10
+        assert len(page1) == 4
+
+        page2, _ = store.read(limit=4, offset=4)
+        assert len(page2) == 4
+
+        # No overlap
+        ids1 = {e.event_id for e in page1}
+        ids2 = {e.event_id for e in page2}
+        assert ids1.isdisjoint(ids2)
+
+    def test_multiple_daily_files_all_read(self, tmp_path):
+        audit_dir = tmp_path / "audit"
+        store = AuditStore(audit_dir=audit_dir)
+        audit_dir.mkdir(parents=True, exist_ok=True)
+
+        # Write events to two different day files
+        import dataclasses, json
+        for day in ("2026-01-01", "2026-01-02"):
+            ev = make_event("alice", AuditAction.LOGIN, "alice", "success")
+            with open(audit_dir / f"audit-{day}.jsonl", "a") as f:
+                f.write(json.dumps(dataclasses.asdict(ev), default=str) + "\n")
+
+        events, total = store.read()
+        assert total == 2
+
+    def test_old_files_not_deleted_after_read(self, tmp_path):
+        audit_dir = tmp_path / "audit"
+        store = AuditStore(audit_dir=audit_dir)
+        audit_dir.mkdir(parents=True, exist_ok=True)
+
+        import dataclasses, json
+        ev = make_event("alice", AuditAction.LOGIN, "alice", "success")
+        old_file = audit_dir / "audit-2025-01-01.jsonl"
+        with open(old_file, "a") as f:
+            f.write(json.dumps(dataclasses.asdict(ev), default=str) + "\n")
+
+        store.read()  # read should not delete anything
+        assert old_file.exists()
+
+    def test_log_never_raises_on_bad_dir(self, tmp_path):
+        store = AuditStore(audit_dir=tmp_path / "nonexistent" / "nested")
+        event = make_event("u", AuditAction.LOGIN, "u", "success")
+        store.log(event)  # should not raise — creates dir automatically
+
+
+class TestAuditEndpoint:
+    def _setup_admin(self, client):
+        client.post("/api/auth/register", json={"username": "admin", "password": "pw", "role": "admin"})
+        client.post("/api/auth/login", json={"username": "admin", "password": "pw"})
+
+    def test_admin_can_read_audit_log(self, client):
+        self._setup_admin(client)
+        r = client.get("/api/audit")
+        assert r.status_code == 200
+        body = r.json()
+        assert "events" in body
+        assert "total" in body
+        assert "limit" in body
+
+    def test_non_admin_cannot_read_audit(self, client):
+        client.post("/api/auth/register", json={"username": "dave", "password": "pw"})
+        client.post("/api/auth/login", json={"username": "dave", "password": "pw"})
+        r = client.get("/api/audit")
+        assert r.status_code == 403
+
+    def test_unauthenticated_cannot_read_audit(self, client):
+        r = client.get("/api/audit")
+        assert r.status_code == 401
+
+    def test_login_creates_audit_event(self, client):
+        import orchid.web.server as srv
+        client.post("/api/auth/register", json={"username": "dave", "password": "pw"})
+        client.post("/api/auth/login", json={"username": "dave", "password": "pw"})
+
+        events, total = srv._audit_store.read(action=AuditAction.LOGIN)
+        assert total >= 1
+        assert any(e.user_id == "dave" for e in events)
+
+    def test_login_failure_creates_audit_event(self, client):
+        import orchid.web.server as srv
+        client.post("/api/auth/register", json={"username": "dave", "password": "pw"})
+        client.post("/api/auth/login", json={"username": "dave", "password": "wrong"})
+
+        events, total = srv._audit_store.read(action=AuditAction.LOGIN_FAILED)
+        assert total >= 1
+
+    def test_register_creates_audit_event(self, client):
+        import orchid.web.server as srv
+        client.post("/api/auth/register", json={"username": "dave", "password": "pw"})
+
+        events, _ = srv._audit_store.read(action=AuditAction.REGISTER)
+        assert any(e.user_id == "dave" for e in events)
+
+    def test_audit_pagination_params(self, client):
+        self._setup_admin(client)
+        r = client.get("/api/audit?limit=5&offset=0")
+        assert r.status_code == 200
+        assert r.json()["limit"] == 5
+
+    def test_audit_limit_capped_at_500(self, client):
+        self._setup_admin(client)
+        r = client.get("/api/audit?limit=9999")
+        assert r.status_code == 200
+        assert r.json()["limit"] == 500
+
+
+class TestAdminUserManagement:
+    def _setup_admin(self, client):
+        client.post("/api/auth/register", json={"username": "admin", "password": "pw", "role": "admin"})
+        client.post("/api/auth/login", json={"username": "admin", "password": "pw"})
+
+    def test_admin_can_update_role(self, client):
+        client.post("/api/auth/register", json={"username": "dave", "password": "pw"})
+        self._setup_admin(client)
+        r = client.put("/api/auth/users/dave", json={"role": "readonly"})
+        assert r.status_code == 200
+        assert r.json()["role"] == "readonly"
+
+    def test_admin_can_update_projects(self, client):
+        client.post("/api/auth/register", json={"username": "dave", "password": "pw"})
+        self._setup_admin(client)
+        r = client.put("/api/auth/users/dave", json={"projects": ["proj-a", "proj-b"]})
+        assert r.status_code == 200
+        assert r.json()["projects"] == ["proj-a", "proj-b"]
+
+    def test_admin_can_deactivate_user(self, client):
+        client.post("/api/auth/register", json={"username": "dave", "password": "pw"})
+        self._setup_admin(client)
+        r = client.delete("/api/auth/users/dave")
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+
+    def test_deactivated_user_cannot_login(self, client):
+        client.post("/api/auth/register", json={"username": "dave", "password": "pw"})
+        self._setup_admin(client)
+        client.delete("/api/auth/users/dave")
+
+        client.cookies.clear()
+        r = client.post("/api/auth/login", json={"username": "dave", "password": "pw"})
+        assert r.status_code == 401
+
+    def test_admin_cannot_deactivate_self(self, client):
+        self._setup_admin(client)
+        r = client.delete("/api/auth/users/admin")
+        assert r.status_code == 400
+
+    def test_non_admin_cannot_update_user(self, client):
+        client.post("/api/auth/register", json={"username": "dave", "password": "pw"})
+        client.post("/api/auth/login", json={"username": "dave", "password": "pw"})
+        r = client.put("/api/auth/users/dave", json={"role": "admin"})
+        assert r.status_code == 403
+
+    def test_non_admin_cannot_deactivate_user(self, client):
+        client.post("/api/auth/register", json={"username": "dave", "password": "pw"})
+        client.post("/api/auth/login", json={"username": "dave", "password": "pw"})
+        r = client.delete("/api/auth/users/dave")
+        assert r.status_code == 403
+
+    def test_update_nonexistent_user(self, client):
+        self._setup_admin(client)
+        r = client.put("/api/auth/users/no-such-user", json={"role": "user"})
+        assert r.status_code == 404
+
+    def test_invalid_role_rejected(self, client):
+        client.post("/api/auth/register", json={"username": "dave", "password": "pw"})
+        self._setup_admin(client)
+        r = client.put("/api/auth/users/dave", json={"role": "superuser"})
+        assert r.status_code == 400
+
+    def test_update_creates_audit_event(self, client):
+        import orchid.web.server as srv
+        client.post("/api/auth/register", json={"username": "dave", "password": "pw"})
+        self._setup_admin(client)
+        client.put("/api/auth/users/dave", json={"role": "readonly"})
+
+        events, _ = srv._audit_store.read(action=AuditAction.USER_UPDATED)
+        assert any(e.resource == "dave" for e in events)
+
+    def test_deactivate_creates_audit_event(self, client):
+        import orchid.web.server as srv
+        client.post("/api/auth/register", json={"username": "dave", "password": "pw"})
+        self._setup_admin(client)
+        client.delete("/api/auth/users/dave")
+
+        events, _ = srv._audit_store.read(action=AuditAction.USER_DEACTIVATED)
+        assert any(e.resource == "dave" for e in events)
+
+
+class TestProjectScoping:
+    def _admin_set_projects(self, client, username, projects):
+        """Set user's project list via admin endpoint."""
+        client.put(f"/api/auth/users/{username}", json={"projects": projects})
+
+    def _setup_admin(self, client):
+        client.post("/api/auth/register", json={"username": "admin", "password": "pw", "role": "admin"})
+        client.post("/api/auth/login", json={"username": "admin", "password": "pw"})
+
+    def test_empty_projects_list_unrestricted(self, client, monkeypatch):
+        """User with no project restrictions can run any project."""
+        import orchid.web.server as srv
+        monkeypatch.setattr(srv.runner, "start", lambda path: None)
+
+        client.post("/api/auth/register", json={"username": "dave", "password": "pw"})
+        client.post("/api/auth/login", json={"username": "dave", "password": "pw"})
+        # No projects set → unrestricted
+        r = client.post("/api/projects/any-project/run/authenticated")
+        assert r.status_code != 403  # 404 from missing project is fine
+
+    def test_user_restricted_to_allowed_projects(self, client, monkeypatch):
+        """User can run projects in their allowed list."""
+        import orchid.web.server as srv
+        monkeypatch.setattr(srv.runner, "start", lambda path: None)
+        monkeypatch.setattr(srv, "registry",
+                            type("R", (), {"list_projects": lambda s: [{"id": "proj-a", "path": "/tmp/proj-a"}]})())
+
+        client.post("/api/auth/register", json={"username": "dave", "password": "pw"})
+        self._setup_admin(client)
+        self._admin_set_projects(client, "dave", ["proj-a"])
+
+        client.cookies.clear()
+        client.post("/api/auth/login", json={"username": "dave", "password": "pw"})
+        r = client.post("/api/projects/proj-a/run/authenticated")
+        assert r.status_code == 200
+
+    def test_user_denied_non_allowed_project(self, client, monkeypatch):
+        """User cannot run project not in their allowed list."""
+        import orchid.web.server as srv
+        monkeypatch.setattr(srv.runner, "start", lambda path: None)
+
+        client.post("/api/auth/register", json={"username": "dave", "password": "pw"})
+        self._setup_admin(client)
+        self._admin_set_projects(client, "dave", ["proj-a"])
+
+        client.cookies.clear()
+        client.post("/api/auth/login", json={"username": "dave", "password": "pw"})
+        r = client.post("/api/projects/proj-b/run/authenticated")
+        assert r.status_code == 403
+
+    def test_admin_always_unrestricted(self, client, monkeypatch):
+        """Admin bypasses project scoping regardless of projects list."""
+        import orchid.web.server as srv
+        monkeypatch.setattr(srv.runner, "start", lambda path: None)
+        monkeypatch.setattr(srv, "registry",
+                            type("R", (), {"list_projects": lambda s: [{"id": "proj-x", "path": "/tmp/proj-x"}]})())
+
+        self._setup_admin(client)
+        # Even if we somehow set projects on admin, they bypass the check
+        r = client.post("/api/projects/proj-x/run/authenticated")
+        assert r.status_code == 200

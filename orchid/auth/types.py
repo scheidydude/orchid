@@ -76,3 +76,19 @@ class ApiKey:
     last_used: Optional[datetime] = None
     expires_at: Optional[datetime] = None
     is_active: bool = True
+
+
+@dataclass
+class AuditEvent:
+    """Immutable record of a security-relevant action.
+
+    Stored append-only in daily JSONL files — never modified or deleted.
+    """
+    event_id: str
+    user_id: str     # "anonymous" for unauthenticated requests
+    action: str      # see AuditAction in orchid/auth/audit.py
+    resource: str    # project path, user_id, key_id, etc.
+    result: str      # "success" | "failure" | "denied"
+    timestamp: datetime
+    ip: str          # client IP address
+    detail: str = ""  # optional JSON string with extra context

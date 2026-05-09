@@ -1,11 +1,16 @@
 import asyncio
 import base64
+import dataclasses
 import hashlib
+import json
+import logging
 import secrets
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
@@ -20,10 +25,11 @@ from orchid.auth.jwt import (
     verify_password,
     verify_refresh_token,
 )
-from orchid.auth.middleware import get_current_user, get_optional_user, require_scope
+from orchid.auth.audit import AuditAction, AuditStore, make_event
+from orchid.auth.middleware import get_current_user, get_optional_user, require_auth, require_scope
 from orchid.auth.providers.registry import ProviderRegistry
 from orchid.auth.store import UserStore
-from orchid.auth.types import AuthError, User
+from orchid.auth.types import AuditEvent, AuthError, User
 from orchid.registry import ProjectRegistry
 
 from orchid.planning import PlanningSession
@@ -68,6 +74,49 @@ def _get_auth_store() -> UserStore:
     return _auth_store
 
 
+_audit_store: AuditStore | None = None
+
+
+def _get_audit_store() -> AuditStore:
+    global _audit_store
+    if _audit_store is None:
+        _audit_store = AuditStore()
+    return _audit_store
+
+
+def _log_audit(
+    user: User | None,
+    action: str,
+    resource: str,
+    result: str,
+    request: Request | None = None,
+    detail: str = "",
+) -> None:
+    """Write an audit event. Never raises — failures are logged and swallowed."""
+    try:
+        ip = ""
+        if request and request.client:
+            ip = request.client.host
+        user_id = user.user_id if user else "anonymous"
+        event = make_event(user_id=user_id, action=action, resource=resource,
+                           result=result, ip=ip, detail=detail)
+        _get_audit_store().log(event)
+    except Exception as exc:
+        logger.warning("Audit log failed: %s", exc)
+
+
+def _check_project_access(user: User, project_id: str) -> None:
+    """Raise 403 if user's project list is non-empty and project_id not in it.
+
+    Admins are always unrestricted. Empty projects list means unrestricted.
+    """
+    if user.role == "admin":
+        return
+    if user.projects and project_id not in user.projects:
+        _log_audit(user, AuditAction.PROJECT_ACCESS_DENIED, project_id, "denied")
+        raise HTTPException(403, f"Access to project '{project_id}' denied")
+
+
 def _set_auth_cookies(response: Response, access_token: str, refresh_raw: str) -> None:
     response.set_cookie(_COOKIE_ACCESS, access_token, max_age=900, **_COOKIE_OPTS)
     response.set_cookie(_COOKIE_REFRESH, refresh_raw, max_age=2_592_000, **_COOKIE_OPTS)
@@ -91,7 +140,7 @@ def _validate_token(token_str: str) -> User:
 # ------------------------------------------------------------------
 
 @app.post("/api/auth/register")
-async def auth_register(data: dict):
+async def auth_register(data: dict, request: Request):
     """Register a new user. Returns user info (no sensitive fields)."""
     store = _get_auth_store()
     username = data.get("username", "").strip()
@@ -118,11 +167,12 @@ async def auth_register(data: dict):
     except AuthError:
         raise HTTPException(409, "User already exists")
 
+    _log_audit(user, AuditAction.REGISTER, user.user_id, "success", request)
     return {"user_id": user.user_id, "username": user.username, "role": user.role}
 
 
 @app.post("/api/auth/login")
-async def auth_login(data: dict, response: Response):
+async def auth_login(data: dict, request: Request, response: Response):
     """Authenticate with username+password. Sets HttpOnly cookies and returns user info."""
     username = data.get("username", "").strip()
     password = data.get("password", "").strip()
@@ -134,14 +184,19 @@ async def auth_login(data: dict, response: Response):
     user = store.get_user(username) or store.get_user_by_username(username)
 
     if user is None or not user.is_active:
+        _log_audit(None, AuditAction.LOGIN_FAILED, username, "failure", request,
+                   detail=json.dumps({"reason": "user not found or inactive"}))
         raise HTTPException(401, "Invalid credentials")
     if not user.password_hash or not verify_password(password, user.password_hash):
+        _log_audit(user, AuditAction.LOGIN_FAILED, username, "failure", request,
+                   detail=json.dumps({"reason": "invalid password"}))
         raise HTTPException(401, "Invalid credentials")
 
     access_token = issue_access_token(user)
     refresh_raw, rt = issue_refresh_token(user)
     store.store_refresh_token(rt)
     _set_auth_cookies(response, access_token, refresh_raw)
+    _log_audit(user, AuditAction.LOGIN, user.user_id, "success", request)
 
     return {
         "user_id": user.user_id,
@@ -181,6 +236,7 @@ async def auth_refresh(request: Request, response: Response):
     new_raw, new_rt = issue_refresh_token(user)
     store.store_refresh_token(new_rt)
     _set_auth_cookies(response, new_access, new_raw)
+    _log_audit(user, AuditAction.TOKEN_REFRESHED, user.user_id, "success", request)
 
     return {"user_id": user.user_id, "username": user.username, "access_token": new_access}
 
@@ -213,7 +269,11 @@ async def auth_me(current_user: User | None = Depends(get_optional_user)):
 
 
 @app.post("/api/auth/logout")
-async def auth_logout(request: Request, response: Response):
+async def auth_logout(
+    request: Request,
+    response: Response,
+    current_user: User | None = Depends(get_optional_user),
+):
     """Revoke the refresh token and clear auth cookies."""
     raw = request.cookies.get(_COOKIE_REFRESH)
     if raw:
@@ -223,6 +283,8 @@ async def auth_logout(request: Request, response: Response):
             store.revoke_refresh_token(rt.token_id)
         except AuthError:
             pass  # token already invalid — still clear cookies
+    _log_audit(current_user, AuditAction.LOGOUT,
+               current_user.user_id if current_user else "anonymous", "success", request)
     response.delete_cookie(_COOKIE_ACCESS)
     response.delete_cookie(_COOKIE_REFRESH)
     return {"ok": True}
@@ -250,11 +312,110 @@ async def auth_list_users(current_user: User = Depends(get_current_user)):
 
 
 # ------------------------------------------------------------------
+# Admin user management endpoints (Phase 5)
+# ------------------------------------------------------------------
+
+@app.put("/api/auth/users/{target_user_id}")
+async def admin_update_user(
+    target_user_id: str,
+    data: dict,
+    request: Request,
+    current_user: User = Depends(require_auth(role="admin")),
+):
+    """Update a user's role, project list, active status, or email (admin only)."""
+    store = _get_auth_store()
+    user = store.get_user(target_user_id)
+    if user is None:
+        raise HTTPException(404, "User not found")
+
+    changes: dict = {}
+    if "role" in data:
+        if data["role"] not in ("user", "admin", "readonly"):
+            raise HTTPException(400, "role must be user, admin, or readonly")
+        user.role = data["role"]
+        changes["role"] = user.role
+    if "projects" in data:
+        if not isinstance(data["projects"], list):
+            raise HTTPException(400, "projects must be a list")
+        user.projects = data["projects"]
+        changes["projects"] = user.projects
+    if "is_active" in data:
+        user.is_active = bool(data["is_active"])
+        changes["is_active"] = user.is_active
+    if "email" in data:
+        user.email = data["email"] or None
+        changes["email"] = user.email
+
+    store.update_user(user)
+    _log_audit(current_user, AuditAction.USER_UPDATED, target_user_id, "success", request,
+               detail=json.dumps(changes))
+    return {
+        "user_id": user.user_id,
+        "username": user.username,
+        "role": user.role,
+        "projects": user.projects,
+        "is_active": user.is_active,
+        "email": user.email,
+    }
+
+
+@app.delete("/api/auth/users/{target_user_id}")
+async def admin_deactivate_user(
+    target_user_id: str,
+    request: Request,
+    current_user: User = Depends(require_auth(role="admin")),
+):
+    """Deactivate a user account (admin only). Sets is_active=False and revokes all sessions.
+
+    Does not delete the user record — audit trail is preserved.
+    """
+    if target_user_id == current_user.user_id:
+        raise HTTPException(400, "Cannot deactivate your own account")
+    store = _get_auth_store()
+    user = store.get_user(target_user_id)
+    if user is None:
+        raise HTTPException(404, "User not found")
+
+    user.is_active = False
+    store.update_user(user)
+    store.revoke_all_refresh_tokens(target_user_id)
+    _log_audit(current_user, AuditAction.USER_DEACTIVATED, target_user_id, "success", request)
+    return {"ok": True, "user_id": target_user_id}
+
+
+# ------------------------------------------------------------------
+# Audit log endpoint (Phase 5)
+# ------------------------------------------------------------------
+
+@app.get("/api/audit")
+async def get_audit_log(
+    limit: int = 50,
+    offset: int = 0,
+    user_id: str = "",
+    action: str = "",
+    current_user: User = Depends(require_auth(role="admin")),
+):
+    """Paginated audit log (admin only). Events are newest-first."""
+    limit = min(limit, 500)
+    events, total = _get_audit_store().read(
+        limit=limit, offset=offset, user_id=user_id, action=action
+    )
+    return {
+        "events": [dataclasses.asdict(e) for e in events],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+# ------------------------------------------------------------------
 # API key endpoints (Phase 2)
 # ------------------------------------------------------------------
 
 @app.post("/api/auth/apikeys")
-async def create_api_key(data: dict, current_user: User = Depends(get_current_user)):
+async def create_api_key(
+    data: dict, request: Request, current_user: User = Depends(get_current_user)
+):
     """Create an API key for programmatic access. Secret returned once — store it."""
     name = data.get("name", "").strip()
     scopes = data.get("scopes", [])
@@ -276,6 +437,8 @@ async def create_api_key(data: dict, current_user: User = Depends(get_current_us
 
     raw, key = issue_api_key(current_user, name, scopes, expires_at)
     _get_auth_store().store_api_key(key)
+    _log_audit(current_user, AuditAction.API_KEY_CREATED, key.key_id, "success", request,
+               detail=json.dumps({"name": name, "scopes": scopes}))
 
     return {
         "key_id": key.key_id,
@@ -308,7 +471,9 @@ async def list_api_keys(current_user: User = Depends(get_current_user)):
 
 
 @app.delete("/api/auth/apikeys/{key_id}")
-async def revoke_api_key(key_id: str, current_user: User = Depends(get_current_user)):
+async def revoke_api_key(
+    key_id: str, request: Request, current_user: User = Depends(get_current_user)
+):
     """Revoke an API key. Admins can revoke any key; users can only revoke their own."""
     store = _get_auth_store()
     key = store.get_api_key(key_id)
@@ -317,6 +482,7 @@ async def revoke_api_key(key_id: str, current_user: User = Depends(get_current_u
     if key.user_id != current_user.user_id and current_user.role != "admin":
         raise HTTPException(403, "Cannot revoke another user's API key")
     store.revoke_api_key(key_id)
+    _log_audit(current_user, AuditAction.API_KEY_REVOKED, key_id, "success", request)
     return {"ok": True}
 
 
@@ -418,6 +584,8 @@ async def _resolve_oauth_callback(
     access_token = issue_access_token(user)
     refresh_raw, rt = issue_refresh_token(user)
     store.store_refresh_token(rt)
+    _log_audit(user, AuditAction.OAUTH_LOGIN, provider_slug, "success",
+               detail=json.dumps({"provider": provider_slug}))
     return access_token, refresh_raw
 
 
@@ -820,15 +988,17 @@ def _get_project_or_none(project_id: str):
 @app.post("/api/projects/{project_id}/run/authenticated")
 async def run_project_authenticated(
     project_id: str,
+    request: Request,
     current_user: User = Depends(require_scope("tasks:run")),
 ):
     """Scope-gated project run for mobile/API key clients.
 
-    Identical to POST /api/projects/{project_id}/run but requires
-    'tasks:run' scope. API keys without this scope are rejected.
+    Requires 'tasks:run' scope and enforces per-user project access list.
     """
+    _check_project_access(current_user, project_id)
     project = _get_project(project_id)
     runner.start(project["path"])
+    _log_audit(current_user, AuditAction.TASK_RUN, project_id, "success", request)
     return {"ok": True, "project_id": project_id}
 
 
