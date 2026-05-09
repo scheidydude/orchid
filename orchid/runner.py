@@ -24,10 +24,16 @@ from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any
 
+from orchid.config import get as _cfg_get
 from orchid.memory.state import Task, TaskStatus
 from orchid.watchdog import TaskWatchdog
 
 logger = logging.getLogger(__name__)
+
+
+def _cfg(key_path: str, default: Any = None) -> Any:
+    """Dot-separated key lookup, e.g. _cfg('models.claude.model')."""
+    return _cfg_get(key_path, default)
 
 
 @dataclass
@@ -198,16 +204,28 @@ class BackgroundRunner:
         batch.  This repeats until no more TODO tasks remain or the cancel
         event is set.
         """
-        from orchid import config as cfg
+        from pathlib import Path
+
         from orchid.scheduler import Scheduler
 
         scheduler = Scheduler(session.tasks)
         completed_ids: set[str] = set()
 
         # T219: Start stuck-task watchdog
-        _watchdog_threshold = cfg.get("isolation.watchdog_threshold_s", 1800)
+        _watchdog_threshold = _cfg("isolation.watchdog_threshold_s", 1800)
         _watchdog = TaskWatchdog(session, stuck_threshold_s=_watchdog_threshold)
         _watchdog.start()
+
+        # T270: Build RemoteDispatcher if remote.enabled
+        _remote_dispatcher = None
+        if _cfg("remote.enabled", False):
+            from orchid.remote.dispatcher import RemoteDispatcher
+            from orchid.remote.types import WorkerNode
+            _raw_nodes = _cfg("remote.nodes", [])
+            _nodes = [WorkerNode(**n) for n in _raw_nodes]
+            if _nodes:
+                _remote_dispatcher = RemoteDispatcher(_nodes)
+                logger.info("[runner] Remote dispatch enabled: %d nodes", len(_nodes))
 
         try:
             while not state.cancel_event.is_set():
@@ -231,6 +249,16 @@ class BackgroundRunner:
 
                 # Execute tasks in this group concurrently
                 self._execute_group(project_path, state, session, orch, group, completed_ids)
+
+                # T270: Merge remote ledger if enabled
+                if _remote_dispatcher is not None and _cfg("remote.merge_ledger_after_group", True):
+                    try:
+                        _ledger_path = Path(project_path) / ".orchid" / "cost_ledger.jsonl"
+                        _merged = _remote_dispatcher.fetch_and_merge_ledger(_ledger_path)
+                        if _merged:
+                            logger.info("[runner] Merged %d cost ledger lines from remote nodes", _merged)
+                    except Exception as _re:
+                        logger.warning("[runner] Remote ledger merge failed: %s", _re)
 
                 # Update completed_ids from actual task statuses so the next schedule()
                 # call can correctly resolve dependencies for tasks whose parents just
@@ -260,10 +288,10 @@ class BackgroundRunner:
         limit concurrent API calls per provider.  The group's futures
         are awaited before the loop continues.
         """
-        from orchid import config as cfg
+        from orchid import config as _cfg_mod
 
         # Create a local thread pool for this group's parallel dispatch
-        max_workers = min(len(group), cfg.get("runner.max_parallel", 4))
+        max_workers = min(len(group), _cfg_mod.get("runner.max_parallel", 4))
         group_executor = ThreadPoolExecutor(
             max_workers=max_workers,
             thread_name_prefix=f"orchid-group-{project_path}",

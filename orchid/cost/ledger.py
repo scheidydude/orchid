@@ -45,6 +45,7 @@ class TokenRecord:
     cost_usd: float = 0.0
     timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     user_id: str = ""
+    node_id: str = ""
 
     @property
     def input_token_total(self) -> int:
@@ -124,6 +125,7 @@ class CostLedger:
         completion_tokens: int = 0,
         cost_usd: float = 0.0,
         user_id: str = "",
+        node_id: str = "",
     ) -> TokenRecord:
         """
         Record a single token-cost entry.
@@ -144,6 +146,7 @@ class CostLedger:
             completion_tokens=completion_tokens,
             cost_usd=cost_usd,
             user_id=user_id,
+            node_id=node_id,
         )
 
         with self._lock:
@@ -169,6 +172,31 @@ class CostLedger:
             task_id, model, record.input_token_total, record.output_token_total, cost_usd,
         )
         return record
+
+    def merge_from_file(self, path: "Path") -> int:
+        """Merge TokenRecords from a remote node's JSONL ledger file.
+
+        Returns the number of records merged.
+        """
+        from pathlib import Path as _Path
+        path = _Path(path)
+        if not path.exists():
+            return 0
+        merged = 0
+        for line in path.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                data = json.loads(line)
+                record = TokenRecord(**{k: v for k, v in data.items() if k in TokenRecord.__dataclass_fields__})
+                with self._lock:
+                    self._records.append(record)
+                    self._append_to_file(record)
+                merged += 1
+            except Exception as _e:
+                logger.debug("Skipping malformed ledger line: %s", _e)
+        return merged
 
     def get_totals(self) -> dict[str, Any]:
         """Return aggregate totals across all recorded tasks."""
@@ -322,6 +350,18 @@ class CostLedger:
                 fh.write(json.dumps(record_dict) + "\n")
         except Exception as exc:
             logger.warning("CostLedger: failed to flush record: %s", exc)
+
+    def _append_to_file(self, record: TokenRecord) -> None:
+        """Append a single TokenRecord to the ledger file.
+
+        Used by merge_from_file when importing records from a remote node.
+        """
+        try:
+            self._ledger_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._ledger_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record.to_dict()) + "\n")
+        except Exception as exc:
+            logger.warning("CostLedger: failed to append record: %s", exc)
 
 
 # ── Module-level singleton ────────────────────────────────────────────────────

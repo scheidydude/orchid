@@ -628,3 +628,8 @@ hooks:
 #       transport: http
 #       url: "http://localhost:3100/mcp"
 mcp_servers: {}
+# T269: Remote worker settings
+remote:
+  enabled: false            # true = dispatch task groups to remote worker nodes
+  nodes: []                 # list of {node_id: str, url: str, capacity: int} dicts
+  merge_ledger_after_group: true  # pull and merge cost ledger from nodes after each group

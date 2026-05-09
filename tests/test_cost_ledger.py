@@ -162,8 +162,8 @@ def test_record_returns_the_record(tmp_path: Path):
 
 
 def test_record_exceeds_budget_raises(tmp_path: Path):
-    with patch("orchid.cost.ledger.cfg") as mock_cfg:
-        mock_cfg.get.side_effect = lambda key, default=None: {
+    with patch("orchid.cost.ledger.get") as mock_get:
+        mock_get.side_effect = lambda key, default=None: {
             "cost.budget_usd": 0.01, "cost.budget_warn_pct": 0.8,
         }.get(key, default)
         ledger = CostLedger(tmp_path / "budget_test")
@@ -174,8 +174,8 @@ def test_record_exceeds_budget_raises(tmp_path: Path):
 
 
 def test_record_within_budget_succeeds(tmp_path: Path):
-    with patch("orchid.cost.ledger.cfg") as mock_cfg:
-        mock_cfg.get.side_effect = lambda key, default=None: {
+    with patch("orchid.cost.ledger.get") as mock_get:
+        mock_get.side_effect = lambda key, default=None: {
             "cost.budget_usd": 1.0, "cost.budget_warn_pct": 0.8,
         }.get(key, default)
         ledger = CostLedger(tmp_path / "within_budget_test")
@@ -185,8 +185,8 @@ def test_record_within_budget_succeeds(tmp_path: Path):
 
 
 def test_record_no_budget_cap(tmp_path: Path):
-    with patch("orchid.cost.ledger.cfg") as mock_cfg:
-        mock_cfg.get.side_effect = lambda key, default=None: {
+    with patch("orchid.cost.ledger.get") as mock_get:
+        mock_get.side_effect = lambda key, default=None: {
             "cost.budget_usd": None, "cost.budget_warn_pct": 0.8,
         }.get(key, default)
         ledger = CostLedger(tmp_path / "no_budget_test")
@@ -249,8 +249,8 @@ def test_get_totals_per_provider(tmp_path: Path):
 
 
 def test_get_totals_with_budget(tmp_path: Path):
-    with patch("orchid.cost.ledger.cfg") as mock_cfg:
-        mock_cfg.get.side_effect = lambda key, default=None: {
+    with patch("orchid.cost.ledger.get") as mock_get:
+        mock_get.side_effect = lambda key, default=None: {
             "cost.budget_usd": 0.05, "cost.budget_warn_pct": 0.8,
         }.get(key, default)
         ledger = CostLedger(tmp_path / "budget_totals")
@@ -263,8 +263,8 @@ def test_get_totals_with_budget(tmp_path: Path):
 
 
 def test_get_totals_warn_pct_true(tmp_path: Path):
-    with patch("orchid.cost.ledger.cfg") as mock_cfg:
-        mock_cfg.get.side_effect = lambda key, default=None: {
+    with patch("orchid.cost.ledger.get") as mock_get:
+        mock_get.side_effect = lambda key, default=None: {
             "cost.budget_usd": 0.01, "cost.budget_warn_pct": 0.8,
         }.get(key, default)
         ledger = CostLedger(tmp_path / "warn")
@@ -601,6 +601,6 @@ def test_budget_remaining_returns_none_when_no_budget(tmp_path):
     from unittest.mock import patch
     from orchid.cost.ledger import CostLedger
     ledger = CostLedger(tmp_path)
-    with patch("orchid.cost.ledger.cfg.get", return_value=None):
+    with patch("orchid.cost.ledger.get", return_value=None):
         result = ledger.budget_remaining("anthropic")
     assert result is None

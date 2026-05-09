@@ -389,6 +389,21 @@ class BaseAgent:
                     self.__class__.__name__, _removed,
                 )
 
+        # T272: Override allowed_tools from AgentCapability registry if capability is stricter
+        try:
+            from orchid.capability import get_capability
+            _cap = get_capability(self.__class__.__name__.lower().replace("agent", ""))
+            if _cap.allowed_tools is not None:
+                _cap_removed = [k for k in list(self.tools) if k not in _cap.allowed_tools]
+                for _k in _cap_removed:
+                    del self.tools[_k]
+                if _cap_removed:
+                    logger.debug("[%s] capability restricted; removed: %s", self.__class__.__name__, _cap_removed)
+            if _cap.max_iterations > 0 and self.max_iterations > _cap.max_iterations:
+                self.max_iterations = _cap.max_iterations
+        except Exception as _cap_err:
+            logger.debug("Capability registry lookup failed: %s", _cap_err)
+
     def cancel(self) -> None:
         """Signal the agent to stop after the current iteration."""
         self._cancel_event.set()

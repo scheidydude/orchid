@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+import json
 import logging
 from pathlib import Path
 
@@ -91,3 +93,25 @@ def list_checkpoints(
     """
     store = CheckpointStore(project_dir)
     return store.list()
+
+
+def export_checkpoint(
+    checkpoint_id: str,
+    source_project_dir: Path,
+    dest_dir: Path,
+) -> Path:
+    """Copy a checkpoint's files to dest_dir for transfer to a remote node.
+
+    Returns the path to the exported checkpoint JSON in dest_dir.
+    Raises FileNotFoundError if the checkpoint does not exist.
+    """
+    store = CheckpointStore(source_project_dir)
+    cp = store.load(checkpoint_id)
+    if cp is None:
+        raise FileNotFoundError(f"Checkpoint {checkpoint_id!r} not found in {source_project_dir}")
+    dest_dir = Path(dest_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_file = dest_dir / f"{checkpoint_id}.json"
+    # Re-serialize the checkpoint to the destination
+    dest_file.write_text(json.dumps(dataclasses.asdict(cp)))
+    return dest_file
