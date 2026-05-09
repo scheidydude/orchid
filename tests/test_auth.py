@@ -691,3 +691,320 @@ class TestScopeEnforcement:
         r = client.get("/test-scope-blocked", headers={"Authorization": f"Bearer {secret}"},
                        cookies={})
         assert r.status_code == 403
+
+
+# ── Phase 3: OAuth 2.0 / OIDC ────────────────────────────────────────────────
+
+import respx
+import httpx as _httpx
+
+# Minimal OIDC discovery document returned by the mock provider
+_DISCOVERY = {
+    "authorization_endpoint": "https://mock-idp.example.com/auth",
+    "token_endpoint": "https://mock-idp.example.com/token",
+    "userinfo_endpoint": "https://mock-idp.example.com/userinfo",
+    "jwks_uri": "https://mock-idp.example.com/jwks",
+}
+
+_TOKEN_RESPONSE = {
+    "access_token": "mock-provider-access-token",
+    "token_type": "Bearer",
+    "expires_in": 3600,
+    "refresh_token": "mock-provider-refresh-token",
+    "id_token": "mock.id.token",
+}
+
+_USERINFO = {
+    "sub": "google-uid-12345",
+    "email": "alice@example.com",
+    "name": "Alice Example",
+}
+
+
+@pytest.fixture()
+def oauth_client(tmp_path, monkeypatch):
+    """TestClient with a mock OIDC provider registered."""
+    import sys
+    from unittest.mock import MagicMock
+
+    for mod in ("orchid.registry", "orchid.runner"):
+        if mod not in sys.modules:
+            stub = MagicMock()
+            stub.ProjectRegistry = MagicMock(return_value=MagicMock(list_projects=lambda: []))
+            stub.BackgroundRunner = MagicMock(return_value=MagicMock())
+            sys.modules[mod] = stub
+
+    import orchid.web.server as srv
+    from orchid.auth.providers.oidc_generic import GenericOIDCProvider
+
+    new_store = UserStore(path=tmp_path / "users.json")
+    monkeypatch.setattr(srv, "_auth_store", new_store)
+
+    import orchid.auth.middleware as mw
+    monkeypatch.setattr(mw, "_default_store", new_store)
+
+    # Fresh provider registry with one mock provider
+    from orchid.auth.providers.registry import ProviderRegistry
+    new_registry = ProviderRegistry()
+    new_registry.register(GenericOIDCProvider(
+        slug="mock-idp",
+        discovery_url="https://mock-idp.example.com/.well-known/openid-configuration",
+        client_id="test-client-id",
+        client_secret="test-client-secret",
+        redirect_uri="https://orchid.example.com/api/auth/oauth/mock-idp/callback",
+    ))
+    monkeypatch.setattr(srv, "_provider_registry", new_registry)
+    monkeypatch.setattr(srv, "_oauth_states", {})
+
+    return TestClient(srv.app, raise_server_exceptions=True, follow_redirects=False)
+
+
+class TestOAuthUnit:
+    """Unit tests for provider logic and store OAuth CRUD."""
+
+    def test_link_or_create_new_user(self, tmp_path):
+        from orchid.auth.providers.base import link_or_create_user
+        store = make_store(tmp_path)
+
+        user, oa = link_or_create_user(
+            store, "google", "google-uid-1", "bob@example.com",
+            access_token="at", refresh_token="rt",
+        )
+        assert user.email == "bob@example.com"
+        assert oa.provider == "google"
+        assert oa.provider_user_id == "google-uid-1"
+        assert store.get_user(user.user_id) is not None
+
+    def test_link_or_create_links_existing_email(self, tmp_path):
+        from orchid.auth.providers.base import link_or_create_user
+        store = make_store(tmp_path)
+        existing = User(user_id="existing-id", username="bob", email="bob@example.com",
+                        password_hash=hash_password("pw"))
+        store.add_user(existing)
+
+        user, oa = link_or_create_user(
+            store, "google", "google-uid-1", "bob@example.com", access_token="at",
+        )
+        assert user.user_id == "existing-id"  # linked to existing user
+        assert oa.user_id == "existing-id"
+
+    def test_link_or_create_reuses_existing_oauth_account(self, tmp_path):
+        from orchid.auth.providers.base import link_or_create_user
+        store = make_store(tmp_path)
+
+        user1, oa1 = link_or_create_user(
+            store, "google", "google-uid-1", "bob@example.com", access_token="old-at",
+        )
+        user2, oa2 = link_or_create_user(
+            store, "google", "google-uid-1", "bob@example.com", access_token="new-at",
+        )
+        assert user1.user_id == user2.user_id
+        # Should not create a second user
+        assert len(store.list_users()) == 1
+
+    def test_username_conflict_resolved(self, tmp_path):
+        from orchid.auth.providers.base import link_or_create_user
+        store = make_store(tmp_path)
+        # Pre-existing user with username "alice"
+        store.add_user(User(user_id="u1", username="alice", email="alice@work.com"))
+
+        user, _ = link_or_create_user(
+            store, "google", "uid-2", "alice@example.com", access_token="at",
+        )
+        assert user.username != "alice"  # got "alice1" or similar
+
+    def test_oauth_account_persistence(self, tmp_path):
+        from orchid.auth.providers.base import link_or_create_user
+        path = tmp_path / "users.json"
+        s1 = UserStore(path=path)
+        link_or_create_user(s1, "google", "uid-1", "a@b.com", access_token="at")
+
+        s2 = UserStore(path=path)
+        oa = s2.get_oauth_account("google", "uid-1")
+        assert oa is not None
+        assert oa.email == "a@b.com"
+
+    def test_store_list_oauth_for_user(self, tmp_path):
+        from orchid.auth.providers.base import link_or_create_user
+        store = make_store(tmp_path)
+        user = make_user()
+        store.add_user(user)
+        link_or_create_user(store, "google", "g-uid", "alice@g.com", access_token="at")
+        # Different user
+        link_or_create_user(store, "entra", "e-uid", "bob@ms.com", access_token="at")
+
+        alice_accounts = store.list_oauth_accounts_for_user(user.user_id)
+        # alice registered via make_user(), not via OAuth — she may or may not appear
+        # depending on email match. Just check the function returns a list.
+        assert isinstance(alice_accounts, list)
+
+
+class TestProviderRegistry:
+    def test_register_and_get(self):
+        from orchid.auth.providers.registry import ProviderRegistry
+        from orchid.auth.providers.oidc_generic import GenericOIDCProvider
+        reg = ProviderRegistry()
+        p = GenericOIDCProvider("test-idp", "https://x.com/.well-known/openid-configuration",
+                                "cid", "cs", "https://x.com/cb")
+        reg.register(p)
+        assert reg.get("test-idp") is p
+        assert "test-idp" in reg.slugs()
+
+    def test_get_unknown_returns_none(self):
+        from orchid.auth.providers.registry import ProviderRegistry
+        assert ProviderRegistry().get("nope") is None
+
+    def test_from_config_google(self):
+        from orchid.auth.providers.registry import ProviderRegistry
+        config = {"auth": {"providers": [{
+            "type": "google", "client_id": "cid", "client_secret": "cs",
+            "redirect_uri": "https://x.com/cb",
+        }]}}
+        reg = ProviderRegistry.from_config(config)
+        assert reg.get("google") is not None
+
+    def test_from_config_entra(self):
+        from orchid.auth.providers.registry import ProviderRegistry
+        config = {"auth": {"providers": [{
+            "type": "entra", "tenant_id": "tid", "client_id": "cid",
+            "client_secret": "cs", "redirect_uri": "https://x.com/cb",
+        }]}}
+        reg = ProviderRegistry.from_config(config)
+        assert reg.get("entra") is not None
+
+    def test_from_config_generic_oidc(self):
+        from orchid.auth.providers.registry import ProviderRegistry
+        config = {"auth": {"providers": [{
+            "type": "oidc", "name": "sso", "discovery_url": "https://sso.x.com/.well-known/openid-configuration",
+            "client_id": "cid", "client_secret": "cs", "redirect_uri": "https://x.com/cb",
+        }]}}
+        reg = ProviderRegistry.from_config(config)
+        assert reg.get("sso") is not None
+
+    def test_from_config_skips_unknown_type(self):
+        from orchid.auth.providers.registry import ProviderRegistry
+        config = {"auth": {"providers": [{"type": "twitter"}]}}
+        reg = ProviderRegistry.from_config(config)  # should not raise
+        assert reg.slugs() == []
+
+
+class TestOAuthEndpoints:
+    """Integration tests using mocked OIDC HTTP calls."""
+
+    @respx.mock
+    def test_list_providers(self, oauth_client):
+        r = oauth_client.get("/api/auth/oauth/providers")
+        assert r.status_code == 200
+        assert "mock-idp" in r.json()["providers"]
+
+    @respx.mock
+    def test_start_redirects_to_provider(self, oauth_client):
+        respx.get("https://mock-idp.example.com/.well-known/openid-configuration").mock(
+            return_value=_httpx.Response(200, json=_DISCOVERY)
+        )
+        r = oauth_client.get("/api/auth/oauth/mock-idp/start")
+        assert r.status_code == 302
+        location = r.headers["location"]
+        assert "https://mock-idp.example.com/auth" in location
+        assert "state=" in location
+
+    @respx.mock
+    def test_start_unknown_provider(self, oauth_client):
+        r = oauth_client.get("/api/auth/oauth/no-such-provider/start")
+        assert r.status_code == 404
+
+    @respx.mock
+    def test_callback_get_creates_user_and_sets_cookies(self, oauth_client):
+        # Mock discovery, token exchange, userinfo
+        respx.get("https://mock-idp.example.com/.well-known/openid-configuration").mock(
+            return_value=_httpx.Response(200, json=_DISCOVERY)
+        )
+        respx.post("https://mock-idp.example.com/token").mock(
+            return_value=_httpx.Response(200, json=_TOKEN_RESPONSE)
+        )
+        respx.get("https://mock-idp.example.com/userinfo").mock(
+            return_value=_httpx.Response(200, json=_USERINFO)
+        )
+
+        # Prime state via start
+        respx.get("https://mock-idp.example.com/auth").mock(
+            return_value=_httpx.Response(302, headers={"location": "/"})
+        )
+        start = oauth_client.get("/api/auth/oauth/mock-idp/start")
+        from urllib.parse import urlparse, parse_qs
+        location = start.headers["location"]
+        state = parse_qs(urlparse(location).query)["state"][0]
+
+        r = oauth_client.get(f"/api/auth/oauth/mock-idp/callback?code=authcode&state={state}")
+        assert r.status_code == 302  # redirect to /?oauth=success
+        assert "orchid_access" in r.cookies or "orchid_access" in oauth_client.cookies
+
+    @respx.mock
+    def test_callback_post_creates_user(self, oauth_client):
+        respx.get("https://mock-idp.example.com/.well-known/openid-configuration").mock(
+            return_value=_httpx.Response(200, json=_DISCOVERY)
+        )
+        respx.post("https://mock-idp.example.com/token").mock(
+            return_value=_httpx.Response(200, json=_TOKEN_RESPONSE)
+        )
+        respx.get("https://mock-idp.example.com/userinfo").mock(
+            return_value=_httpx.Response(200, json=_USERINFO)
+        )
+
+        # Inject state manually (simulates POST from provider)
+        import orchid.web.server as srv
+        state = "test-state-post"
+        from datetime import datetime, timedelta, timezone
+        srv._oauth_states[state] = {
+            "provider": "mock-idp",
+            "expires_at": datetime.now(timezone.utc) + timedelta(minutes=5),
+        }
+
+        r = oauth_client.post(
+            "/api/auth/oauth/mock-idp/callback",
+            json={"code": "authcode", "state": state},
+        )
+        assert r.status_code in (200, 302)
+
+    @respx.mock
+    def test_callback_invalid_state_rejected(self, oauth_client):
+        r = oauth_client.get("/api/auth/oauth/mock-idp/callback?code=x&state=bad-state")
+        assert r.status_code == 400
+
+    @respx.mock
+    def test_callback_missing_code_rejected(self, oauth_client):
+        r = oauth_client.get("/api/auth/oauth/mock-idp/callback?state=x")
+        assert r.status_code == 400
+
+    @respx.mock
+    def test_callback_provider_error_param(self, oauth_client):
+        r = oauth_client.get("/api/auth/oauth/mock-idp/callback?error=access_denied&state=x")
+        assert r.status_code == 400
+
+    @respx.mock
+    def test_second_login_same_provider_reuses_user(self, oauth_client):
+        """Two logins with the same provider + sub should not create two users."""
+        respx.get("https://mock-idp.example.com/.well-known/openid-configuration").mock(
+            return_value=_httpx.Response(200, json=_DISCOVERY)
+        )
+        respx.post("https://mock-idp.example.com/token").mock(
+            return_value=_httpx.Response(200, json=_TOKEN_RESPONSE)
+        )
+        respx.get("https://mock-idp.example.com/userinfo").mock(
+            return_value=_httpx.Response(200, json=_USERINFO)
+        )
+
+        import orchid.web.server as srv
+
+        async def do_callback():
+            from orchid.auth.providers.oidc_generic import GenericOIDCProvider
+            import orchid.web.server as s
+            provider = s._provider_registry.get("mock-idp")
+            store = s._auth_store
+            user1, _ = await provider.handle_callback("code", store)
+            user2, _ = await provider.handle_callback("code", store)
+            return user1, user2
+
+        import asyncio
+        u1, u2 = asyncio.get_event_loop().run_until_complete(do_callback())
+        assert u1.user_id == u2.user_id

@@ -45,6 +45,22 @@ class RefreshToken:
 
 
 @dataclass
+class OAuthAccount:
+    """Links an external OIDC identity to an Orchid user.
+
+    Key: '{provider}:{provider_user_id}' — uniquely identifies one social login.
+    """
+    provider: str            # slug: "google", "entra", "company-sso"
+    provider_user_id: str    # 'sub' from OIDC userinfo
+    user_id: str             # Orchid user_id
+    email: str
+    access_token: str        # provider's access token (may expire)
+    refresh_token: Optional[str] = None
+    expires_at: Optional[datetime] = None
+    created_at: datetime = field(default_factory=datetime.now)
+
+
+@dataclass
 class ApiKey:
     """Persisted API key record for programmatic/CI access.
 

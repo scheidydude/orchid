@@ -5,13 +5,14 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-from orchid.auth.types import ApiKey, AuthError, RefreshToken, User
+from orchid.auth.types import ApiKey, AuthError, OAuthAccount, RefreshToken, User
 
 logger = logging.getLogger(__name__)
 
 _DATETIME_FIELDS_USER = {"created_at"}
 _DATETIME_FIELDS_RT = {"expires_at", "created_at"}
 _DATETIME_FIELDS_AK = {"created_at", "last_used", "expires_at"}
+_DATETIME_FIELDS_OA = {"expires_at", "created_at"}
 
 
 def _parse_datetime(value: str | None) -> datetime | None:
@@ -38,6 +39,15 @@ def _parse_refresh_token(entry: dict) -> RefreshToken:
     return RefreshToken(**filtered)
 
 
+def _parse_oauth_account(entry: dict) -> OAuthAccount:
+    valid_keys = {f.name for f in dataclasses.fields(OAuthAccount)}
+    filtered = {k: v for k, v in entry.items() if k in valid_keys}
+    for key in _DATETIME_FIELDS_OA:
+        if key in filtered and isinstance(filtered[key], str):
+            filtered[key] = _parse_datetime(filtered[key])
+    return OAuthAccount(**filtered)
+
+
 def _parse_api_key(entry: dict) -> ApiKey:
     valid_keys = {f.name for f in dataclasses.fields(ApiKey)}
     filtered = {k: v for k, v in entry.items() if k in valid_keys}
@@ -56,6 +66,7 @@ class UserStore:
         self._users: dict[str, User] = {}
         self._refresh_tokens: dict[str, RefreshToken] = {}
         self._api_keys: dict[str, ApiKey] = {}
+        self._oauth_accounts: dict[str, OAuthAccount] = {}  # key: "{provider}:{provider_user_id}"
         self._load()
 
     def _load(self) -> None:
@@ -81,6 +92,12 @@ class UserStore:
                     self._api_keys[ak.key_id] = ak
                 except Exception as exc:
                     logger.warning("Skipping malformed API key entry: %s", exc)
+            for entry in data.get("oauth_accounts", []):
+                try:
+                    oa = _parse_oauth_account(entry)
+                    self._oauth_accounts[f"{oa.provider}:{oa.provider_user_id}"] = oa
+                except Exception as exc:
+                    logger.warning("Skipping malformed OAuth account entry: %s", exc)
         except Exception as exc:
             logger.error("Failed to load store from %s: %s", self._path, exc)
 
@@ -90,6 +107,7 @@ class UserStore:
             "users": [dataclasses.asdict(u) for u in self._users.values()],
             "refresh_tokens": [dataclasses.asdict(rt) for rt in self._refresh_tokens.values()],
             "api_keys": [dataclasses.asdict(ak) for ak in self._api_keys.values()],
+            "oauth_accounts": [dataclasses.asdict(oa) for oa in self._oauth_accounts.values()],
         }
         self._path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
 
@@ -152,6 +170,13 @@ class UserStore:
                     return u
         return None
 
+    def get_user_by_email(self, email: str) -> User | None:
+        with self._lock:
+            for u in self._users.values():
+                if u.email and u.email.lower() == email.lower():
+                    return u
+        return None
+
     # ── refresh token CRUD ────────────────────────────────────────────────────
 
     def store_refresh_token(self, rt: RefreshToken) -> None:
@@ -208,3 +233,18 @@ class UserStore:
             if key:
                 key.last_used = datetime.now()
                 self._save()
+
+    # ── OAuth account CRUD ────────────────────────────────────────────────────
+
+    def store_oauth_account(self, oa: OAuthAccount) -> None:
+        with self._lock:
+            self._oauth_accounts[f"{oa.provider}:{oa.provider_user_id}"] = oa
+            self._save()
+
+    def get_oauth_account(self, provider: str, provider_user_id: str) -> OAuthAccount | None:
+        with self._lock:
+            return self._oauth_accounts.get(f"{provider}:{provider_user_id}")
+
+    def list_oauth_accounts_for_user(self, user_id: str) -> list[OAuthAccount]:
+        with self._lock:
+            return [oa for oa in self._oauth_accounts.values() if oa.user_id == user_id]

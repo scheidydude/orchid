@@ -1,11 +1,12 @@
 import asyncio
+import secrets
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from orchid.auth.jwt import (
@@ -18,6 +19,7 @@ from orchid.auth.jwt import (
     verify_refresh_token,
 )
 from orchid.auth.middleware import get_current_user, get_optional_user, require_scope
+from orchid.auth.providers.registry import ProviderRegistry
 from orchid.auth.store import UserStore
 from orchid.auth.types import AuthError, User
 from orchid.registry import ProjectRegistry
@@ -44,6 +46,17 @@ _bearer = HTTPBearer(auto_error=False)
 _COOKIE_ACCESS = "orchid_access"
 _COOKIE_REFRESH = "orchid_refresh"
 _COOKIE_OPTS: dict = {"httponly": True, "samesite": "strict"}
+
+# OAuth state: token → {provider_slug, expires_at}  (10-minute TTL)
+_oauth_states: dict[str, dict] = {}
+
+# Provider registry — populated at startup or via register_oauth_provider()
+_provider_registry = ProviderRegistry()
+
+
+def register_oauth_provider(provider) -> None:
+    """Register an OIDC provider at runtime (called by serve.py or tests)."""
+    _provider_registry.register(provider)
 
 
 def _get_auth_store() -> UserStore:
@@ -306,6 +319,118 @@ async def revoke_api_key(key_id: str, current_user: User = Depends(get_current_u
 
 
 # ------------------------------------------------------------------
+# ------------------------------------------------------------------
+# OAuth 2.0 / OIDC endpoints (Phase 3)
+# ------------------------------------------------------------------
+
+def _create_oauth_state(provider_slug: str) -> str:
+    state = secrets.token_urlsafe(32)
+    _oauth_states[state] = {
+        "provider": provider_slug,
+        "expires_at": datetime.now(timezone.utc) + timedelta(minutes=10),
+    }
+    return state
+
+
+def _consume_oauth_state(state: str) -> dict:
+    data = _oauth_states.pop(state, None)
+    if data is None:
+        raise AuthError("Invalid or expired OAuth state")
+    if data["expires_at"] < datetime.now(timezone.utc):
+        raise AuthError("OAuth state expired")
+    return data
+
+
+@app.get("/api/auth/oauth/{provider_slug}/start")
+async def oauth_start(provider_slug: str):
+    """Redirect the browser to the provider's authorization page."""
+    provider = _provider_registry.get(provider_slug)
+    if provider is None:
+        raise HTTPException(404, f"OAuth provider '{provider_slug}' not configured")
+    state = _create_oauth_state(provider_slug)
+    url = await provider.authorization_url(state)
+    return RedirectResponse(url, status_code=302)
+
+
+async def _resolve_oauth_callback(
+    provider_slug: str,
+    code: str,
+    state: str,
+) -> tuple[str, str]:
+    """Validate state, exchange code, issue Orchid tokens.
+
+    Returns (access_token, refresh_raw).
+    """
+    try:
+        state_data = _consume_oauth_state(state)
+    except AuthError as exc:
+        raise HTTPException(400, str(exc))
+
+    if state_data["provider"] != provider_slug:
+        raise HTTPException(400, "OAuth state provider mismatch")
+
+    provider = _provider_registry.get(provider_slug)
+    if provider is None:
+        raise HTTPException(404, f"OAuth provider '{provider_slug}' not configured")
+
+    store = _get_auth_store()
+    try:
+        user, _oa = await provider.handle_callback(code, store)
+    except AuthError as exc:
+        raise HTTPException(401, str(exc))
+    except Exception as exc:
+        raise HTTPException(502, f"OAuth provider error: {exc}")
+
+    access_token = issue_access_token(user)
+    refresh_raw, rt = issue_refresh_token(user)
+    store.store_refresh_token(rt)
+    return access_token, refresh_raw
+
+
+@app.get("/api/auth/oauth/{provider_slug}/callback")
+async def oauth_callback_get(provider_slug: str, request: Request):
+    """Handle OAuth callback via GET redirect (standard web flow).
+
+    Sets HttpOnly cookies and redirects browser to /?oauth=success.
+    """
+    error = request.query_params.get("error", "")
+    if error:
+        raise HTTPException(400, f"OAuth provider returned error: {error}")
+    code = request.query_params.get("code", "")
+    state = request.query_params.get("state", "")
+    if not code or not state:
+        raise HTTPException(400, "Missing 'code' or 'state' parameter")
+
+    access_token, refresh_raw = await _resolve_oauth_callback(provider_slug, code, state)
+    redirect = RedirectResponse("/?oauth=success", status_code=302)
+    _set_auth_cookies(redirect, access_token, refresh_raw)
+    return redirect
+
+
+@app.post("/api/auth/oauth/{provider_slug}/callback")
+async def oauth_callback_post(provider_slug: str, request: Request, response: Response):
+    """Handle OAuth callback via POST (some providers; also mobile token exchange)."""
+    try:
+        body = await request.json()
+        code = body.get("code", "")
+        state = body.get("state", "")
+    except Exception:
+        form = await request.form()
+        code = form.get("code", "")
+        state = form.get("state", "")
+    if not code or not state:
+        raise HTTPException(400, "Missing 'code' or 'state' parameter")
+    access_token, refresh_raw = await _resolve_oauth_callback(provider_slug, code, state)
+    _set_auth_cookies(response, access_token, refresh_raw)
+    return {"access_token": access_token}
+
+
+@app.get("/api/auth/oauth/providers")
+async def list_oauth_providers():
+    """List configured OAuth providers (for the login UI to show SSO buttons)."""
+    return {"providers": _provider_registry.slugs()}
+
+
 # Optional auth guard decorator
 # ------------------------------------------------------------------
 
