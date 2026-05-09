@@ -398,23 +398,6 @@ class BaseAgent:
         self._checkpoint_store = store
 
 
-def _get_agent_allowed_tools(agent_id: str) -> frozenset[str] | None:
-    """Return the allowed_tools frozenset for an agent instance by its class name prefix, or None if unrestricted."""
-    # agent_id is typically "ClassName-<id(self)>"
-    class_name = agent_id.split("-")[0].lower()
-    # Map class name to known frozensets
-    # Import subclasses here to avoid circular imports
-    from orchid.agents.tester import TesterAgent
-    from orchid.agents.reviewer import ReviewerAgent
-    from orchid.agents.researcher import ResearcherAgent
-    _AGENT_TOOL_MAP = {
-        "testeragent": TesterAgent.allowed_tools,
-        "revieweragent": ReviewerAgent.allowed_tools,
-        "researcheragent": ResearcherAgent.allowed_tools,
-    }
-    return _AGENT_TOOL_MAP.get(class_name, None)
-
-
     def register_tool(self, name: str, fn: ToolFn) -> None:
         self.tools[name] = fn
 
@@ -755,3 +738,18 @@ def _get_agent_allowed_tools(agent_id: str) -> frozenset[str] | None:
             return str(result)
         except Exception as e:
             return f"[tool error: {e}]"
+
+
+def _get_agent_allowed_tools(agent_id: str) -> frozenset[str] | None:
+    """Return the allowed_tools frozenset for an agent instance by its class name prefix, or None if unrestricted."""
+    # agent_id is typically "ClassName-<id(self)>"
+    class_name = agent_id.split("-")[0].lower()
+    from orchid.agents.tester import TesterAgent
+    from orchid.agents.reviewer import ReviewerAgent
+    from orchid.agents.researcher import ResearcherAgent
+    _AGENT_TOOL_MAP = {
+        "testeragent": TesterAgent.allowed_tools,
+        "revieweragent": ReviewerAgent.allowed_tools,
+        "researcheragent": ResearcherAgent.allowed_tools,
+    }
+    return _AGENT_TOOL_MAP.get(class_name, None)
