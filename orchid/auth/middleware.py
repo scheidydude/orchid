@@ -1,14 +1,20 @@
 """FastAPI auth dependencies.
 
 Token resolution order: orchid_access cookie → Authorization: Bearer header.
-JWT is verified locally (no DB hit). User record fetched from store only to
-check is_active.
+
+Two token types are supported:
+- JWT access token: verified locally (no DB hit). Issued by login/refresh.
+- API key ('ok_...'): verified against store. For CI/scripts/bots.
+
+Scope enforcement (API keys only):
+  API keys carry a scopes list. JWT sessions (interactive) are unrestricted.
+  Use require_scope("tasks:run") to enforce a scope on an endpoint.
 """
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from orchid.auth.jwt import verify_access_token
+from orchid.auth.jwt import _API_KEY_PREFIX, verify_access_token, verify_api_key
 from orchid.auth.store import UserStore
 from orchid.auth.types import AuthError, User
 
@@ -41,6 +47,7 @@ async def get_current_user(
 ) -> User:
     """Validate the access token (cookie or Bearer) and return the active user.
 
+    Accepts JWT access tokens and API keys ('ok_...' prefix).
     Raises 401 when no token is present or verification fails.
     Raises 403 when the user is inactive.
     """
@@ -51,6 +58,18 @@ async def get_current_user(
             detail="Missing authentication token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    if token.startswith(_API_KEY_PREFIX):
+        try:
+            user, api_key = verify_api_key(token, store)
+        except AuthError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=str(exc),
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        request.state.api_key = api_key
+        return user
 
     try:
         payload = verify_access_token(token)
@@ -83,6 +102,14 @@ async def get_optional_user(
     if not token:
         return None
 
+    if token.startswith(_API_KEY_PREFIX):
+        try:
+            user, api_key = verify_api_key(token, store)
+            request.state.api_key = api_key
+            return user
+        except AuthError:
+            return None
+
     try:
         payload = verify_access_token(token)
     except AuthError:
@@ -109,5 +136,32 @@ def require_auth(role: str | None = None):
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Role '{role}' required",
             )
+        return current_user
+    return _dep
+
+
+def require_scope(scope: str):
+    """Dependency factory that enforces a scope on API key auth.
+
+    JWT sessions (interactive login) always pass — they are unrestricted.
+    API keys must have the requested scope (or '*') in their scopes list.
+
+    Usage::
+
+        @app.post("/api/tasks/{id}/run")
+        async def run_task(user: User = Depends(require_scope("tasks:run"))):
+            ...
+    """
+    async def _dep(
+        request: Request,
+        current_user: User = Depends(get_current_user),
+    ) -> User:
+        api_key = getattr(request.state, "api_key", None)
+        if api_key is not None:
+            if "*" not in api_key.scopes and scope not in api_key.scopes:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"API key missing required scope: '{scope}'",
+                )
         return current_user
     return _dep

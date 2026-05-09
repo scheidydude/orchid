@@ -42,3 +42,21 @@ class RefreshToken:
     expires_at: datetime
     created_at: datetime = field(default_factory=datetime.now)
     is_revoked: bool = False
+
+
+@dataclass
+class ApiKey:
+    """Persisted API key record for programmatic/CI access.
+
+    Raw key format: 'ok_{key_id}.{secret}' — prefix enables quick detection,
+    key_id enables O(1) store lookup, secret is argon2-hashed before storage.
+    """
+    key_id: str
+    secret_hash: str     # argon2 hash of the secret portion
+    user_id: str
+    name: str            # human-readable label
+    scopes: list = field(default_factory=list)   # e.g. ["tasks:run", "tasks:read"]
+    created_at: datetime = field(default_factory=datetime.now)
+    last_used: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    is_active: bool = True

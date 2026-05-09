@@ -1,7 +1,8 @@
 import asyncio
 from collections import deque
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, StreamingResponse
@@ -10,12 +11,13 @@ from fastapi.staticfiles import StaticFiles
 from orchid.auth.jwt import (
     hash_password,
     issue_access_token,
+    issue_api_key,
     issue_refresh_token,
     verify_access_token,
     verify_password,
     verify_refresh_token,
 )
-from orchid.auth.middleware import get_current_user, get_optional_user
+from orchid.auth.middleware import get_current_user, get_optional_user, require_scope
 from orchid.auth.store import UserStore
 from orchid.auth.types import AuthError, User
 from orchid.registry import ProjectRegistry
@@ -230,6 +232,77 @@ async def auth_list_users(current_user: User = Depends(get_current_user)):
             for u in users
         ]
     }
+
+
+# ------------------------------------------------------------------
+# API key endpoints (Phase 2)
+# ------------------------------------------------------------------
+
+@app.post("/api/auth/apikeys")
+async def create_api_key(data: dict, current_user: User = Depends(get_current_user)):
+    """Create an API key for programmatic access. Secret returned once — store it."""
+    name = data.get("name", "").strip()
+    scopes = data.get("scopes", [])
+    expires_days = data.get("expires_days")
+
+    if not name:
+        raise HTTPException(400, "name required")
+    if not isinstance(scopes, list):
+        raise HTTPException(400, "scopes must be a list of strings")
+    if not all(isinstance(s, str) for s in scopes):
+        raise HTTPException(400, "scopes must be a list of strings")
+
+    expires_at: Optional[datetime] = None
+    if expires_days is not None:
+        try:
+            expires_at = datetime.now(timezone.utc) + timedelta(days=int(expires_days))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "expires_days must be an integer")
+
+    raw, key = issue_api_key(current_user, name, scopes, expires_at)
+    _get_auth_store().store_api_key(key)
+
+    return {
+        "key_id": key.key_id,
+        "name": key.name,
+        "scopes": key.scopes,
+        "secret": raw,
+        "created_at": key.created_at,
+        "expires_at": key.expires_at,
+    }
+
+
+@app.get("/api/auth/apikeys")
+async def list_api_keys(current_user: User = Depends(get_current_user)):
+    """List the current user's API keys. Secrets are never returned."""
+    keys = _get_auth_store().list_api_keys(current_user.user_id)
+    return {
+        "api_keys": [
+            {
+                "key_id": k.key_id,
+                "name": k.name,
+                "scopes": k.scopes,
+                "created_at": k.created_at,
+                "last_used": k.last_used,
+                "expires_at": k.expires_at,
+                "is_active": k.is_active,
+            }
+            for k in keys
+        ]
+    }
+
+
+@app.delete("/api/auth/apikeys/{key_id}")
+async def revoke_api_key(key_id: str, current_user: User = Depends(get_current_user)):
+    """Revoke an API key. Admins can revoke any key; users can only revoke their own."""
+    store = _get_auth_store()
+    key = store.get_api_key(key_id)
+    if key is None:
+        raise HTTPException(404, "API key not found")
+    if key.user_id != current_user.user_id and current_user.role != "admin":
+        raise HTTPException(403, "Cannot revoke another user's API key")
+    store.revoke_api_key(key_id)
+    return {"ok": True}
 
 
 # ------------------------------------------------------------------

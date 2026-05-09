@@ -1,8 +1,9 @@
-"""Tests for Orchid auth — Phase 1 (JWT foundation).
+"""Tests for Orchid auth — Phase 1 (JWT foundation) + Phase 2 (API keys).
 
 Covers: register → login → call API → refresh → logout flow,
 password hashing, JWT issue/verify, refresh token rotation,
-UserStore CRUD, and middleware dependencies.
+UserStore CRUD, endpoint integration, API key issue/verify/revoke,
+scope enforcement.
 """
 import os
 from datetime import datetime, timedelta, timezone
@@ -17,13 +18,15 @@ os.environ.setdefault("JWT_SECRET", "test-secret-key-for-unit-tests-only")
 from orchid.auth.jwt import (
     hash_password,
     issue_access_token,
+    issue_api_key,
     issue_refresh_token,
     verify_access_token,
+    verify_api_key,
     verify_password,
     verify_refresh_token,
 )
 from orchid.auth.store import UserStore
-from orchid.auth.types import AuthError, RefreshToken, User
+from orchid.auth.types import ApiKey, AuthError, RefreshToken, User
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -410,3 +413,281 @@ class TestAuthEndpoints:
         r = client.get("/api/auth/me", headers={"Authorization": f"Bearer {access}"},
                        cookies={})  # no cookies
         assert r.json()["authenticated"] is True
+
+
+# ── Phase 2: API keys ─────────────────────────────────────────────────────────
+
+class TestApiKeyUnit:
+    def test_issue_and_verify(self, tmp_path):
+        store = make_store(tmp_path)
+        user = make_user()
+        store.add_user(user)
+
+        raw, key = issue_api_key(user, "ci-bot", ["tasks:run"])
+        store.store_api_key(key)
+
+        found_user, found_key = verify_api_key(raw, store)
+        assert found_user.user_id == "alice"
+        assert found_key.key_id == key.key_id
+        assert found_key.scopes == ["tasks:run"]
+
+    def test_raw_key_has_ok_prefix(self, tmp_path):
+        user = make_user()
+        raw, _ = issue_api_key(user, "bot", [])
+        assert raw.startswith("ok_")
+
+    def test_wrong_secret_rejected(self, tmp_path):
+        store = make_store(tmp_path)
+        user = make_user()
+        store.add_user(user)
+        raw, key = issue_api_key(user, "bot", [])
+        store.store_api_key(key)
+
+        key_id = raw[3:].split(".", 1)[0]  # strip "ok_" then get key_id
+        with pytest.raises(AuthError):
+            verify_api_key(f"ok_{key_id}.badsecret", store)
+
+    def test_revoked_key_rejected(self, tmp_path):
+        store = make_store(tmp_path)
+        user = make_user()
+        store.add_user(user)
+        raw, key = issue_api_key(user, "bot", [])
+        store.store_api_key(key)
+        store.revoke_api_key(key.key_id)
+
+        with pytest.raises(AuthError, match="revoked"):
+            verify_api_key(raw, store)
+
+    def test_expired_key_rejected(self, tmp_path):
+        store = make_store(tmp_path)
+        user = make_user()
+        store.add_user(user)
+        expires = datetime.now(timezone.utc) - timedelta(seconds=1)
+        raw, key = issue_api_key(user, "bot", [], expires_at=expires)
+        store.store_api_key(key)
+
+        with pytest.raises(AuthError, match="expired"):
+            verify_api_key(raw, store)
+
+    def test_malformed_key_rejected(self, tmp_path):
+        store = make_store(tmp_path)
+        with pytest.raises(AuthError):
+            verify_api_key("ok_nodothere", store)
+
+    def test_non_api_key_rejected(self, tmp_path):
+        store = make_store(tmp_path)
+        with pytest.raises(AuthError, match="Not an API key"):
+            verify_api_key("eyJhbGciOiJIUzI1NiJ9.fake.jwt", store)
+
+    def test_touch_updates_last_used(self, tmp_path):
+        store = make_store(tmp_path)
+        user = make_user()
+        store.add_user(user)
+        raw, key = issue_api_key(user, "bot", [])
+        store.store_api_key(key)
+
+        assert store.get_api_key(key.key_id).last_used is None
+        verify_api_key(raw, store)
+        assert store.get_api_key(key.key_id).last_used is not None
+
+    def test_list_api_keys(self, tmp_path):
+        store = make_store(tmp_path)
+        user = make_user()
+        store.add_user(user)
+        _, k1 = issue_api_key(user, "bot-1", ["tasks:read"])
+        _, k2 = issue_api_key(user, "bot-2", ["tasks:run"])
+        store.store_api_key(k1)
+        store.store_api_key(k2)
+
+        keys = store.list_api_keys("alice")
+        assert len(keys) == 2
+        names = {k.name for k in keys}
+        assert names == {"bot-1", "bot-2"}
+
+    def test_persistence_across_instances(self, tmp_path):
+        path = tmp_path / "users.json"
+        s1 = UserStore(path=path)
+        user = make_user()
+        s1.add_user(user)
+        _, key = issue_api_key(user, "bot", [])
+        s1.store_api_key(key)
+
+        s2 = UserStore(path=path)
+        assert s2.get_api_key(key.key_id) is not None
+        assert s2.get_api_key(key.key_id).name == "bot"
+
+
+class TestApiKeyEndpoints:
+    def _login(self, client, username="dave", password="pw"):
+        client.post("/api/auth/register", json={"username": username, "password": password})
+        client.post("/api/auth/login", json={"username": username, "password": password})
+
+    def test_create_api_key(self, client):
+        self._login(client)
+        r = client.post("/api/auth/apikeys", json={"name": "ci-bot", "scopes": ["tasks:run"]})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["name"] == "ci-bot"
+        assert body["scopes"] == ["tasks:run"]
+        assert body["secret"].startswith("ok_")
+        assert "key_id" in body
+
+    def test_secret_not_in_list(self, client):
+        self._login(client)
+        client.post("/api/auth/apikeys", json={"name": "bot", "scopes": []})
+        r = client.get("/api/auth/apikeys")
+        assert r.status_code == 200
+        keys = r.json()["api_keys"]
+        assert len(keys) == 1
+        assert "secret" not in keys[0]
+
+    def test_create_requires_name(self, client):
+        self._login(client)
+        r = client.post("/api/auth/apikeys", json={"scopes": []})
+        assert r.status_code == 400
+
+    def test_create_with_expiry(self, client):
+        self._login(client)
+        r = client.post("/api/auth/apikeys", json={"name": "temp", "scopes": [], "expires_days": 7})
+        assert r.status_code == 200
+        assert r.json()["expires_at"] is not None
+
+    def test_revoke_api_key(self, client):
+        self._login(client)
+        r = client.post("/api/auth/apikeys", json={"name": "bot", "scopes": []})
+        key_id = r.json()["key_id"]
+
+        r = client.delete(f"/api/auth/apikeys/{key_id}")
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+
+        keys = client.get("/api/auth/apikeys").json()["api_keys"]
+        assert keys[0]["is_active"] is False
+
+    def test_revoke_nonexistent(self, client):
+        self._login(client)
+        r = client.delete("/api/auth/apikeys/no-such-id")
+        assert r.status_code == 404
+
+    def test_cannot_revoke_other_users_key(self, client):
+        # Create alice's key
+        self._login(client, "alice", "pw")
+        r = client.post("/api/auth/apikeys", json={"name": "alice-bot", "scopes": []})
+        key_id = r.json()["key_id"]
+        client.post("/api/auth/logout")
+
+        # Log in as bob
+        client.post("/api/auth/register", json={"username": "bob", "password": "pw"})
+        client.post("/api/auth/login", json={"username": "bob", "password": "pw"})
+        r = client.delete(f"/api/auth/apikeys/{key_id}")
+        assert r.status_code == 403
+
+    def test_api_key_auth_via_bearer(self, client):
+        """API key in Authorization header authenticates successfully."""
+        self._login(client)
+        r = client.post("/api/auth/apikeys", json={"name": "bot", "scopes": ["*"]})
+        secret = r.json()["secret"]
+        client.post("/api/auth/logout")
+
+        r = client.get("/api/auth/me", headers={"Authorization": f"Bearer {secret}"},
+                       cookies={})
+        assert r.status_code == 200
+        assert r.json()["authenticated"] is True
+        assert r.json()["username"] == "dave"
+
+    def test_revoked_api_key_cannot_auth(self, client):
+        self._login(client)
+        r = client.post("/api/auth/apikeys", json={"name": "bot", "scopes": []})
+        key_id = r.json()["key_id"]
+        secret = r.json()["secret"]
+        client.delete(f"/api/auth/apikeys/{key_id}")
+        client.post("/api/auth/logout")
+
+        client.cookies.clear()  # drop JWT cookies so only API key header is in play
+        # /api/auth/apikeys uses get_current_user — returns 401 on invalid auth
+        r = client.get("/api/auth/apikeys", headers={"Authorization": f"Bearer {secret}"})
+        assert r.status_code == 401
+
+    def test_unauthenticated_cannot_create_key(self, client):
+        r = client.post("/api/auth/apikeys", json={"name": "bot", "scopes": []})
+        assert r.status_code == 401
+
+    def test_unauthenticated_cannot_list_keys(self, client):
+        r = client.get("/api/auth/apikeys")
+        assert r.status_code == 401
+
+
+class TestScopeEnforcement:
+    """require_scope() dependency — JWT sessions pass, API keys checked."""
+
+    def test_jwt_session_bypasses_scope_check(self, client):
+        """Logged-in user (JWT) can always hit scope-enforced endpoints."""
+        from fastapi import Depends
+        import orchid.web.server as srv
+        from orchid.auth.middleware import require_scope
+
+        @srv.app.get("/test-scope-jwt")
+        async def _ep(user: User = Depends(require_scope("tasks:run"))):
+            return {"ok": True}
+
+        client.post("/api/auth/register", json={"username": "dave", "password": "pw"})
+        client.post("/api/auth/login", json={"username": "dave", "password": "pw"})
+        r = client.get("/test-scope-jwt")
+        assert r.status_code == 200
+
+    def test_api_key_with_matching_scope_passes(self, client):
+        from fastapi import Depends
+        import orchid.web.server as srv
+        from orchid.auth.middleware import require_scope
+
+        @srv.app.get("/test-scope-key")
+        async def _ep(user: User = Depends(require_scope("tasks:run"))):
+            return {"ok": True}
+
+        client.post("/api/auth/register", json={"username": "dave", "password": "pw"})
+        client.post("/api/auth/login", json={"username": "dave", "password": "pw"})
+        r = client.post("/api/auth/apikeys", json={"name": "bot", "scopes": ["tasks:run"]})
+        secret = r.json()["secret"]
+        client.post("/api/auth/logout")
+
+        r = client.get("/test-scope-key", headers={"Authorization": f"Bearer {secret}"},
+                       cookies={})
+        assert r.status_code == 200
+
+    def test_api_key_wildcard_scope_passes(self, client):
+        from fastapi import Depends
+        import orchid.web.server as srv
+        from orchid.auth.middleware import require_scope
+
+        @srv.app.get("/test-scope-wildcard")
+        async def _ep(user: User = Depends(require_scope("tasks:run"))):
+            return {"ok": True}
+
+        client.post("/api/auth/register", json={"username": "dave", "password": "pw"})
+        client.post("/api/auth/login", json={"username": "dave", "password": "pw"})
+        r = client.post("/api/auth/apikeys", json={"name": "bot", "scopes": ["*"]})
+        secret = r.json()["secret"]
+        client.post("/api/auth/logout")
+
+        r = client.get("/test-scope-wildcard", headers={"Authorization": f"Bearer {secret}"},
+                       cookies={})
+        assert r.status_code == 200
+
+    def test_api_key_missing_scope_blocked(self, client):
+        from fastapi import Depends
+        import orchid.web.server as srv
+        from orchid.auth.middleware import require_scope
+
+        @srv.app.get("/test-scope-blocked")
+        async def _ep(user: User = Depends(require_scope("tasks:run"))):
+            return {"ok": True}
+
+        client.post("/api/auth/register", json={"username": "dave", "password": "pw"})
+        client.post("/api/auth/login", json={"username": "dave", "password": "pw"})
+        r = client.post("/api/auth/apikeys", json={"name": "bot", "scopes": ["tasks:read"]})
+        secret = r.json()["secret"]
+        client.post("/api/auth/logout")
+
+        r = client.get("/test-scope-blocked", headers={"Authorization": f"Bearer {secret}"},
+                       cookies={})
+        assert r.status_code == 403

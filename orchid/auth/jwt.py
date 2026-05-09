@@ -1,21 +1,23 @@
-"""JWT and password utilities for Orchid auth (Phase 1).
+"""JWT, password, and API key utilities for Orchid auth.
 
 Access tokens: HS256 JWT, 15-minute TTL, self-contained (no DB hit to verify).
 Refresh tokens: opaque '{token_id}.{secret}' — token_id enables O(1) store lookup,
   secret is argon2-hashed before storage.
+API keys: opaque 'ok_{key_id}.{secret}' — 'ok_' prefix enables quick type detection.
 Passwords: argon2id with OWASP-recommended parameters.
 """
 import os
 import secrets
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING
+from datetime import datetime, timezone
+from datetime import timedelta
+from typing import TYPE_CHECKING, Optional
 
 import jwt as _pyjwt
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 
-from orchid.auth.types import AuthError, RefreshToken, User
+from orchid.auth.types import ApiKey, AuthError, RefreshToken, User
 
 if TYPE_CHECKING:
     from orchid.auth.store import UserStore
@@ -121,3 +123,76 @@ def verify_refresh_token(raw: str, store: "UserStore") -> RefreshToken:
         raise AuthError("Invalid refresh token")
 
     return rt
+
+
+# ── API keys ──────────────────────────────────────────────────────────────────
+
+_API_KEY_PREFIX = "ok_"
+
+
+def issue_api_key(
+    user: User,
+    name: str,
+    scopes: list[str],
+    expires_at: Optional[datetime] = None,
+) -> tuple[str, ApiKey]:
+    """Create an API key pair.
+
+    Returns:
+        raw: opaque string to return to the caller once — 'ok_{key_id}.{secret}'
+        key: ApiKey record to persist in the store (secret is hashed, not stored)
+    """
+    key_id = str(uuid.uuid4())
+    secret = secrets.token_urlsafe(48)
+    raw = f"{_API_KEY_PREFIX}{key_id}.{secret}"
+    now = datetime.now(timezone.utc)
+    key = ApiKey(
+        key_id=key_id,
+        secret_hash=_ph.hash(secret),
+        user_id=user.user_id,
+        name=name,
+        scopes=scopes,
+        created_at=now,
+        expires_at=expires_at,
+    )
+    return raw, key
+
+
+def verify_api_key(raw: str, store: "UserStore") -> tuple[User, ApiKey]:
+    """Validate a raw API key.  Returns (user, api_key) on success.
+
+    Raises AuthError on any failure. Updates key.last_used in the store.
+    """
+    if not raw.startswith(_API_KEY_PREFIX):
+        raise AuthError("Not an API key")
+    rest = raw[len(_API_KEY_PREFIX):]
+    try:
+        key_id, secret = rest.split(".", 1)
+    except ValueError:
+        raise AuthError("Malformed API key")
+
+    key = store.get_api_key(key_id)
+    if key is None or not key.is_active:
+        raise AuthError("API key not found or revoked")
+
+    if key.expires_at is not None:
+        expires = key.expires_at
+        if isinstance(expires, str):
+            expires = datetime.fromisoformat(expires)
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        if expires < datetime.now(timezone.utc):
+            raise AuthError("API key expired")
+
+    try:
+        _ph.verify(key.secret_hash, secret)
+    except VerifyMismatchError:
+        raise AuthError("Invalid API key")
+
+    store.touch_api_key(key_id)
+
+    user = store.get_user(key.user_id)
+    if user is None or not user.is_active:
+        raise AuthError("User not found or inactive")
+
+    return user, key

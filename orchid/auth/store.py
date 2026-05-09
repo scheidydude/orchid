@@ -5,12 +5,19 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-from orchid.auth.types import AuthError, RefreshToken, User
+from orchid.auth.types import ApiKey, AuthError, RefreshToken, User
 
 logger = logging.getLogger(__name__)
 
 _DATETIME_FIELDS_USER = {"created_at"}
 _DATETIME_FIELDS_RT = {"expires_at", "created_at"}
+_DATETIME_FIELDS_AK = {"created_at", "last_used", "expires_at"}
+
+
+def _parse_datetime(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    return datetime.fromisoformat(value)
 
 
 def _parse_user(entry: dict) -> User:
@@ -31,6 +38,15 @@ def _parse_refresh_token(entry: dict) -> RefreshToken:
     return RefreshToken(**filtered)
 
 
+def _parse_api_key(entry: dict) -> ApiKey:
+    valid_keys = {f.name for f in dataclasses.fields(ApiKey)}
+    filtered = {k: v for k, v in entry.items() if k in valid_keys}
+    for key in _DATETIME_FIELDS_AK:
+        if key in filtered and isinstance(filtered[key], str):
+            filtered[key] = _parse_datetime(filtered[key])
+    return ApiKey(**filtered)
+
+
 class UserStore:
     """Thread-safe, JSON-file-backed user and refresh-token store."""
 
@@ -39,6 +55,7 @@ class UserStore:
         self._lock = threading.Lock()
         self._users: dict[str, User] = {}
         self._refresh_tokens: dict[str, RefreshToken] = {}
+        self._api_keys: dict[str, ApiKey] = {}
         self._load()
 
     def _load(self) -> None:
@@ -58,6 +75,12 @@ class UserStore:
                     self._refresh_tokens[rt.token_id] = rt
                 except Exception as exc:
                     logger.warning("Skipping malformed refresh token entry: %s", exc)
+            for entry in data.get("api_keys", []):
+                try:
+                    ak = _parse_api_key(entry)
+                    self._api_keys[ak.key_id] = ak
+                except Exception as exc:
+                    logger.warning("Skipping malformed API key entry: %s", exc)
         except Exception as exc:
             logger.error("Failed to load store from %s: %s", self._path, exc)
 
@@ -66,6 +89,7 @@ class UserStore:
         payload = {
             "users": [dataclasses.asdict(u) for u in self._users.values()],
             "refresh_tokens": [dataclasses.asdict(rt) for rt in self._refresh_tokens.values()],
+            "api_keys": [dataclasses.asdict(ak) for ak in self._api_keys.values()],
         }
         self._path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
 
@@ -152,3 +176,35 @@ class UserStore:
                 if rt.user_id == user_id:
                     rt.is_revoked = True
             self._save()
+
+    # ── API key CRUD ──────────────────────────────────────────────────────────
+
+    def store_api_key(self, key: ApiKey) -> None:
+        with self._lock:
+            self._api_keys[key.key_id] = key
+            self._save()
+
+    def get_api_key(self, key_id: str) -> ApiKey | None:
+        with self._lock:
+            return self._api_keys.get(key_id)
+
+    def list_api_keys(self, user_id: str) -> list[ApiKey]:
+        with self._lock:
+            return [k for k in self._api_keys.values() if k.user_id == user_id]
+
+    def revoke_api_key(self, key_id: str) -> bool:
+        with self._lock:
+            key = self._api_keys.get(key_id)
+            if key is None:
+                return False
+            key.is_active = False
+            self._save()
+        return True
+
+    def touch_api_key(self, key_id: str) -> None:
+        """Update last_used timestamp. Called on every successful API key auth."""
+        with self._lock:
+            key = self._api_keys.get(key_id)
+            if key:
+                key.last_used = datetime.now()
+                self._save()
