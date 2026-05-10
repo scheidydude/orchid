@@ -12,6 +12,7 @@ export default function TaskBoard({ projectId, runStatus }) {
   const [error, setError] = useState(null)
   const [showAdd, setShowAdd] = useState(false)
   const [filter, setFilter] = useState('active')
+  const [sortMode, setSortMode] = useState('priority') // 'priority' | 'id'
 
   const fetchTasks = useCallback(async () => {
     if (!projectId) return
@@ -77,7 +78,7 @@ export default function TaskBoard({ projectId, runStatus }) {
     const oa = STATUS_ORDER.indexOf(a.status)
     const ob = STATUS_ORDER.indexOf(b.status)
     if (oa !== ob) return oa - ob
-    if (a.priority !== b.priority) return a.priority - b.priority
+    if (sortMode === 'priority' && a.priority !== b.priority) return a.priority - b.priority
     return taskNum(a.id) - taskNum(b.id)
   })
 
@@ -112,7 +113,29 @@ export default function TaskBoard({ projectId, runStatus }) {
             )
           })}
         </div>
-        <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>{filtered.length} tasks</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 8 }}>
+          <span style={{ fontSize: 11, color: 'var(--text-dim)', marginRight: 2 }}>Sort:</span>
+          {[
+            { key: 'priority', label: 'Priority + ID' },
+            { key: 'id',       label: 'ID' },
+          ].map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => setSortMode(key)}
+              title={key === 'priority' ? 'Sort by status → priority → task ID' : 'Sort by status → task ID'}
+              style={{
+                padding: '3px 8px',
+                fontSize: 11,
+                background: sortMode === key ? 'var(--accent)' : undefined,
+                borderColor: sortMode === key ? 'var(--accent)' : undefined,
+                color: sortMode === key ? '#fff' : undefined,
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <span style={{ fontSize: 12, color: 'var(--text-dim)', marginLeft: 8 }}>{filtered.length} tasks</span>
         <button
           className="primary"
           onClick={() => setShowAdd(true)}
