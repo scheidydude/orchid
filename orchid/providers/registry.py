@@ -264,6 +264,51 @@ class ProviderRegistry:
             return cfg_agent_default
         return _AGENT_DEFAULTS.get(agent_type, "local")
 
+    def resolve_chain(
+        self,
+        agent_type: str,
+        agent_name: str | None = None,
+        task_type: str | None = None,
+        task_model: str | None = None,
+        cli_override: str | None = None,
+        task_title: str = "",
+    ) -> tuple[str, list[str]]:
+        """Return (primary_provider_name, [ordered_fallback_names]).
+
+        Fallback list is read from:
+          providers.task_types.<task_type>.fallback  (dict form: {name: ..., fallback: [...]})
+          providers.<agent_name>.fallback             (dict form)
+        Unknown or duplicate names are filtered out.
+        """
+        primary = self.resolve_name(
+            agent_type, agent_name, task_type, task_model, cli_override, task_title,
+        )
+        from orchid import config as cfg
+        fallback: list[str] = []
+
+        # task_type config has highest priority for fallback list
+        if task_type:
+            task_cfg = cfg.get(f"providers.task_types.{task_type}")
+            if isinstance(task_cfg, dict):
+                fallback = list(task_cfg.get("fallback", []) or [])
+
+        # agent-level config as secondary source
+        if not fallback:
+            _name_key = agent_name or agent_type
+            agent_cfg = cfg.get(f"providers.{_name_key}")
+            if isinstance(agent_cfg, dict):
+                fallback = list(agent_cfg.get("fallback", []) or [])
+
+        # filter: drop primary, drop unknown, deduplicate
+        seen: set[str] = {primary}
+        cleaned: list[str] = []
+        for name in fallback:
+            if isinstance(name, str) and name not in seen and name in self._providers:
+                cleaned.append(name)
+                seen.add(name)
+
+        return primary, cleaned
+
     def resolve(
         self,
         agent_type: str,
