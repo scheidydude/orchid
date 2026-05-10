@@ -373,7 +373,18 @@ providers:
   #     developer: local
   #     reviewer: claude
 
+  # ── Fallback chain ──────────────────────────────────────────────────────────
+  # HTTP status codes that trigger provider fallback (429=rate-limit, 502/503=transient)
+  fallback_on_errors: [429, 503, 502]
+  # Maximum providers to try per task (primary + this many fallbacks)
+  max_fallback_attempts: 3
+
   # ── Layer 3: Per-task-type overrides (uncomment to activate) ────────────────
+  # To add a fallback chain for a task type, use dict form:
+  #   task_types:
+  #     code_generate:
+  #       name: claude
+  #       fallback: [openrouter, local]
   task_types: {}
 
   # ── Layer 6: Task-type defaults (configurable; override in .orchid.yaml) ────
