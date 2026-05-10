@@ -1,10 +1,12 @@
 import dataclasses
 import json
 import logging
+import os
 import threading
 from datetime import datetime
 from pathlib import Path
 
+from orchid.auth.base import BaseUserStore
 from orchid.auth.types import ApiKey, AuthError, OAuthAccount, RefreshToken, User
 
 logger = logging.getLogger(__name__)
@@ -57,7 +59,7 @@ def _parse_api_key(entry: dict) -> ApiKey:
     return ApiKey(**filtered)
 
 
-class UserStore:
+class FileUserStore(BaseUserStore):
     """Thread-safe, JSON-file-backed user and refresh-token store."""
 
     def __init__(self, path: Path | None = None) -> None:
@@ -248,3 +250,41 @@ class UserStore:
     def list_oauth_accounts_for_user(self, user_id: str) -> list[OAuthAccount]:
         with self._lock:
             return [oa for oa in self._oauth_accounts.values() if oa.user_id == user_id]
+
+
+# Backward-compat alias — existing code calling UserStore() still works.
+UserStore = FileUserStore
+
+# ── Store factory ─────────────────────────────────────────────────────────────
+
+_store_instance: BaseUserStore | None = None
+_store_lock = threading.Lock()
+
+
+def get_store() -> BaseUserStore:
+    """Return the process-wide store singleton.
+
+    Backend selection (checked once, in priority order):
+      1. ORCHID_AUTH_STORE_DSN env var set → PostgresUserStore
+      2. Otherwise → FileUserStore (default, zero deps)
+    """
+    global _store_instance
+    if _store_instance is None:
+        with _store_lock:
+            if _store_instance is None:
+                dsn = os.environ.get("ORCHID_AUTH_STORE_DSN", "").strip()
+                if dsn:
+                    try:
+                        from orchid.auth.store_postgres import PostgresUserStore
+                        _store_instance = PostgresUserStore(dsn)
+                        logger.info("Auth store: PostgresUserStore")
+                    except ImportError:
+                        logger.error(
+                            "ORCHID_AUTH_STORE_DSN set but psycopg2 not installed. "
+                            "Run: uv pip install 'orchid[postgres]'. Falling back to FileUserStore."
+                        )
+                        _store_instance = FileUserStore()
+                else:
+                    _store_instance = FileUserStore()
+                    logger.debug("Auth store: FileUserStore")
+    return _store_instance

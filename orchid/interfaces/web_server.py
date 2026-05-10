@@ -83,7 +83,6 @@ _central_bot_manager: Any | None = None
 
 # ── Auth module-level state ────────────────────────────────────────────────────
 
-_auth_store: Any | None = None
 _bearer: Any = None
 _COOKIE_ACCESS = "orchid_access"
 _COOKIE_REFRESH = "orchid_refresh"
@@ -103,11 +102,8 @@ def _init_auth_globals() -> None:
 
 
 def _get_auth_store() -> Any:
-    global _auth_store
-    if _auth_store is None:
-        from orchid.auth.store import UserStore as _US
-        _auth_store = _US()
-    return _auth_store
+    from orchid.auth.store import get_store
+    return get_store()
 
 
 def _get_audit_store() -> Any:

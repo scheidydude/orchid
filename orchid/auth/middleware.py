@@ -15,19 +15,14 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from orchid.auth.jwt import _API_KEY_PREFIX, verify_access_token, verify_api_key
-from orchid.auth.store import UserStore
+from orchid.auth.store import get_store
 from orchid.auth.types import AuthError, User
 
 _bearer = HTTPBearer(auto_error=False)
 
-_default_store: UserStore | None = None
 
-
-def _get_store() -> UserStore:
-    global _default_store
-    if _default_store is None:
-        _default_store = UserStore()
-    return _default_store
+def _get_store():
+    return get_store()
 
 
 def _extract_token(
@@ -43,7 +38,7 @@ def _extract_token(
 async def get_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
-    store: UserStore = Depends(_get_store),
+    store=Depends(_get_store),
 ) -> User:
     """Validate the access token (cookie or Bearer) and return the active user.
 
@@ -92,7 +87,7 @@ async def get_current_user(
 async def get_optional_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
-    store: UserStore = Depends(_get_store),
+    store=Depends(_get_store),
 ) -> User | None:
     """Return the authenticated user, or None if no token is present.
 

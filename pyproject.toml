@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "orchid"
-version = "2.2.4"
+version = "2.3.0"
 description = "AI agent orchestration framework for persistent bare-metal deployment"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -38,6 +38,9 @@ dependencies = [
 license = {text = "AGPL-3.0-or-later"}
 
 [project.optional-dependencies]
+postgres = [
+    "psycopg2-binary>=2.9.0",
+]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
