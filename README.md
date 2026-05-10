@@ -1248,9 +1248,30 @@ caching:
 ## Development
 
 ```bash
-pytest -m "not network"   # 1207+ tests, no API calls required
+pytest -m "not network"   # 1500+ tests, no API calls required
 ruff check orchid/        # 0 errors
 ```
+
+### Test structure
+
+| File | What it covers |
+|------|---------------|
+| `tests/conftest.py` | Autouse fixtures reset store singleton, ledger singleton, shutdown event, and agent registry between every test |
+| `tests/test_auth.py` | 134 auth endpoint tests — JWT, refresh tokens, API keys, OAuth/OIDC, PKCE, audit log, user management |
+| `tests/test_shutdown.py` | Global shutdown event; agent raises + saves checkpoint on shutdown signal |
+| `tests/test_agent_registry.py` | Registry register/deregister/get; concurrent access safety |
+| `tests/test_graceful_shutdown.py` | `BackgroundRunner.graceful_shutdown()` — signals cancel events, waits for futures, timeout returns False; marker file write/remove |
+| `tests/test_orphan_recovery.py` | `resume_orphaned_tasks()` — fresh checkpoint keeps IN_PROGRESS, stale/missing resets to TODO |
+| `tests/test_worker_pool.py` | `WorkerPool` submit/shutdown; `_apply_resource_limits()` |
+| `tests/test_suspend_resume.py` | `_priority_score()` ordering; scheduler dispatch order; agent suspend/resume threading; runner suspend_task/resume_task |
+| `tests/test_cpu_accounting.py` | `WorkerResult.cpu_seconds`; ledger `daily_cpu_for_user()`; `check_cpu_budget()` raises; 3-strike latency cancel |
+
+### Pytest marks
+
+| Mark | Usage |
+|------|-------|
+| `network` | Tests requiring real network (excluded by default: `-m "not network"`) |
+| `slow` | Tests taking >5 s (excluded in fast runs: `-m "not slow"`) |
 
 CI runs automatically on push/PR via GitHub Actions (`.github/workflows/ci.yml`).
 

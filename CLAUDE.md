@@ -58,7 +58,7 @@ Skip: `- [~] **T003**`. Rollup: `- [ ] **T099** \`type:rollup\` \`rollup:T090,T0
 `JWT_SECRET` — required; never commit. `GOOGLE_CLIENT_ID/SECRET`, `AZURE_TENANT_ID/CLIENT_ID/SECRET` — optional OAuth.
 
 ## Current State
-**V2.3 Complete. 1286+ tests passing (134 auth tests).**
+**V2.3 Complete. 1500+ tests passing (134 auth + 68 Phase 1–6 reliability tests).**
 *   **T051** Shell allowlist + BPE chunking.
 *   **T053** V2 lifecycle + strategic agents.
 *   **T054/55** Web UI Planning tab + Discussion streaming.
