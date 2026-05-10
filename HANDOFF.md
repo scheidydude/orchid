@@ -1,206 +1,222 @@
 # HANDOFF.md
-_Written: 2026-05-07. The 7-phase improvement sprint is **complete**. Everything is committed, pushed, and passing. No uncommitted changes._
+_Written: 2026-05-10. Previous HANDOFF archived as `HANDOFF-archive-2026-05-09-1200.md`._
 
 ---
 
 ## 1. Mission
 
-Orchid is a standalone AI agent orchestration framework that manages multi-agent pipelines over external projects. This session completed a structured 7-phase hardening sprint: security → native git → worktree isolation → parallelism → dynamic task spawning → cross-project agent pool → cost scheduling. All phases are done, committed, and pushed to `main`. The next session starts fresh with no outstanding sprint work.
+Orchid is a standalone AI agent orchestration framework: install once, point at any git repo, run agents against it. This session completed two distinct bodies of work: (1) the full V2.3 auth stack (JWT, argon2id, API keys, OAuth/OIDC, audit log, pluggable Postgres backend, React login page) wired into the actual running server, and (2) a 6-phase OS-grade reliability sprint (graceful shutdown, crash recovery, subprocess worker pool, preemption/pause-resume, WebSocket backpressure, CPU/latency budgets). Both are committed, pushed, and verified against the live service. The next work is the 6 forward-looking features documented in `docs/next-features-plan.md`.
 
 ---
 
 ## 2. Current State
 
-### Sprint complete — all 7 phases committed and verified
+### Live service verified at commit `f4dbf58`
 
-- **Commit:** `4cd85be` — `feat(phase7): cost tracking and budget-aware scheduling`
-- **Tests:** 1152 pass, 1 skip (MCP integration, POSIX-only), 0 failures
-- **Working directory:** clean — only `.claude/settings.local.json` modified (local harness config, do not commit)
-- **tasks.md:** all tasks T151–T208 marked `[x]` in DONE section
+```
+curl http://localhost:7842/api/auth/me  →  {"authenticated":false}  ✓
+14 auth routes registered in OpenAPI spec  ✓
+/api/projects/{id}/tasks/{task_id}/suspend + /resume routes live  ✓
+```
 
-### What's built and verified (by phase)
+Service running via `sudo systemctl restart orchid-serve` (user must run this — Claude can't sudo).
+The installed binary (`/home/dave/.local/bin/orchid`) is the `uv tool install` copy, rebuilt this session.
 
-**Phase 1 — Security hardening (T151–T162)**
-- `orchid/hooks/circuit_breaker.py` — `CircuitBreakerRegistry` singleton, per-event-type breakers, 55 tests
-- `orchid/hooks/audit.py` — `AuditLogger` writing `.orchid/audit_log.jsonl`, 60 tests
-- Both wired into `orchid/hooks/loader.py` at load time
-- Per-agent `allowed_tools` frozensets on TesterAgent, ReviewerAgent, ResearcherAgent; DeveloperAgent intentionally unrestricted
+### What's working and verified
 
-**Phase 2 — Native git tools (T163–T169)**
-- `orchid/tools/git.py` — 12 git functions (status, diff, log, commit, push, pull, branch ops)
-- Registered in `_make_project_tools()` behind `agents.git_tools_enabled: true` config guard
-- DeveloperAgent allowed_tools includes all git functions; 50 tests in `tests/test_git_tools.py`
+**Auth (V2.3):**
+- `POST /api/auth/register`, `login`, `refresh`, `logout`, `me`, `token` — all wired into `interfaces/web_server.py` (was previously in dead-end `web/server.py` that `orchid serve` never loaded — fixed this session)
+- JWT HS256 access tokens (15 min) + opaque argon2-hashed refresh tokens (30 days), HttpOnly cookies
+- API keys (`ok_{id}.{secret}` format), scoped, argon2-hashed secret
+- Google/Entra/generic OIDC, PKCE mobile flow
+- Audit log (`~/.config/orchid/audit/audit-YYYY-MM-DD.jsonl`), admin user management, per-user project scoping
+- Pluggable store: `FileUserStore` (default, JSON) or `PostgresUserStore` (set `ORCHID_AUTH_STORE_DSN`)
+- React login page: checks `/api/auth/me` on load, shows sign-in form if unauthenticated, logout button in header
+- `JWT_SECRET` required in `~/.config/orchid/.env` — service raises `RuntimeError` without it
 
-**Phase 3 — Worktree isolation (T170–T175)**
-- `orchid/worktree.py` — `WorktreeManager` LRU cache of git worktrees, 46 tests
-- `WorktreeError` exception exported (required for imports from delegator)
-- Wired into `AgentDelegator.delegate()` behind `worktree.enabled: false` (opt-in)
-- `task_id` sanitized against path escape (`/` and `..` → `_`)
+**OS-grade reliability (Phases 1–6):**
+- **Phase 1 — Graceful shutdown:** `orchid/shutdown.py` global event; SIGTERM → cancel all agents at next ReAct iteration; final ReAct checkpoint saved before exit; `BackgroundRunner.graceful_shutdown(timeout_s=30)`; systemd `KillMode=mixed`, `TimeoutStopSec=35`
+- **Phase 2 — Orphan recovery:** `.orchid/running` marker (survives crashes only); startup scans all projects; tasks with ReAct checkpoint ≤ 24 h old resume from saved iteration; stale → reset to TODO
+- **Phase 3 — Worker pool:** `isolation.subprocess_enabled: true` (default); 4 pre-forked workers; RLIMIT_AS/CPU/NOFILE via `preexec_fn`; SIGTERM → 5 s → SIGKILL on timeout
+- **Phase 4 — Preemption:** `BaseAgent.suspend()`/`resume()` via `threading.Event`; saves checkpoint on suspend; `agent_registry.py` maps `task_id → agent`; `_priority_score()` in scheduler (p1=30, p2=20, p3=10 + age bonus); `/suspend` `/resume` API; ⏸/▶ buttons in Task Board
+- **Phase 5 — Backpressure:** `asyncio.wait_for(timeout=5s)` around every `ws.send_json()`; 30 s heartbeat ping; dead clients evicted
+- **Phase 6 — CPU/latency budgets:** per-iteration latency tracking (3-strike cancel); `RUSAGE_CHILDREN` cpu_seconds in WorkerResult → TokenRecord → task_metrics.jsonl → PM Dashboard CPU column; `User.cpu_budget_seconds`; `CostScheduler.check_cpu_budget()`
 
-**Phase 4 — Parallel task dispatch (T176–T185)**
-- `orchid/scheduler.py` — `DependencyGraph`, `ParallelGroupDetector`, `Scheduler` with parallel group computation
-- `orchid/runner.py` — `BackgroundRunner._run_loop()` rewritten for parallel dispatch via ThreadPoolExecutor groups
-- `orchid/session.py` — `Lock()` → `RLock()` (re-entrancy from `_execute_task` + exception handlers)
-- Critical bug fixed: `completed_ids` was never updated in `_run_loop`, so tasks with completed parents never ran. Fixed by refreshing `completed_ids` from task statuses after each group.
-- Provider semaphores limit concurrent API calls per provider
+### Half-built / known gaps
 
-**Phase 5 — Dynamic task spawning (T186–T192)**
-- `Session.inject_task()` — thread-safe runtime task injection with RLock
-- `orchid/tools/task_injection.py` — `spawn_task()` agent tool using `threading.local()` for per-thread session ref (thread-safe for parallel dispatch); `set_active_session()` called by orchestrator before each task
-- `spawn_task` registered in `_make_project_tools()` (available to all agents; not in TesterAgent/ReviewerAgent frozensets)
-- DeveloperAgent system prompt documents spawn_task with usage rules
+- `orchid/isolation/` directory does **not exist** yet — network namespace isolation (Observation 6) is documented in `docs/next-features-plan.md` but not implemented
+- `agents.max_iteration_seconds: 0` (disabled by default) — latency budget feature exists but needs the user to set a value to activate
+- `runner.preemption_enabled: false` — priority preemption is opt-in; pause/resume works but automatic preemption of lower-priority tasks is not wired
+- No OpenTelemetry, no Redis queue, no async agent execution, no capability versioning — all planned in `docs/next-features-plan.md`
 
-**Phase 6 — Cross-project agent pool (T193–T199)**
-- `orchid/agent_pool.py` — `AgentPool` LRU cache of pre-instantiated agents keyed by (agent_type, model_key), idle eviction thread, thread-safe RLock; `AgentPoolError` exported
-- `get_agent_pool()` singleton; `reset_agent_pool()` for testing
-- Wired into `Orchestrator._get_agent()` with fallback to direct creation; also in `AgentDelegator._acquire_agent()`
-- `agent_pool.enabled: false` in defaults (opt-in); 32 tests
+### Next action for a fresh session
 
-**Phase 7 — Cost tracking and budget scheduling (T200–T208)**
-- `orchid/cost/ledger.py` — `CostLedger` in-memory + JSONL-backed token/cost recorder; `daily_spend()`, `daily_tokens()`, `budget_remaining()` use UTC timestamps
-- `orchid/cost/scheduler.py` — `CostScheduler` with budget cap enforcement (`BudgetBlockedError`), 429 rate-limit backoff (`ThrottleBlockedError`), `select_cheapest_provider()`; spec-compat shims: `CostAwareScheduler` alias, `set_rate_pressure()`, `_rate_flags` dict
-- Wired into `Orchestrator._execute_task()` (pre-task budget/rate checks, post-task cost recording, 429 detection)
-- **Critical:** cost-aware routing gated behind `cost.enforce_budget` or `cost.prefer_local_under_pressure` (both `false` by default). Without this gate, `select_cheapest_provider()` overrides type-based routing and sends `type:draft` tasks to Anthropic.
-- `getattr` guards on `_cost_ledger`/`_cost_scheduler` in orchestrator methods because some tests use `Orchestrator.__new__()` to bypass `__init__`
-- 123 tests in `tests/test_cost_ledger.py` + `tests/test_cost_scheduler.py`
-
-### Next action
-
-The sprint is complete. No immediate follow-up is required. The user's most recent message was asking to "append phase 7 tasks" — but those tasks are already in tasks.md and marked done. They may have been confused, or they want to start a new sprint. **Ask what's next before doing anything.**
+The 6 next features are planned and prioritized in `docs/next-features-plan.md`. Recommended first: **LLM provider fallback chain** (effort S, no new dependencies, files: `providers/base.py`, `providers/registry.py`, `orchestrator.py`, `cost/scheduler.py`).
 
 ---
 
 ## 3. Decisions Made (and Why)
 
-**Decision:** Orchid's local model built richer implementations than the phase specs. We validated and kept them rather than refactoring to match specs.
-- **Examples:** `CircuitBreakerRegistry` (event-level, not per-hook), `CostScheduler` (full budget cap + rate-limit, not just a selector), `AgentPool` (LRU cache, not queue-based dispatch), `WorktreeManager` (full lifecycle manager, not the minimal spec).
-- **Reason:** All implementations pass their tests and are functionally correct. Refactoring to match specs would break tests and ship nothing.
-- **Reversibility:** Each module is self-contained. Refactor only if a specific gap is identified.
+**Decision:** Auth endpoints live in `interfaces/web_server.py`, not `web/server.py`
+**Alternatives considered:** Keep two separate server files, redirect one to the other
+**Reason:** `orchid serve` imports `orchid.interfaces.web_server` via CLI → `serve()` → `create_app()`. `orchid/web/server.py` is a dead-end standalone file never loaded by the real server. All auth routes had to be added inside `create_app()` in `interfaces/web_server.py`.
+**Reversibility:** Load-bearing — do not move auth back to `web/server.py`.
 
-**Decision:** Spec-required class/function names added as aliases/shims when Orchid built under different names.
-- **Examples:** `CostAwareScheduler = CostScheduler subclass`, `set_rate_pressure()` module fn, `WorktreeError(Exception)` added to worktree.py, `AgentPoolError(Exception)` added to agent_pool.py.
-- **Reason:** Imports in other modules and tests need these names. Adding shims is non-breaking.
-- **Reversibility:** Aliases cost nothing; keep them.
+**Decision:** Auth endpoints gated by `if _AUTH_AVAILABLE:` inside `create_app()`
+**Alternatives considered:** Hard import (fail fast if missing), separate router
+**Reason:** Allows the server to start without auth deps if they're not installed. `try/except ImportError` at module level sets `_AUTH_AVAILABLE`.
+**Reversibility:** Easy to change to hard-fail if desired.
 
-**Decision:** `cost.enforce_budget` and `cost.prefer_local_under_pressure` default to `false` — cost-aware routing is opt-in.
-- **Reason:** Without this gate, `select_cheapest_provider()` overrode type-based routing (sending `type:draft` to Anthropic). This broke `tests/test_stream_json_cli.py` — verified by stash test.
-- **Reversibility:** Easy to change in `orchid.defaults.yaml`. But the gate must stay or routing regresses.
+**Decision:** `get_store()` singleton factory in `store.py`; both `web_server._get_auth_store()` and `middleware._get_store()` delegate to it
+**Alternatives considered:** Each module holds its own store instance (was the original code)
+**Reason:** Two separate `UserStore()` instances writing the same JSON file created a race. Singleton ensures one FileUserStore per process.
+**Reversibility:** Easy to change. The singleton is in `store.py` behind `_store_lock`.
 
-**Decision:** `session._lock = threading.RLock()` (was `Lock()`).
-- **Reason:** T184 review found that `_execute_task` calls `session.update_task_status()` and the exception handler in `_execute_task_with_semaphore` also calls it on the same thread. `Lock` would deadlock on re-entry; `RLock` doesn't.
-- **Reversibility:** Load-bearing. Don't revert.
+**Decision:** `isolation.subprocess_enabled: true` by default (Phase 3)
+**Alternatives considered:** Keep opt-in (`false`)
+**Reason:** Gap-closure plan called for always-on isolation. Worker pool eliminates startup cost that made the previous opt-in stance reasonable.
+**Reversibility:** Easy — set `isolation.subprocess_enabled: false` in `.orchid.yaml` to revert per-project.
 
-**Decision:** `threading.local()` for `spawn_task`'s session reference, not a module-level global.
-- **Reason:** Phase 4 dispatches tasks in parallel threads. A module-level global would let task B's `set_active_session()` overwrite task A's reference mid-run. `threading.local()` gives each worker thread its own session.
-- **Reversibility:** Load-bearing. Don't revert.
+**Decision:** `agent_registry.py` as a separate module for the global `task_id → agent` map (Phase 4)
+**Alternatives considered:** Store on `_ProjectState` in runner, store on orchestrator
+**Reason:** Avoids coupling orchestrator → runner or runner → orchestrator. Both can independently import `agent_registry` without circular imports.
+**Reversibility:** Easy to change. It's 30 lines.
 
-**Decision:** `completed_ids` refreshed from task statuses after each parallel group in `_run_loop`.
-- **Reason:** `completed_ids` was initialized as `set()` and never updated. `DependencyGraph.get_ready_tasks(completed_ids)` checks `all_deps.issubset(completed_ids)` — with an empty set, tasks with completed parents were never ready. Bug made the scheduler functional for independent tasks only.
-- **Reversibility:** Load-bearing. Don't revert.
+**Decision:** Priority score = `{p1:30, p2:20, p3:10} + age_bonus` using task ID number as age proxy (Phase 4)
+**Alternatives considered:** Raw `task.priority` int (what existed before), actual timestamp
+**Reason:** Task has no `created_at` field. ID number is monotonic within a project — lower ID = queued earlier = small bonus. Weighted scoring (30/20/10) gives p1 a decisive lead over p2 regardless of age.
+**Reversibility:** Easy — just the `_priority_score()` function in `scheduler.py`.
 
-**Decision:** `Orchestrator._cost_ledger` and `_cost_scheduler` accessed via `getattr(..., None)` instead of direct attribute access.
-- **Reason:** Several tests use `Orchestrator.__new__(Orchestrator)` to bypass `__init__`, then manually set the attributes they need. Without the guard, `_record_cost_for_task` raises `AttributeError` on those test instances.
-- **Reversibility:** Defensive coding, keep it.
+**Decision:** `RUSAGE_CHILDREN` delta for CPU accounting (Phase 6)
+**Alternatives considered:** Parse `/proc/pid/stat`, `psutil`
+**Reason:** `resource.getrusage(RUSAGE_CHILDREN)` is stdlib, cross-distro, zero deps. Delta (before/after child.wait()) gives per-task CPU with reasonable accuracy for sequential children.
+**Reversibility:** Easy to swap for psutil later.
+
+**Decision:** WebSocket suspend/resume buttons only shown for the current running task (Phase 4)
+**Alternatives considered:** Show for all IN_PROGRESS tasks
+**Reason:** `runStatus.currentTask` from the run/status endpoint identifies which specific task is running. `isThisRunning = task.status === 'IN_PROGRESS' && currentTask.startsWith(task.id)`. Only one task can be in the `suspended` state at a time per project.
+**Reversibility:** UI-only, easy to change.
 
 ---
 
 ## 4. Architecture & Key Files
 
-### Sprint deliverables (all new this sprint)
+### Created this session
 
-| File | Purpose |
-|------|---------|
-| `orchid/hooks/circuit_breaker.py` | Event-level circuit breaker registry. 280 lines. |
-| `orchid/hooks/audit.py` | Audit logger → `.orchid/audit_log.jsonl`. 191 lines. |
-| `orchid/tools/git.py` | 12 git tool functions for agents. 288 lines. |
-| `orchid/worktree.py` | `WorktreeManager` LRU cache of git worktrees. 603 lines. |
-| `orchid/scheduler.py` | Dependency graph, topological sort, parallel group detection. 399 lines. |
-| `orchid/tools/task_injection.py` | `spawn_task()` agent tool + `set_active_session()` using `threading.local()`. 219 lines. |
-| `orchid/agent_pool.py` | LRU cache of pre-instantiated agent objects. `AgentPoolError`. 317 lines. |
-| `orchid/cost/ledger.py` | Token/cost ledger, JSONL persistence. `daily_spend()` uses UTC. 363 lines. |
-| `orchid/cost/scheduler.py` | Budget enforcement, rate-limit backoff, provider selection. `CostAwareScheduler` alias. 506 lines. |
-| `phase_1_tasks.md` – `phase_7_tasks.md` | Sprint task specs. Read-only reference. |
+| File | What it does |
+|------|-------------|
+| `orchid/shutdown.py` | Process-wide `threading.Event`; `request_shutdown()`, `is_shutting_down()`. Zero circular imports — everything imports this. |
+| `orchid/agent_registry.py` | Global `{task_id: agent}` map. Lets endpoints reach live agents for suspend/resume without coupling orchestrator ↔ runner. |
+| `orchid/auth/base.py` | `BaseUserStore` ABC — 23 abstract methods. Both `FileUserStore` and `PostgresUserStore` implement it. |
+| `orchid/auth/store_postgres.py` | PostgreSQL backend. `ThreadedConnectionPool`, auto-creates `orchid_*` tables, UPSERT-safe. Requires `psycopg2-binary`. |
+| `orchid/interfaces/web_ui/src/components/Login.jsx` | React login form. Calls `POST /api/auth/login`, shows error, calls `onLogin(user)` on success. |
+| `docs/gap-closure-plan.md` | Phased plan for OS-grade reliability (Phases 1–6, this session's work). |
+| `docs/auth-store-backends.md` | How to switch between file and Postgres storage. |
+| `docs/next-features-plan.md` | Implementation plans for 6 forward-looking features (the actual next work). |
 
-### Modified significantly this sprint
+### Modified significantly this session
 
 | File | What changed |
 |------|-------------|
-| `orchid/hooks/loader.py` | Added circuit breaker + audit wiring; timing/status tracking in HTTP/shell handlers. |
-| `orchid/agents/base.py` | `allowed_tools` frozenset filter; `spawn_task` registered in `_make_project_tools()`; git tools registered behind config guard. |
-| `orchid/agents/developer.py` | System prompt extended with git tools section + dynamic task spawning section. |
-| `orchid/agents/delegator.py` | Worktree isolation opt-in path; pool-based agent acquisition via `_acquire_agent()`; delegation recording. |
-| `orchid/orchestrator.py` | `_resolve_provider()` extracted; `_get_agent()` uses pool; cost wiring (pre-task checks, post-task recording, 429 detection); `set_active_session()` before dispatch; gated cost-aware routing. 1204 lines. |
-| `orchid/runner.py` | `_run_loop()` rewritten for parallel groups; provider semaphores; `completed_ids` refresh fix. |
-| `orchid/session.py` | `Lock()` → `RLock()`; `inject_task()` method; `set_active_session()` instance method. |
-| `orchid/orchid.defaults.yaml` | `agent_pool`, `worktree`, `cost`, `agents.allowed_tools`, `git_tools_enabled`, `runner.provider_concurrency` config blocks. |
+| `orchid/interfaces/web_server.py` | **Critical change:** all auth endpoints added inside `create_app()` — this is where `orchid serve` actually routes. Also: graceful shutdown in lifespan, orphan recovery on startup, WS send timeout, WS heartbeat, suspend/resume endpoints, `cpu_budget_seconds` in user update. |
+| `orchid/auth/store.py` | `UserStore` renamed to `FileUserStore` (alias kept); `get_store()` singleton factory added; imports `BaseUserStore`. |
+| `orchid/auth/middleware.py` | `_get_store()` delegates to `get_store()` — all callers share one store instance. |
+| `orchid/auth/types.py` | Added `User.cpu_budget_seconds: float = 0.0`. |
+| `orchid/agents/base.py` | Added `_resume_checkpoint`, `_suspend_event`, `_resume_event`, `_suspended`; `suspend()`/`resume()` methods; shutdown check in run loop; suspend parking (checkpoint + `threading.Event.wait()`); per-iteration latency tracking with 3-strike cancel; final checkpoint on cancel. |
+| `orchid/runner.py` | `graceful_shutdown()`, `.orchid/running` marker write/remove, `recover_orphans()`, `suspend_task()`/`resume_task()`. |
+| `orchid/orchestrator.py` | Loads ReAct checkpoint and wires to `agent._resume_checkpoint`; registers/deregisters in `agent_registry`; `_last_subprocess_cpu_s` tracking; `cpu_seconds` passed to `_write_task_metrics()`. |
+| `orchid/subprocess_runner.py` | Rewritten: `WorkerPool` class (pre-forked workers), `_run_oneshot()` (fallback), `_resource_preexec()` (RLIMIT), `_child_cpu()` (RUSAGE delta), SIGTERM before SIGKILL. |
+| `orchid/worker_subprocess.py` | Added `pool_main()` (loop accepting tasks via stdin until `{"type":"exit"}`); `--pool` CLI flag. |
+| `orchid/worker_protocol.py` | `WorkerResult.cpu_seconds: float = 0.0` added. |
+| `orchid/checkpoint/restore.py` | `resume_orphaned_tasks()` added — scans IN_PROGRESS tasks, checks checkpoint age, resets stale ones to TODO. |
+| `orchid/cost/ledger.py` | `TokenRecord.cpu_seconds` field; `record()` accepts `cpu_seconds`; `daily_cpu_for_user()` method. |
+| `orchid/cost/scheduler.py` | `check_cpu_budget(user_id, cpu_budget_seconds)` added. |
+| `orchid/scheduler.py` | `_priority_score()` function; topological sort and parallel group sort use score (descending). |
+| `orchid/orchid.defaults.yaml` | `runner.shutdown_timeout`, `runner.preemption_enabled`, `isolation.subprocess_enabled: true`, `isolation.subprocess_workers: 4`, `isolation.resource_limits`, `web.ws_send_timeout`, `web.ws_heartbeat_s`, `agents.max_iteration_seconds`. |
+| `orchid/interfaces/web_ui/src/App.jsx` | Auth gate: checks `/api/auth/me` on load; renders `<Login>` if unauthenticated; `AuthenticatedApp` component for the rest; logout button. |
+| `orchid/interfaces/web_ui/src/components/TaskBoard.jsx` | `onSuspend`/`onResume` handlers; passes `currentTask`/`suspended` to `TaskRow`. |
+| `orchid/interfaces/web_ui/src/components/TaskRow.jsx` | ⏸ button (suspend) and ▶ Resume button based on `isThisRunning`/`isThisSuspended`. |
+| `orchid/interfaces/web_ui/src/components/pm/TaskTiming.jsx` | CPU column added. |
+| `scripts/orchid-serve.service` | `KillMode=mixed`, `KillSignal=SIGTERM`, `TimeoutStopSec=35`. |
+| `README.md` + `docs/Orchid vs Agentic OS.md` | Both fully updated for this session's work. |
 
-### Do not touch (and why)
+### Do not touch without reason
 
-- `orchid/agents/developer.py:allowed_tools` — DeveloperAgent is intentionally unrestricted (no frozenset). Don't add one.
-- `orchid/hooks/circuit_breaker.py` / `orchid/hooks/audit.py` — Orchid's richer implementation. Tests pass against it. Don't refactor to match the phase_1 spec.
-- `phase_N_tasks.md` files — read-only references. All tasks are done; editing them changes nothing useful.
-- `orchid/cost/scheduler.py:reset_cost_scheduler()` — sets `_scheduler_instance = None` after reset (this was a bug fix; a pre-existing test `test_reset_cost_scheduler_clears_singleton` verifies it). Don't "simplify" back to just calling `.reset()`.
+- `orchid/web/server.py` — dead-end file, never loaded by `orchid serve`. Auth code was incorrectly added here first (the bug we fixed). Do not add new routes here.
+- `orchid/auth/jwt.py` — crypto is stable. argon2id params (time=3, mem=64MB, par=4) are OWASP-recommended, do not change without security review.
 
 ---
 
 ## 5. Gotchas & Hard-Won Knowledge
 
-**Local model marks tasks DONE without writing files.** The model reads a file, echoes its contents as Final Answer, Orchid marks DONE. Every task that edits `base.py` or `orchestrator.py` has a mandatory `bash grep` verification step at the end. If grep doesn't find the new symbol, the write failed. This is already in the phase task specs.
+**The biggest bug this session:** Auth endpoints were in `orchid/web/server.py`. `orchid serve` loads `orchid/interfaces/web_server.py`. These are different files. The running service had zero auth routes. The symptom: `POST /api/auth/register` returned 405 with `allow: GET` because `/{full_path:path}` catch-all GET matched it first. Confirmed by hitting `/openapi.json` and seeing no auth paths. Fix: add auth inside `create_app()` in `interfaces/web_server.py`.
 
-**`Orchestrator.__new__()` pattern in tests.** `tests/test_rollup.py` (and a few others) create orchestrator instances via `__new__` to avoid the full init. New attributes added to `__init__` are invisible to these tests until accessed via `getattr(..., None)`. The Phase 7 cost attributes hit this — fixed with `getattr` guards. Watch for this when adding new `self._foo` attributes to `Orchestrator.__init__`.
+**`uv tool install` vs `uv pip install -e`:** Migration guide step 3 says `uv pip install -e ".[dev]"` which installs into `.venv`. But `orchid serve` runs via `/home/dave/.local/bin/orchid` which is the `uv tool install` copy in a separate venv. After any code change: `npm run build` (if UI changed) then `uv tool install --reinstall --from . orchid` from repo root. Then `sudo systemctl restart orchid-serve`.
 
-**`date.today()` vs UTC in cost ledger.** `TokenRecord.timestamp` uses `datetime.now(UTC).isoformat()`. `daily_spend()` must compare using `datetime.now(UTC).date()`, not `date.today()`. On machines where local timezone ≠ UTC, the dates differ across midnight. This tripped us up — test passed in CI (UTC) but failed locally.
+**Subprocess pool startup order:** `_PoolWorker.__init__()` blocks waiting for `{"type":"ready"}` from the worker stdout (up to 10 s). If the pool fails to start (bad import, missing dep), `WorkerPool._spawn_workers()` catches the exception and logs a warning — it doesn't crash the service. Check logs if tasks silently fail with subprocess mode on.
 
-**`set_rate_pressure()` must NOT touch the CostScheduler singleton.** Earlier implementation called `singleton.record_429()` when setting rate pressure. This leaked state between tests: a test that set pressure would contaminate the next test's scheduler, causing `ThrottleBlockedError` and routing tasks to Anthropic. Now `set_rate_pressure()` only updates `_rate_flags` dict — completely isolated from the singleton.
+**`get_store()` singleton:** `_store_instance` is set once at process start. If `ORCHID_AUTH_STORE_DSN` is not in env when the process starts, it will use `FileUserStore` for the entire lifetime — even if you set the env var later. Must be in env before process starts.
 
-**Cost-aware routing must be gated.** `CostScheduler.select_cheapest_provider()` with no budget pressure returns `available_providers[0]`. If `anthropic` is listed as available first, ALL tasks get routed there regardless of type. The gate `cost.enforce_budget or cost.prefer_local_under_pressure` (both false by default) prevents this. Removing the gate breaks `test_stream_json_cli`.
+**`WorkerResult` deserialization in pool mode:** Workers return JSON with all fields including `cpu_seconds`. `_run_oneshot()` uses `WorkerResult(**{k: v for k, v in data.items() if k in WorkerResult.__dataclass_fields__})` to safely ignore unknown keys from old workers. Pool mode (`_PoolWorker.run_task()`) uses the same pattern.
 
-**`source .venv/bin/activate` required for pytest.** `python` not on PATH; venv python has test deps. Always: `source .venv/bin/activate && python -m pytest`.
+**Suspend/resume requires agent to be registered:** The `agent_registry` is populated by `orchestrator._execute_task()` just before `agent.run()`. Tasks running in subprocess mode (`isolation.subprocess_enabled: true`) run in a child process — the parent's agent_registry has no entry. Suspend/resume only works for in-process agents. Subprocess mode makes suspend endpoints return 404. This is a known limitation.
 
-**`task_results.json` is NDJSON.** `json.load()` fails. Parse line by line with `json.loads(line)`.
+**`asyncio.wait_for` in sync broadcast:** `ConnectionManager.broadcast()` is an `async def`. The `asyncio.wait_for(ws.send_json(...), timeout=5.0)` works correctly because `broadcast` is always called from an async context (FastAPI event loop). `broadcast_sync()` uses `asyncio.run_coroutine_threadsafe()` from background threads — this is correct and unchanged.
 
-**`completed_ids` must be refreshed between parallel groups.** The scheduler's `compute_groups()` checks `graph._deps.get(tid) - completed_ids` to determine readiness. If `completed_ids` is empty (the pre-fix state), tasks with any dependency are never scheduled after their parent completes — groups would be `[[T1]]` on first pass and `[]` on second pass, causing early exit.
+**`RUSAGE_CHILDREN` accumulates:** `getrusage(RUSAGE_CHILDREN)` returns cumulative CPU for all waited children, not just the last one. `_child_cpu()` must be called before and after `proc.wait()` to get the delta. If tasks run in parallel (same parent process), the delta is approximate. For the worker pool, each task's CPU is slightly over-counted if workers finish concurrently. Acceptable for budget enforcement.
 
-**`tests/test_parallel_runner.py` and `tests/test_agent_pool.py` are slow.** The parallel runner tests sleep 0.05s per task; the agent pool tests have 18s of eviction waits. Exclude them for fast iteration: `pytest tests/ --ignore=tests/test_agent_pool.py --ignore=tests/test_parallel_runner.py`.
+**`resume_orphaned_tasks()` vs running marker:** The marker file at `.orchid/running` is written when `BackgroundRunner.start()` is called and removed in `_run()` finally block. Graceful stop removes it. Only a crash or SIGKILL leaves it. On startup, the orphan scan runs before traffic is served (in `_lifespan` startup). If a project is not yet registered when the scan runs, it won't be checked — new projects discovered by `ProjectDiscovery` after startup need manual `--recover`.
 
 ---
 
 ## 6. Conventions In Play
 
-- **Task format:** `- [ ] **T001** Title \`type:code_generate\` \`p1\` \`needs:T002\` \`model:local\``
-- **Model routing:** `model:local` → DeveloperAgent (local LLM); `type:code_review` → ReviewerAgent (Claude API). No annotation → defaults from `orchid.defaults.yaml`.
-- **Commit style:** conventional commits (`feat:`, `fix:`, `docs:`, `chore:`), co-authored with Claude Sonnet 4.6.
-- **No code comments** unless the WHY is non-obvious. No multi-line docstrings.
-- **Single-file per task** for `orchid/agents/base.py` and `orchid/orchestrator.py` edits — local model gets confused on multi-file tasks for large files.
-- **Grep verification step** at end of every task editing base.py or orchestrator.py — local model frequently marks tasks done without writing anything.
-- **Phase files read-only** once execution starts. Edit `tasks.md`, not `phase_N_tasks.md`.
-- **Tests run from venv:** `source .venv/bin/activate && python -m pytest tests/ -q`
+**Caveman mode active** — this Claude Code session ran with compressed communication (caveman harness). The next session may or may not have it. Doesn't affect code, just assistant responses.
+
+**Commit style:** Conventional Commits. `feat:`, `fix:`, `docs:`, `chore:`. Body explains the "why". Co-authored line required (harness adds it). See recent commits for examples.
+
+**No test suite updates this session** — the auth and OS-grade phases were not accompanied by new tests. `tests/` has 134 auth tests from the original auth implementation but none for: worker pool, suspend/resume, orphan recovery, CPU accounting. Next session should be aware tests may not cover Phase 1–6 additions.
+
+**`uv tool install` is the deployment mechanism** — not `pip install`, not running from source. The installed binary is what systemd runs. Always rebuild after changes:
+```bash
+cd orchid/interfaces/web_ui && npm run build  # if UI changed
+cd ~/LocalAI/orchid && uv tool install --reinstall --from . orchid
+sudo systemctl restart orchid-serve
+```
+
+**Config layering:** 3 layers: `orchid.defaults.yaml` (packaged) → `.orchid.yaml` (per-project) → CLI flags. Never edit `orchid.defaults.yaml` for project-specific settings.
+
+**Auth module:** `orchid/auth/` is self-contained. `orchid/interfaces/web_server.py` imports from it (inside `if _AUTH_AVAILABLE:` guards). Do not import web_server from auth — that's the circular import direction.
+
+**No migration needed for new fields:** `User.cpu_budget_seconds`, `TokenRecord.cpu_seconds`, `WorkerResult.cpu_seconds` all have `default=0.0`. Old `users.json` files load without error.
 
 ---
 
 ## 7. Open Questions
 
-The 7-phase sprint is complete. There is no planned follow-on work. Open questions for the next session:
+1. **Does the worker pool actually work for real tasks?** Pre-forked workers import orchid at startup. If any import fails (e.g., missing ANTHROPIC_API_KEY at import time), all pool workers die silently. Has not been tested end-to-end with a real agent run since subprocess mode was flipped to default-on. The user should run a test task with `orchid --project PATH --run-task T001` and check logs.
 
-1. **What's next?** The user asked to "append phase 7 tasks" but those are already done. Was that a mistake, or is there a Phase 8 / new sprint in mind?
-2. **Deploy to server?** Phases 3–7 are marked "deploy after phase: yes" in their spec files. All are opt-in via config so backward-compatible. Has any of this been deployed, or is it all running only in local dev?
-3. **Phase 4 production readiness:** The parallel scheduler is new and handles dependency resolution differently than the old sequential loop. Has it been exercised on a real project (not just tests)?
+2. **Suspend/resume with subprocess mode:** suspend/resume only works for in-process agents (subprocess disabled). With `isolation.subprocess_enabled: true` (the new default), suspend calls return 404 because the child process has no entry in the parent's agent_registry. Should subprocess mode be disabled by default after all, or should suspend/resume be forwarded to the child via a signal/pipe?
+
+3. **Login page with existing users before V2.3:** Users registered before V2.3 have `password_hash: null`. They cannot log in until a password is set via the migration script (Step 5 of `docs/migration-v2.2-to-v2.3.md`). Has the user run this for their `admin` account?
+
+4. **`JWT_SECRET` in the service environment:** The service unit reads from `EnvironmentFile=/home/dave/LocalAI/orchid/.env` (not the XDG `~/.config/orchid/.env`). If `JWT_SECRET` is only in `~/.config/orchid/.env`, the service won't see it. Verify: `sudo systemctl show orchid-serve | grep EnvironmentFile`.
+
+5. **Next feature to implement:** Per `docs/next-features-plan.md` the recommended order is: LLM fallback chain → capability versioning → OpenTelemetry → distributed queue → async agent → network namespace. Confirm with user before starting.
 
 ---
 
 ## 8. Do Not Touch
 
-- **`orchid/agents/developer.py`** — no `allowed_tools` frozenset. Intentionally unrestricted. Don't add one.
-- **`orchid/session.py:_lock`** — must be `RLock()`, not `Lock()`. Re-entrancy required.
-- **`orchid/runner.py:_run_loop`** — `completed_ids` refresh after each group is load-bearing. Don't "simplify" it away.
-- **`orchid/cost/scheduler.py:set_rate_pressure`** — must only update `_rate_flags`, never touch the singleton. Any change here risks test contamination and production routing bugs.
-- **`orchid/orchestrator.py:_resolve_provider`** cost-routing block — the `_cost_routing_enabled` gate must stay. Without it, all tasks route to Anthropic regardless of type.
-- **`orchid/tools/task_injection.py:_local`** — must be `threading.local()`, not a module-level variable. Parallel tasks share the module; `threading.local()` isolates per-thread session refs.
-- **`orchid/worktree.py:task_id` sanitization** — `task_id.replace("/", "_").replace("..", "_")` in `create()` and `remove()`. Path escape prevention.
-- **`HANDOFF-archive-2026-05-06-1400.md`** — the prior handoff from when Phase 1 was just complete. Historical reference only.
+- **`orchid/web/server.py`** — dead-end file. Never loaded by `orchid serve`. Do not add routes here. Do not delete it yet (may be used by `orchid web` single-project command), but do not confuse it with the real server.
+- **`orchid/auth/jwt.py`** — crypto parameters settled. argon2id time=3/mem=64MB/par=4 is OWASP standard. HS256 with `JWT_SECRET` is correct. Do not change without a security reason.
+- **`orchid/auth/store.py` `UserStore` alias** — `UserStore = FileUserStore` is kept for backward compat. Third-party code or tests may call `UserStore()`. Do not remove the alias.
+- **`.claude/settings.local.json`** — local harness config. Modified every session. Do not commit.
+- **`orchid/orchid.defaults.yaml` isolation section** — `subprocess_enabled: true` is now the default. Do not revert to `false` without reason; the worker pool exists specifically to make this affordable.
+- **`pyproject.toml` version `2.3.0`** — current released version. Bump to `2.4.0` only when the next major feature set (any of the 6 in `next-features-plan.md`) ships.
 
 ---
 
 ## 9. Resume Command
 
-> Read `HANDOFF.md`. The 7-phase sprint is complete: 1152 tests pass at commit `4cd85be`. Working directory is clean (only `.claude/settings.local.json` modified — do not commit it). **Before doing anything, ask the user what they want to work on next.** Don't start a new sprint, don't modify any existing files, and don't run Orchid until you know the scope. If the user wants a Phase 8, start by reading `phase_1_tasks.md` through `phase_7_tasks.md` to understand the task format before drafting new tasks.
+> Read `HANDOFF.md` and `docs/next-features-plan.md`. The codebase is at commit `f4dbf58` on `main`, clean working tree. All Phase 1–6 reliability features and V2.3 auth are complete and live. The next work is the LLM provider fallback chain (Observation 6 in the plan, effort S, no new deps). Before starting, confirm: (1) does the user want to start with the fallback chain, or a different feature from the plan? (2) has the user verified a real agent task runs correctly with the new subprocess worker pool (`isolation.subprocess_enabled: true`)? Do not modify `orchid/web/server.py` (dead-end file). Do not revert `isolation.subprocess_enabled` to false. Rebuild + reinstall after any Python change (`uv tool install --reinstall --from . orchid`); rebuild frontend before reinstall if JSX changed.
