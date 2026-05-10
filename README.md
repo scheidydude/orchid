@@ -871,20 +871,51 @@ The web server also exposes an NDJSON streaming endpoint at `GET /api/projects/{
 
 ## Agentic OS Runtime
 
-Orchid V2.2 closes a full set of OS-grade reliability and isolation gaps, making it safe to run in production and viable for team/shared deployments.
+Orchid V2.2–V2.4 close a full set of OS-grade reliability, isolation, and preemption gaps, making it safe to run in production and viable for team and enterprise deployments.
+
+### Graceful Shutdown (SIGTERM)
+
+A process-wide `shutdown.py` event propagates from `SIGTERM` → uvicorn lifespan → `BackgroundRunner.graceful_shutdown()` → every running agent's ReAct iteration. On shutdown signal, each agent saves a final ReAct checkpoint before exiting, allowing restart recovery to resume from the saved point.
+
+```yaml
+# orchid.defaults.yaml
+runner:
+  shutdown_timeout: 30    # seconds to wait for tasks to finish before force-kill
+```
+
+The systemd service uses `KillMode=mixed` + `TimeoutStopSec=35` so workers get the full 30 s grace period.
+
+### Restart Persistence & Orphan Recovery
+
+Tasks left `IN_PROGRESS` by a crash are detected on next startup via a per-project `.orchid/running` marker file. For each orphaned task:
+
+- **ReAct checkpoint ≤ 24 h old** → resumed from the saved iteration (conversation history restored, loop continues at `iteration + 1`).
+- **No checkpoint or too old** → reset to `TODO` and re-run from scratch.
+
+The orchestrator wires the checkpoint onto the agent via `agent._resume_checkpoint` before calling `agent.run()`. Manual recovery:
+
+```bash
+orchid --project PATH --recover
+```
 
 ### Process Isolation and Cancellation
 
-Tasks can be run in isolated child processes. A cancellation token flows through the entire ReAct loop so any iteration can be interrupted cleanly.
+Every task now runs in an isolated child process by default (`isolation.subprocess_enabled: true`). A pre-forked **WorkerPool** eliminates the ~0.8 s Python interpreter startup cost:
 
 ```yaml
-# .orchid.yaml
 isolation:
-  subprocess: true         # run each task in a child process (default: false)
-  max_task_seconds: 300    # wall-clock timeout; kills child after N seconds
+  subprocess_enabled: true      # default: on
+  subprocess_workers: 4         # pre-forked pool size (0 = one-shot per task)
+  max_task_seconds: 0           # wall-clock timeout; 0 = no limit
+  resource_limits:
+    max_as_gb: 4                # child address space cap
+    max_cpu_s: 600              # child CPU seconds cap
+    max_files: 256              # child open file descriptor limit
 ```
 
-The `SubprocessRunner` passes task context as stdin JSON and receives typed NDJSON events from the child. An in-process `threading.Event` cancellation path is also available for non-subprocess mode.
+Workers are replaced automatically on death. The OS-level `RLIMIT_AS`, `RLIMIT_CPU`, and `RLIMIT_NOFILE` limits are applied in every child via `preexec_fn`. On timeout, the child receives `SIGTERM` (5 s grace) before `SIGKILL`.
+
+An in-process `threading.Event` cancellation path is also available for non-subprocess mode.
 
 ### Stuck-Task Watchdog
 
@@ -904,9 +935,58 @@ watchdog:
 
 `FileLockRegistry` (`orchid/locks.py`) serializes parallel agents writing to the same file. `write_file` and `append_file` acquire a per-path `threading.Lock` before writing and release it on completion. Last-write-wins corruption in parallel task groups is eliminated.
 
+### Preemption: Pause / Resume / Priority Dispatch
+
+Any running task can be paused at its next ReAct iteration boundary. The agent saves a checkpoint and parks on a `threading.Event`; `resume()` unparks it without loss of conversation history.
+
+**Web UI:** Task Board shows a ⏸ button on the running task and a ▶ Resume button when paused.
+
+**API:**
+```
+POST /api/projects/{id}/tasks/{task_id}/suspend
+POST /api/projects/{id}/tasks/{task_id}/resume
+```
+
+**Priority dispatch:** `_priority_score(task)` = `p1→30 / p2→20 / p3→10` + age bonus from task ID. The scheduler uses this score (descending) for both topological ordering and parallel group dispatch, so higher-priority tasks always head the queue.
+
+```yaml
+runner:
+  preemption_enabled: false         # opt-in (default off)
+  preemption_min_runtime_s: 30      # don't preempt a task that started < 30s ago
+```
+
+### WebSocket Backpressure
+
+Every `ws.send_json()` is wrapped in `asyncio.wait_for(timeout=5s)`. Slow or dead clients are evicted from the connection pool on timeout instead of stalling the broadcast loop. A 30 s heartbeat ping detects silent disconnects.
+
+```yaml
+web:
+  ws_send_timeout: 5.0    # seconds before a slow client is disconnected
+  ws_heartbeat_s: 30.0    # ping interval
+```
+
+### CPU & Latency Budgets
+
+**Per-iteration latency:** if `agents.max_iteration_seconds` is set, the agent tracks consecutive slow iterations and cancels (with checkpoint) after 3 strikes.
+
+```yaml
+agents:
+  max_iteration_seconds: 120    # 0 = disabled
+```
+
+**CPU accounting:** subprocess mode measures `RUSAGE_CHILDREN` delta before/after each child. `cpu_seconds` is stored in `TokenRecord`, persisted to `cost_ledger.jsonl`, and shown in the PM Dashboard task timing table.
+
+**Per-user CPU quotas:** set via admin API:
+```bash
+curl -X PUT /api/auth/users/alice \
+  -d '{"cpu_budget_seconds": 3600}'   # 1 hour/day cap
+```
+
+`CostScheduler.check_cpu_budget()` raises `BudgetBlockedError` when the daily limit is exhausted.
+
 ### Mid-Task ReAct Checkpointing
 
-`BaseAgent` saves a `ReActCheckpoint` every 5 iterations to `.orchid/checkpoints/mid-<task_id>.json`. On crash or cancellation the orchestrator can resume the ReAct loop from the last saved iteration rather than restarting the task from scratch.
+`BaseAgent` saves a `ReActCheckpoint` every 5 iterations to `.orchid/checkpoints/mid-<task_id>.json`. On cancellation, shutdown, or latency budget breach the agent saves a final checkpoint immediately before stopping. The orchestrator loads this checkpoint on the next run and resumes the conversation from the saved iteration.
 
 ### Agent Mailbox (IPC)
 
@@ -1021,6 +1101,8 @@ orchid --project PATH --import-checkpoint checkpoint.json
 ## Architecture
 
 ```
+shutdown.py          process-wide threading.Event for graceful SIGTERM propagation
+agent_registry.py    global task_id → agent map for suspend/resume without coupling
 orchestrator.py      main loop: pick task → plan (Claude) → dispatch agent
 session.py           state lifecycle: load, save, compress hot memory; RLock for parallel safety
 config.py            three-layer merge: defaults → .orchid.yaml → CLI flags
@@ -1029,10 +1111,10 @@ gates.py             human|auto gate system for lifecycle transitions
 machine_profile.py   developer preferences at ~/.config/orchid/machine-profile.yaml
 discovery.py         auto-discovery: scan watch_dirs, watchdog inotify watcher
 agent_manager.py     per-project agent loop threads, APScheduler cron support
-scheduler.py         DependencyGraph, parallel group detection, topological sort; has_cycle()
+scheduler.py         DependencyGraph, parallel group detection, topological sort; has_cycle(); _priority_score() with age bonus
 agent_pool.py        LRU cache of pre-instantiated agents; idle eviction thread
 worktree.py          WorktreeManager: isolated git worktrees per delegated task
-subprocess_runner.py SubprocessRunner: child-process task isolation, stdin/stdout NDJSON
+subprocess_runner.py SubprocessRunner: WorkerPool (pre-forked N workers) + one-shot fallback; RLIMIT_* via preexec_fn; RUSAGE_CHILDREN CPU accounting
 worker_protocol.py   TaskContext, WorkerEvent, WorkerResult dataclasses for subprocess protocol
 watchdog.py          TaskWatchdog: background thread; fires task.stuck hook on stall
 locks.py             FileLockRegistry: per-path threading.Lock for parallel write safety
@@ -1127,7 +1209,7 @@ output/
 checkpoint/
   schema.py          CheckpointMetadata, Checkpoint, CheckpointEntry, ReActCheckpoint dataclasses
   store.py           CheckpointStore: save, load, list, delete, prune; save/load_react_checkpoint
-  restore.py         rewind_session(), list_checkpoints(), export_checkpoint()
+  restore.py         rewind_session(), list_checkpoints(), export_checkpoint(), resume_orphaned_tasks()
 
 cost/
   ledger.py          CostLedger: JSONL-backed token/cost recorder; node_id field; merge_from_file() for remote ledger merge
