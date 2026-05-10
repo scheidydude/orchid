@@ -5,7 +5,7 @@
 
 ## Description
 
-AI agent orchestration framework with a lifecycle-driven planning engine. Install once, run against any project. V2 adds a full idea-to-execution pipeline: discuss requirements with an AI product manager, generate architecture docs, break work into milestones, then execute tasks with specialized agents. V2.2 adds parallel task dispatch, native git tools, worktree isolation, dynamic task spawning, a cross-project agent pool, and cost-aware scheduling. V2.3 adds full multi-user auth: JWT sessions, argon2id passwords, API keys with scope enforcement, Google/Entra/OIDC SSO, PKCE mobile flow, append-only audit log, per-user project scoping, a React login page, and pluggable auth storage (file or PostgreSQL).
+AI agent orchestration framework with a lifecycle-driven planning engine. Install once, run against any project. V2 adds a full idea-to-execution pipeline: discuss requirements with an AI product manager, generate architecture docs, break work into milestones, then execute tasks with specialized agents. V2.2 adds parallel task dispatch, native git tools, worktree isolation, dynamic task spawning, a cross-project agent pool, and cost-aware scheduling. V2.3 adds full multi-user auth: JWT sessions, argon2id passwords, API keys with scope enforcement, Google/Entra/OIDC SSO, PKCE mobile flow, append-only audit log, per-user project scoping, a React login page, and pluggable auth storage (file or PostgreSQL). V2.4 adds OS-grade reliability: graceful shutdown, orphan recovery, subprocess worker pool, task preemption/pause-resume, WebSocket backpressure, CPU/latency budgets, and an ordered provider fallback chain that retries on 429/502/503 before marking a task BLOCKED.
 
 ```
 ~/orchid/              ← install here
@@ -798,6 +798,30 @@ When `enforce_budget: true`, tasks that would exceed the daily budget raise `Bud
 
 HTTP 429 responses from any provider are detected and recorded. The cost scheduler tracks rate pressure per provider and can automatically select a cheaper alternative.
 
+### Provider Fallback Chain
+
+When a provider returns a retriable error (429, 502, 503, timeout), Orchid tries the next provider in an ordered fallback chain before marking the task BLOCKED.
+
+Configure per task type in `.orchid.yaml`:
+
+```yaml
+providers:
+  task_types:
+    code_generate:
+      name: claude
+      fallback: [openrouter, local]   # tried in order on 429/502/503
+```
+
+Global settings in `orchid.defaults.yaml` (override in project config):
+
+```yaml
+providers:
+  fallback_on_errors: [429, 503, 502]   # HTTP codes that trigger fallback
+  max_fallback_attempts: 3              # max providers tried per task
+```
+
+Failed providers are marked rate-pressured so `CostAwareScheduler` skips them for subsequent tasks in the same run. Successful fallback is logged at WARNING level.
+
 ## MCP Adapter Layer
 
 Orchid can connect to any [Model Context Protocol](https://modelcontextprotocol.io/) server and expose its tools to the agent ReAct loop automatically.
@@ -937,7 +961,7 @@ watchdog:
 
 ### Preemption: Pause / Resume / Priority Dispatch
 
-Any running task can be paused at its next ReAct iteration boundary. The agent saves a checkpoint and parks on a `threading.Event`; `resume()` unparks it without loss of conversation history.
+Any running task can be paused. **In-process agents** pause at the next ReAct iteration boundary, save a checkpoint, and park on a `threading.Event`; `resume()` unparks without loss of conversation history. **Subprocess pool workers** receive `SIGSTOP` (freezes mid-instruction) and `SIGCONT` to unfreeze.
 
 **Web UI:** Task Board shows a ⏸ button on the running task and a ▶ Resume button when paused.
 
@@ -1114,7 +1138,7 @@ agent_manager.py     per-project agent loop threads, APScheduler cron support
 scheduler.py         DependencyGraph, parallel group detection, topological sort; has_cycle(); _priority_score() with age bonus
 agent_pool.py        LRU cache of pre-instantiated agents; idle eviction thread
 worktree.py          WorktreeManager: isolated git worktrees per delegated task
-subprocess_runner.py SubprocessRunner: WorkerPool (pre-forked N workers) + one-shot fallback; RLIMIT_* via preexec_fn; RUSAGE_CHILDREN CPU accounting
+subprocess_runner.py SubprocessRunner: WorkerPool (pre-forked N workers) + one-shot fallback; RLIMIT_* via preexec_fn; RUSAGE_CHILDREN CPU accounting; SIGSTOP/SIGCONT suspend/resume per task
 worker_protocol.py   TaskContext, WorkerEvent, WorkerResult dataclasses for subprocess protocol
 watchdog.py          TaskWatchdog: background thread; fires task.stuck hook on stall
 locks.py             FileLockRegistry: per-path threading.Lock for parallel write safety
@@ -1155,8 +1179,8 @@ interfaces/
   central_bot.py     V2.1 central bot server (Telegram + Slack routing)
 
 providers/
-  registry.py        5-layer provider resolution chain
-  base.py            ProviderBase ABC: availability cache, optimize_for_caching()
+  registry.py        8-layer provider resolution chain; resolve_chain() returns (primary, [fallbacks])
+  base.py            ProviderBase ABC: availability cache, optimize_for_caching(); RetriableProviderError
   anthropic.py       Claude API — explicit prompt caching, session stats, retry
   local.py           llama.cpp OpenAI-compat endpoint — implicit KV cache detection
   ollama.py          Ollama — implicit KV cache, stable-prefix ordering
@@ -1248,7 +1272,7 @@ caching:
 ## Development
 
 ```bash
-pytest -m "not network"   # 1500+ tests, no API calls required
+pytest -m "not network" --ignore=tests/test_integration.py --ignore=tests/test_metrics.py   # 1500+ tests, no API calls required
 ruff check orchid/        # 0 errors
 ```
 
@@ -1263,7 +1287,7 @@ ruff check orchid/        # 0 errors
 | `tests/test_graceful_shutdown.py` | `BackgroundRunner.graceful_shutdown()` — signals cancel events, waits for futures, timeout returns False; marker file write/remove |
 | `tests/test_orphan_recovery.py` | `resume_orphaned_tasks()` — fresh checkpoint keeps IN_PROGRESS, stale/missing resets to TODO |
 | `tests/test_worker_pool.py` | `WorkerPool` submit/shutdown; `_apply_resource_limits()` |
-| `tests/test_suspend_resume.py` | `_priority_score()` ordering; scheduler dispatch order; agent suspend/resume threading; runner suspend_task/resume_task |
+| `tests/test_suspend_resume.py` | `_priority_score()` ordering; scheduler dispatch order; agent suspend/resume threading; runner suspend_task/resume_task; subprocess pool SIGSTOP/SIGCONT |
 | `tests/test_cpu_accounting.py` | `WorkerResult.cpu_seconds`; ledger `daily_cpu_for_user()`; `check_cpu_budget()` raises; 3-strike latency cancel |
 
 ### Pytest marks
