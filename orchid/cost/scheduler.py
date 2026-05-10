@@ -491,6 +491,22 @@ def set_rate_pressure(provider: str, limited: bool) -> None:
         _rate_flags[provider] = limited
 
 
+def record_retriable_error(provider: str, status_code: int | str = 429) -> None:
+    """Record a transient provider failure (429/502/503/timeout) for a specific provider.
+
+    Marks the provider as rate-pressured so CostAwareScheduler.select_provider()
+    skips it. For 429 specifically, also updates the CostScheduler singleton's
+    back-off state if one exists.
+    """
+    set_rate_pressure(provider, True)
+    if str(status_code) == "429":
+        try:
+            if _scheduler_instance is not None:
+                _scheduler_instance.record_429()
+        except Exception:
+            pass
+
+
 # CostAwareScheduler: spec-required alias for CostScheduler with added methods.
 class CostAwareScheduler(CostScheduler):
     """Spec-required class name; extends CostScheduler with select_provider/record_usage."""
