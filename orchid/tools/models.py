@@ -41,7 +41,7 @@ class RouteDecision:
     reason: str
     source: str   # "cli_flag" | "task_annotation" | "cli_provider_override" |
                   # "project_config" | "env_var" | "heuristic" | "default"
-    fallback: list[str] = None  # type: ignore[assignment]  # ordered fallback providers
+    fallback: list[str] | None = None  # ordered fallback providers
 
     def __post_init__(self) -> None:
         if self.fallback is None:

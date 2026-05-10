@@ -138,11 +138,13 @@ def _get_registry() -> dict[str, type]:
 
 def _is_retriable_exc(exc: Exception, retriable_codes: set[int]) -> bool:
     """Return True if exc represents a transient provider failure worth trying a fallback for."""
+    import re as _re
     status = getattr(exc, "status_code", None)
     if isinstance(status, int) and status in retriable_codes:
         return True
     msg = str(exc).lower()
-    if any(str(c) in msg for c in retriable_codes):
+    # Use word-boundary match to avoid "5029" matching "502" etc.
+    if any(_re.search(r'\b' + str(c) + r'\b', msg) for c in retriable_codes):
         return True
     return any(kw in msg for kw in ("timeout", "connection error", "overloaded", "service unavailable"))
 

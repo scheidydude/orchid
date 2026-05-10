@@ -499,12 +499,11 @@ def record_retriable_error(provider: str, status_code: int | str = 429) -> None:
     back-off state if one exists.
     """
     set_rate_pressure(provider, True)
-    if str(status_code) == "429":
-        try:
-            if _scheduler_instance is not None:
-                _scheduler_instance.record_429()
-        except Exception:
-            pass
+    try:
+        if int(status_code) == 429 and _scheduler_instance is not None:
+            _scheduler_instance.record_429()
+    except (ValueError, TypeError, Exception):
+        pass
 
 
 # CostAwareScheduler: spec-required alias for CostScheduler with added methods.
