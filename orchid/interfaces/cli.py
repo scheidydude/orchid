@@ -34,13 +34,36 @@ from rich.prompt import Prompt
 from rich.table import Table
 
 
+def _git_info() -> tuple[str, str]:
+    """Return (short_hash, commit_time) from the local git repo, or ('', '') on failure."""
+    import subprocess
+    try:
+        hash_ = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+        time_ = subprocess.check_output(
+            ["git", "log", "-1", "--format=%ci", "HEAD"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+        return hash_, time_
+    except Exception:
+        return "", ""
+
+
 def _version_callback(value: bool) -> None:
     if value:
         try:
             version = importlib.metadata.version("orchid")
         except importlib.metadata.PackageNotFoundError:
             version = "unknown (package not installed)"
-        console.print(f"orchid {version}")
+        git_hash, git_time = _git_info()
+        if git_hash:
+            console.print(f"orchid {version} (commit {git_hash}, {git_time})")
+        else:
+            console.print(f"orchid {version}")
         raise typer.Exit()
 
 
