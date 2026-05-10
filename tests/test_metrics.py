@@ -23,7 +23,7 @@ _FINAL_ANSWER = "Final Answer: task complete."
 @pytest.fixture()
 def orchid_project(tmp_path: Path) -> Path:
     """Minimal orchid project with one pending task."""
-    (tmp_path / ".orchid.yaml").write_text("name: test\n", encoding="utf-8")
+    (tmp_path / ".orchid.yaml").write_text("name: test\nisolation:\n  subprocess_enabled: false\n", encoding="utf-8")
     (tmp_path / "tasks.md").write_text(
         "# Tasks\n\n## TODO\n\n- [ ] **T001** Test task `type:draft` `p1`\n",
         encoding="utf-8",
