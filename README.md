@@ -1288,4 +1288,4 @@ You are free to use, modify, and distribute Orchid under the terms of the AGPL-3
 If you distribute Orchid or run it as a network service, you must make your 
 modifications available under the same license.
 
-Copyright (c) 2026 Dave Scheidy
+Copyright (c) 2026 David Scheiderman
