@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import Login from './components/Login.jsx'
 import ProjectSwitcher from './components/ProjectSwitcher.jsx'
 import TaskBoard from './components/TaskBoard.jsx'
 import AgentStream from './components/AgentStream.jsx'
@@ -25,6 +26,30 @@ const TAB_SHORT = {
 }
 
 export default function App() {
+  const [user, setUser] = useState(null)
+  const [authChecked, setAuthChecked] = useState(false)
+
+  useEffect(() => {
+    fetch('/api/auth/me')
+      .then(r => r.json())
+      .then(d => { if (d.authenticated) setUser(d) })
+      .catch(() => {})
+      .finally(() => setAuthChecked(true))
+  }, [])
+
+  const handleLogout = async () => {
+    await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {})
+    setUser(null)
+  }
+
+  if (!authChecked) return null
+
+  if (!user) return <Login onLogin={setUser} />
+
+  return <AuthenticatedApp user={user} onLogout={handleLogout} />
+}
+
+function AuthenticatedApp({ user, onLogout }) {
   const { projects, loading: projectsLoading, refresh: refreshProjects, newProjectIds } = useProjects()
   const [activeProject, setActiveProject] = useState(null)
   const [activeTab, setActiveTab] = useState('Tasks')
@@ -139,6 +164,13 @@ export default function App() {
           >
             <span className="new-project-label">+ New Project</span>
             <span className="new-project-short">+</span>
+          </button>
+          <button
+            style={{ fontSize: 12, padding: '5px 12px', color: 'var(--text-dim)' }}
+            title={`Signed in as ${user.username}`}
+            onClick={onLogout}
+          >
+            {user.username} ↩
           </button>
         </span>
       </header>
