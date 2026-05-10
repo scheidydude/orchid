@@ -362,6 +362,10 @@ class BaseAgent:
         self._checkpoint_store: Any = None
         # Phase 2: checkpoint to resume from (set by orchestrator on recovery)
         self._resume_checkpoint: Any = None
+        # Phase 4: suspend/resume events
+        self._suspend_event: threading.Event = threading.Event()
+        self._resume_event: threading.Event = threading.Event()
+        self._suspended: bool = False
         # Delegation — set by AgentDelegator when spawning sub-agents
         self.delegator: Any = None
         self.delegation_depth: int = 0
@@ -410,6 +414,16 @@ class BaseAgent:
     def cancel(self) -> None:
         """Signal the agent to stop after the current iteration."""
         self._cancel_event.set()
+
+    def suspend(self) -> None:
+        """Ask the agent to pause at the next iteration boundary."""
+        self._resume_event.clear()
+        self._suspend_event.set()
+
+    def resume(self) -> None:
+        """Wake a suspended agent."""
+        self._suspend_event.clear()
+        self._resume_event.set()
 
     def set_checkpoint_store(self, store: Any) -> None:
         """Wire a CheckpointStore into this agent for mid-task ReAct checkpointing."""
@@ -567,6 +581,26 @@ class BaseAgent:
                         logger.debug("Final checkpoint on cancel failed: %s", _e)
                 reason = "shutdown" if _shutdown.is_shutting_down() else "cancelled"
                 raise AgentCancelledError(f"Task {reason} after {iteration} iterations")
+
+            # Phase 4: suspend — park the agent until resume() is called
+            if self._suspend_event.is_set():
+                if self._checkpoint_store is not None:
+                    from orchid.checkpoint.schema import ReActCheckpoint
+                    _susp_cp = ReActCheckpoint(
+                        task_id=getattr(self, "_current_task_id", "unknown"),
+                        iteration=iteration,
+                        conversation_history=[{"role": m.role, "content": m.content}
+                                              for m in self.history],
+                    )
+                    try:
+                        self._checkpoint_store.save_react_checkpoint(_susp_cp)
+                    except Exception:
+                        pass
+                self._suspended = True
+                logger.info("[%s] Suspended at iteration %d", self.__class__.__name__, iteration)
+                self._resume_event.wait()   # blocks until resume() sets this
+                self._suspended = False
+                logger.info("[%s] Resumed at iteration %d", self.__class__.__name__, iteration)
 
             self._check_injection_queue()
 

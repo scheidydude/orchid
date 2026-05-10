@@ -1398,12 +1398,36 @@ def create_app(
         runner = _runners.get(project_id)
         if runner is None:
             return {"running": False, "current_task": "", "tasks_done": 0, "run_id": ""}
+        from orchid import agent_registry as _ar
+        current = runner.current_task
+        task_id = current.split(":")[0].strip() if current else ""
         return {
             "running": runner.is_running(),
-            "current_task": runner.current_task,
+            "current_task": current,
             "tasks_done": runner.tasks_done,
             "run_id": runner.run_id,
+            "suspended": _ar.get(task_id) is not None and getattr(_ar.get(task_id), "_suspended", False),
         }
+
+    @app.post("/api/projects/{project_id}/tasks/{task_id}/suspend")
+    async def suspend_task(project_id: str, task_id: str):
+        _get_project(project_id)
+        from orchid import agent_registry as _ar
+        agent = _ar.get(task_id)
+        if agent is None:
+            raise HTTPException(status_code=404, detail=f"Task {task_id} is not running")
+        agent.suspend()
+        return {"ok": True, "task_id": task_id, "state": "suspended"}
+
+    @app.post("/api/projects/{project_id}/tasks/{task_id}/resume")
+    async def resume_task(project_id: str, task_id: str):
+        _get_project(project_id)
+        from orchid import agent_registry as _ar
+        agent = _ar.get(task_id)
+        if agent is None:
+            raise HTTPException(status_code=404, detail=f"Task {task_id} is not running")
+        agent.resume()
+        return {"ok": True, "task_id": task_id, "state": "running"}
 
     @app.post("/api/projects/{project_id}/tasks/{task_id}/run")
     async def run_single_task(project_id: str, task_id: str, body: RunTaskBody):

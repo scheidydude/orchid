@@ -69,6 +69,24 @@ export default function TaskBoard({ projectId, runStatus }) {
     }
   }
 
+  const handleSuspend = async (taskId) => {
+    try {
+      await fetch(`/api/projects/${projectId}/tasks/${taskId}/suspend`, { method: 'POST' })
+      fetchTasks()
+    } catch (err) {
+      alert(`Failed to suspend: ${err.message}`)
+    }
+  }
+
+  const handleResume = async (taskId) => {
+    try {
+      await fetch(`/api/projects/${projectId}/tasks/${taskId}/resume`, { method: 'POST' })
+      fetchTasks()
+    } catch (err) {
+      alert(`Failed to resume: ${err.message}`)
+    }
+  }
+
   const filtered = tasks.filter(t => {
     if (filter === 'active') return ['TODO', 'IN_PROGRESS', 'BLOCKED'].includes(t.status)
     if (filter === 'done') return t.status === 'DONE'
@@ -157,7 +175,11 @@ export default function TaskBoard({ projectId, runStatus }) {
               task={t}
               onStatusChange={handleStatusChange}
               onRunTask={handleRunTask}
+              onSuspend={handleSuspend}
+              onResume={handleResume}
               running={runStatus.running}
+              currentTask={runStatus.currentTask}
+              suspended={runStatus.suspended}
             />
           ))}
         </div>

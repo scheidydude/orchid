@@ -26,6 +26,22 @@ from orchid.memory.state import Task, TaskStatus
 logger = logging.getLogger(__name__)
 
 
+def _priority_score(task: Task) -> float:
+    """Higher score = higher urgency. Used for both group ordering and preemption.
+
+    Score = priority_base + id_age_bonus.
+    priority_base: p1=30, p2=20, p3=10.
+    id_age_bonus: lower task ID number → task was queued earlier → small bonus (+0..+9).
+    """
+    base = {1: 30.0, 2: 20.0, 3: 10.0}.get(task.priority, 20.0)
+    try:
+        num = int("".join(c for c in task.id if c.isdigit()) or "999")
+        age_bonus = max(0.0, 9.0 - num * 0.01)
+    except Exception:
+        age_bonus = 0.0
+    return base + age_bonus
+
+
 # ── Scheduling result ──────────────────────────────────────────────────────────
 
 
@@ -120,7 +136,7 @@ class DependencyGraph:
         queue: deque[str] = deque(
             tid for tid in pending if in_degree[tid] == 0
         )
-        queue = deque(sorted(queue, key=lambda tid: self.tasks[tid].priority))
+        queue = deque(sorted(queue, key=lambda tid: -_priority_score(self.tasks[tid])))
 
         result: list[str] = []
         while queue:
@@ -128,7 +144,7 @@ class DependencyGraph:
             result.append(tid)
             for dependent in sorted(
                 self._dependents.get(tid, set()),
-                key=lambda d: self.tasks[d].priority,
+                key=lambda d: -_priority_score(self.tasks[d]),
             ):
                 if dependent in pending:
                     in_degree[dependent] -= 1
@@ -221,7 +237,7 @@ class ParallelGroupDetector:
         resolved: set[str] = set(completed_ids)
 
         while ready:
-            group = sorted(ready, key=lambda tid: pending[tid].priority)
+            group = sorted(ready, key=lambda tid: -_priority_score(pending[tid]))
             groups.append([pending[tid] for tid in group])
             resolved |= ready
 

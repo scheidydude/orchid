@@ -143,6 +143,35 @@ class BackgroundRunner:
         except Exception:
             pass
 
+    # -- Phase 4: suspend / resume --
+
+    def suspend_task(self, task_id: str) -> bool:
+        """Suspend a running task at its next iteration boundary. Returns True if found."""
+        from orchid import agent_registry as _ar
+        agent = _ar.get(task_id)
+        if agent is None:
+            return False
+        agent.suspend()
+        logger.info("[runner] Suspended task %s", task_id)
+        return True
+
+    def resume_task(self, task_id: str) -> bool:
+        """Resume a suspended task. Returns True if found."""
+        from orchid import agent_registry as _ar
+        agent = _ar.get(task_id)
+        if agent is None:
+            return False
+        agent.resume()
+        logger.info("[runner] Resumed task %s", task_id)
+        return True
+
+    def is_suspended(self, task_id: str) -> bool:
+        from orchid import agent_registry as _ar
+        agent = _ar.get(task_id)
+        return agent is not None and getattr(agent, "_suspended", False)
+
+    # -- Orphan recovery (Phase 2) --
+
     def recover_orphans(self, project_path: str) -> int:
         """Check for tasks left IN_PROGRESS by a previous crash and re-queue them.
 

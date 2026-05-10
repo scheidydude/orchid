@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-export default function TaskRow({ task, onStatusChange, onRunTask, running }) {
+export default function TaskRow({ task, onStatusChange, onRunTask, onSuspend, onResume, running, currentTask, suspended }) {
   const [expanded, setExpanded] = useState(false)
 
   const statusActions = {
@@ -14,6 +14,8 @@ export default function TaskRow({ task, onStatusChange, onRunTask, running }) {
 
   const actions = statusActions[task.status] || []
   const canRun = ['TODO', 'BLOCKED', 'SKIPPED'].includes(task.status)
+  const isThisRunning = task.status === 'IN_PROGRESS' && currentTask && currentTask.startsWith(task.id)
+  const isThisSuspended = isThisRunning && suspended
 
   return (
     <div className={`task-row ${expanded ? 'expanded' : ''}`} onClick={() => setExpanded(x => !x)}>
@@ -31,6 +33,24 @@ export default function TaskRow({ task, onStatusChange, onRunTask, running }) {
               style={{ marginLeft: 'auto', fontSize: 11, padding: '2px 8px', color: '#79b8ff', borderColor: '#1f3a5f', background: '#0d1f35' }}
             >
               ▶ Run
+            </button>
+          )}
+          {isThisRunning && !isThisSuspended && onSuspend && (
+            <button
+              onClick={e => { e.stopPropagation(); onSuspend(task.id) }}
+              title="Pause this task"
+              style={{ marginLeft: canRun ? 4 : 'auto', fontSize: 11, padding: '2px 8px', color: '#f0a500', borderColor: '#5a3e00', background: '#2a1e00' }}
+            >
+              ⏸
+            </button>
+          )}
+          {isThisSuspended && onResume && (
+            <button
+              onClick={e => { e.stopPropagation(); onResume(task.id) }}
+              title="Resume this task"
+              style={{ marginLeft: canRun ? 4 : 'auto', fontSize: 11, padding: '2px 8px', color: '#56d364', borderColor: '#1a4a26', background: '#0d2213' }}
+            >
+              ▶ Resume
             </button>
           )}
         </div>

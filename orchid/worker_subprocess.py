@@ -1,8 +1,10 @@
-"""Subprocess entry point for isolated task execution (T210).
+"""Subprocess entry point for isolated task execution.
 
-Run by the parent process via: sys.executable -m orchid.worker_subprocess
-Reads one TaskContext JSON line from stdin, runs the agent, writes WorkerResult to stdout.
+Two modes:
+  One-shot (default): read one TaskContext from stdin, run, write WorkerResult, exit.
+  Pool mode (--pool): signal ready, loop accepting tasks until {"type":"exit"}.
 """
+
 import json
 import logging
 import sys
@@ -55,7 +57,13 @@ def _run(ctx: TaskContext) -> WorkerResult:
         )
 
 
+def _write(obj: dict) -> None:
+    sys.stdout.write(json.dumps(obj) + "\n")
+    sys.stdout.flush()
+
+
 def main() -> None:
+    """One-shot mode: read one task, run, exit."""
     line = sys.stdin.readline()
     ctx = TaskContext.from_json(line)
     result = _run(ctx)
@@ -63,5 +71,38 @@ def main() -> None:
     sys.stdout.flush()
 
 
+def pool_main() -> None:
+    """Pool mode: signal ready, loop accepting tasks until exit message."""
+    _write({"type": "ready"})
+
+    for raw_line in sys.stdin:
+        raw_line = raw_line.strip()
+        if not raw_line:
+            continue
+        try:
+            msg = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+
+        if msg.get("type") == "exit":
+            break
+
+        try:
+            ctx = TaskContext(**msg)
+        except Exception as e:
+            _write({"task_id": "", "success": False, "error": f"bad context: {e}",
+                    "result": "", "duration_s": 0.0})
+            _write({"type": "ready"})
+            continue
+
+        result = _run(ctx)
+        sys.stdout.write(result.to_json() + "\n")
+        sys.stdout.flush()
+        _write({"type": "ready"})
+
+
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] == "--pool":
+        pool_main()
+    else:
+        main()

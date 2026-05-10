@@ -319,22 +319,29 @@ worktree:
   auto_remove: true                  # auto-remove worktree after sub-agent completes
   commit_message: "worktree: task completion"  # commit message for worktree commits
 
-# Background runner — parallel task dispatch settings (T176-T181)
+# Background runner — parallel task dispatch settings (T176-T181, Phase 4)
 runner:
   max_parallel: 4                     # max tasks in a single parallel dispatch group
   shutdown_timeout: 30                # seconds to wait for running tasks on SIGTERM before force-kill
+  preemption_enabled: false           # Phase 4: enable priority preemption (opt-in)
+  preemption_min_runtime_s: 30        # don't preempt a task that started < N seconds ago
   provider_concurrency:               # per-provider semaphore limits for parallel dispatch
     claude: 3
     openrouter: 3
     bedrock: 3
     openai: 3
 
-# Isolation — subprocess sandbox and watchdog settings (T212-T219)
+# Isolation — subprocess sandbox and watchdog settings (T212-T219, Phase 3)
 isolation:
-  subprocess_enabled: false           # true = each task runs in a child process
+  subprocess_enabled: true            # Phase 3: always-on subprocess isolation (was false)
+  subprocess_workers: 4               # pre-forked worker pool size (0 = one-shot per task)
   max_task_seconds: 0                 # wall-clock timeout per task (0 = no limit)
   container_enabled: false            # true = use docker container (Tier 3)
   watchdog_threshold_s: 1800          # seconds before a stuck task is marked BLOCKED
+  resource_limits:
+    max_as_gb: 4                      # child address space cap (GB)
+    max_cpu_s: 600                    # child CPU seconds cap
+    max_files: 256                    # child open file descriptor limit
 
 # Agent Pool — reusable agent instance caching (T193)
 agent_pool:

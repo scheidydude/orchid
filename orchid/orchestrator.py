@@ -531,6 +531,13 @@ class Orchestrator:
             except Exception as _cs_err:
                 logger.debug("Could not wire checkpoint store into agent: %s", _cs_err)
 
+            # Phase 4: register agent globally so runner can suspend/resume it
+            try:
+                from orchid import agent_registry as _ar
+                _ar.register(task.id, agent)
+            except Exception:
+                pass
+
             # T113: Inject MCP tools into the agent's tool registry
             if self._mcp_manager is not None:
                 mcp_tools = self._mcp_manager.list_tools()
@@ -729,6 +736,12 @@ class Orchestrator:
             ))
             return {"task_id": task.id, "status": "error", "error": str(e)}
         finally:
+            # Phase 4: deregister agent from global registry
+            try:
+                from orchid import agent_registry as _ar
+                _ar.deregister(task.id)
+            except Exception:
+                pass
             # T238: Clean up agent mailbox
             try:
                 if hasattr(agent, "_mailbox_id"):
