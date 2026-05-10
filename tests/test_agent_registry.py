@@ -2,8 +2,6 @@
 
 import threading
 
-import pytest
-
 import orchid.agent_registry as ar
 
 

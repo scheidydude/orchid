@@ -1,6 +1,5 @@
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
 
 
 class AuthError(Exception):
@@ -12,7 +11,7 @@ class User:
     """Represents an authenticated user in Orchid."""
     user_id: str
     username: str = ""
-    email: Optional[str] = None
+    email: str | None = None
     role: str = "user"  # "user", "admin", "readonly"
     created_at: datetime = field(default_factory=datetime.now)
     is_active: bool = True
@@ -20,7 +19,7 @@ class User:
     api_keys: dict = field(default_factory=dict)
     budget_usd: float = 0.0
     cpu_budget_seconds: float = 0.0  # Phase 6: daily CPU-seconds cap (0 = unlimited)
-    password_hash: Optional[str] = None
+    password_hash: str | None = None
     token: str = ""  # legacy field — superseded by JWT; kept for backward compat
 
 
@@ -56,8 +55,8 @@ class OAuthAccount:
     user_id: str             # Orchid user_id
     email: str
     access_token: str        # provider's access token (may expire)
-    refresh_token: Optional[str] = None
-    expires_at: Optional[datetime] = None
+    refresh_token: str | None = None
+    expires_at: datetime | None = None
     created_at: datetime = field(default_factory=datetime.now)
 
 
@@ -74,8 +73,8 @@ class ApiKey:
     name: str            # human-readable label
     scopes: list = field(default_factory=list)   # e.g. ["tasks:run", "tasks:read"]
     created_at: datetime = field(default_factory=datetime.now)
-    last_used: Optional[datetime] = None
-    expires_at: Optional[datetime] = None
+    last_used: datetime | None = None
+    expires_at: datetime | None = None
     is_active: bool = True
 
 

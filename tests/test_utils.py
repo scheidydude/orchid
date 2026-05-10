@@ -1,8 +1,7 @@
 """
 Tests for the utils module.
 """
-import pytest
-from src.utils import greet, add, multiply, format_message
+from src.utils import add, format_message, greet, multiply
 
 
 class TestGreet:

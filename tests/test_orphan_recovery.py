@@ -1,14 +1,12 @@
 """Tests for resume_orphaned_tasks() — Phase 2 restart persistence."""
 
 import json
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import pytest
-
 from orchid.checkpoint.restore import resume_orphaned_tasks
-from orchid.checkpoint.store import CheckpointStore
 from orchid.checkpoint.schema import ReActCheckpoint
+from orchid.checkpoint.store import CheckpointStore
 from orchid.memory.state import Task, TaskStatus
 
 
@@ -25,10 +23,9 @@ def _make_task(task_id: str, status: TaskStatus) -> Task:
 def _write_react_checkpoint(project_dir: Path, task_id: str, age_hours: float = 0.0) -> None:
     """Write a ReActCheckpoint with a specific age, bypassing save_react_checkpoint's
     timestamp override."""
-    import json
     import dataclasses
     store = CheckpointStore(project_dir)
-    ts = datetime.now(timezone.utc) - timedelta(hours=age_hours)
+    ts = datetime.now(UTC) - timedelta(hours=age_hours)
     cp = ReActCheckpoint(
         task_id=task_id,
         iteration=5,

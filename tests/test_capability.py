@@ -1,4 +1,4 @@
-from orchid.capability import AgentCapability, CAPABILITY_REGISTRY, get_capability
+from orchid.capability import CAPABILITY_REGISTRY, get_capability
 
 
 def test_registry_has_five_entries():
@@ -20,8 +20,8 @@ def test_reviewer_allowed_tools_match_agent_class():
 
 def test_tester_and_researcher_allowed_tools_match_agent_classes():
     """CAPABILITY_REGISTRY must match TesterAgent and ResearcherAgent allowed_tools."""
-    from orchid.agents.tester import TesterAgent
     from orchid.agents.researcher import ResearcherAgent
+    from orchid.agents.tester import TesterAgent
 
     assert CAPABILITY_REGISTRY["tester"].allowed_tools == TesterAgent.allowed_tools
     assert CAPABILITY_REGISTRY["researcher"].allowed_tools == ResearcherAgent.allowed_tools

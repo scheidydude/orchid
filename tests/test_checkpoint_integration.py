@@ -2,11 +2,8 @@
 
 from pathlib import Path
 
-import pytest
-
 from orchid.checkpoint.restore import rewind_session
 from orchid.checkpoint.store import CheckpointStore
-from orchid.session import Session
 
 
 def test_checkpoint_save_and_restore_full_pipeline(tmp_path: Path) -> None:

@@ -3,13 +3,7 @@
 from __future__ import annotations
 
 import multiprocessing
-import time
-from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, call as mock_call, patch
-
-import pytest
-
+from unittest.mock import MagicMock, patch
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -505,6 +499,7 @@ def test_format_multi_status_all_projects():
 def test_cli_multi_flag_parses_multiple_projects(tmp_path):
     """CLI --multi with multiple --project flags calls _cmd_multi."""
     from typer.testing import CliRunner
+
     from orchid.interfaces.cli import app
 
     proj_a = tmp_path / "alpha"
@@ -529,6 +524,7 @@ def test_cli_multi_flag_parses_multiple_projects(tmp_path):
 def test_cli_multi_requires_two_projects(tmp_path):
     """--multi with only one --project prints an error."""
     from typer.testing import CliRunner
+
     from orchid.interfaces.cli import app
 
     proj_a = tmp_path / "alpha"

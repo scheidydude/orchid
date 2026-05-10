@@ -1,9 +1,7 @@
 """Tests for per-agent-type tool capability restrictions (T155/T156)."""
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import patch
 
 from orchid.agents.developer import DeveloperAgent
 from orchid.agents.reviewer import ReviewerAgent

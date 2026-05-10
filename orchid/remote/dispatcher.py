@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING
 
 import httpx
 
+from orchid.remote.types import RemoteTaskRequest, RemoteTaskResponse, WorkerNode
 from orchid.worker_protocol import TaskContext, WorkerResult
-from orchid.remote.types import WorkerNode, RemoteTaskRequest, RemoteTaskResponse
 
 if TYPE_CHECKING:
     pass

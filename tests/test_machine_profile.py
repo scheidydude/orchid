@@ -1,11 +1,11 @@
 """Tests for orchid/machine_profile.py — MachineProfile."""
 
-import pytest
 from pathlib import Path
+
+import pytest
 import yaml
 
-from orchid.machine_profile import MachineProfile, _DEFAULT_DATA
-
+from orchid.machine_profile import _DEFAULT_DATA, MachineProfile
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 

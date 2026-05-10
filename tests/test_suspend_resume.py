@@ -1,15 +1,11 @@
 """Tests for agent suspend/resume and priority dispatch — Phase 4."""
 
 import threading
-import time
 from unittest.mock import patch
 
-import pytest
-
-from orchid.agents.base import AgentCancelledError, BaseAgent
+from orchid.agents.base import BaseAgent
 from orchid.memory.state import Task, TaskStatus
 from orchid.scheduler import Scheduler, _priority_score
-
 
 # ── Priority scoring ──────────────────────────────────────────────────────────
 
@@ -185,7 +181,6 @@ class TestAgentRegistryIntegration:
         assert agent._resume_event.is_set()
 
     def test_suspend_unknown_task_returns_false(self):
-        import orchid.agent_registry as ar
         from orchid.runner import BackgroundRunner
 
         runner = BackgroundRunner.__new__(BackgroundRunner)

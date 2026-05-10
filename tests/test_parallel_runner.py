@@ -18,7 +18,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from orchid.memory.state import Task, TaskStatus
-
 from orchid.runner import BackgroundRunner, _ProjectState
 
 

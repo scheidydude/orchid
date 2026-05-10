@@ -9,12 +9,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
-
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -229,7 +227,6 @@ def test_patch_task_updates_status(project_dir):
         def _update(tid, status):
             for t in instance.tasks:
                 if t.id == tid:
-                    from orchid.memory.state import TaskStatus
                     t.status = SimpleNamespace(value=status.value)
                     return True
             return False

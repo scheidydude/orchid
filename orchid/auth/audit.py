@@ -14,7 +14,7 @@ import json
 import logging
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from orchid.auth.types import AuditEvent
@@ -52,7 +52,7 @@ def make_event(
         action=action,
         resource=resource,
         result=result,
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         ip=ip,
         detail=detail,
     )
@@ -74,7 +74,7 @@ class AuditStore:
         self._lock = threading.Lock()
 
     def _current_file(self) -> Path:
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        today = datetime.now(UTC).strftime("%Y-%m-%d")
         return self._dir / f"audit-{today}.jsonl"
 
     def log(self, event: AuditEvent) -> None:

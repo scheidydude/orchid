@@ -6,29 +6,28 @@ functions, and configuration toggling.
 """
 
 import json
-import time as _time
 import threading
+import time as _time
 from unittest.mock import patch
 
 import pytest
 
 from orchid.hooks.circuit_breaker import (
     CircuitBreakerConfig,
-    CircuitBreakerState,
     CircuitBreakerRegistry,
+    CircuitBreakerState,
     CircuitState,
+    _get_registry,
+    allow_request,
     # module-level convenience functions
     configure_circuit_breaker,
-    allow_request,
-    record_success,
-    record_failure,
-    reset_circuit_breaker,
-    get_circuit_state,
     get_all_circuit_states,
     get_circuit_breaker_config,
-    _get_registry,
+    get_circuit_state,
+    record_failure,
+    record_success,
+    reset_circuit_breaker,
 )
-
 
 # -- Helpers --
 

@@ -21,7 +21,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from orchid.worker_protocol import TaskContext, WorkerEvent, WorkerResult
+from orchid.worker_protocol import TaskContext, WorkerResult
 
 logger = logging.getLogger(__name__)
 

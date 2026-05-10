@@ -5,8 +5,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from orchid.locks import get_file_lock_registry
 from orchid.hooks.audit import log_file_write as _audit_file_write
+from orchid.locks import get_file_lock_registry
 
 
 def read_file(path: str) -> str:

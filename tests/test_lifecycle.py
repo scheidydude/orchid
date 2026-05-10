@@ -1,11 +1,10 @@
 """Tests for orchid/lifecycle.py — ProjectLifecycle state machine."""
 
 import json
+
 import pytest
-from pathlib import Path
 
-from orchid.lifecycle import ProjectLifecycle, ProjectState
-
+from orchid.lifecycle import ProjectLifecycle
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 

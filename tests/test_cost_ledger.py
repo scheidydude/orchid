@@ -10,12 +10,12 @@ from unittest.mock import patch
 import pytest
 
 from orchid.cost.ledger import (
-    CostLedger,
-    TokenRecord,
-    CostLedgerError,
     BudgetExceededError,
-    get_cost_ledger,
+    CostLedger,
+    CostLedgerError,
+    TokenRecord,
     configure_cost_ledger,
+    get_cost_ledger,
     reset_cost_ledger,
 )
 
@@ -149,7 +149,7 @@ def test_record_multiple_appends(tmp_path: Path):
 def test_record_timestamp_is_isoformat(tmp_path: Path):
     ledger = _make_ledger(tmp_path)
     rec = ledger.record(task_id="T001", title="Timestamp test", model="gpt-4", provider="openai")
-    from datetime import datetime, UTC
+    from datetime import datetime
     dt = datetime.fromisoformat(rec.timestamp)
     assert dt.tzinfo is not None
 
@@ -576,6 +576,7 @@ def test_record_creates_file(tmp_path):
 
 def test_daily_spend_sums_today(tmp_path):
     import pytest
+
     from orchid.cost.ledger import CostLedger
     ledger = CostLedger(tmp_path)
     ledger.record(task_id="T001", title="t1", model="anthropic", provider="anthropic",
@@ -587,6 +588,7 @@ def test_daily_spend_sums_today(tmp_path):
 
 def test_daily_spend_ignores_other_providers(tmp_path):
     import pytest
+
     from orchid.cost.ledger import CostLedger
     ledger = CostLedger(tmp_path)
     ledger.record(task_id="T001", title="t1", model="anthropic", provider="anthropic",
@@ -599,6 +601,7 @@ def test_daily_spend_ignores_other_providers(tmp_path):
 
 def test_budget_remaining_returns_none_when_no_budget(tmp_path):
     from unittest.mock import patch
+
     from orchid.cost.ledger import CostLedger
     ledger = CostLedger(tmp_path)
     with patch("orchid.cost.ledger.get", return_value=None):

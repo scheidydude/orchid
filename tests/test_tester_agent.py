@@ -5,10 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from orchid.tools.shell import detect_environment, detect_python_runner, rewrite_python_command
-
 
 # ── T079 / T080: environment detection ───────────────────────────────────────
 
@@ -146,7 +143,7 @@ def test_tester_agent_routes_verify_tasks() -> None:
     """Orchestrator _resolve_agent maps type:verify to TesterAgent."""
     from orchid.agents.tester import TesterAgent
     from orchid.memory.state import Task
-    from orchid.orchestrator import _get_registry, Orchestrator
+    from orchid.orchestrator import _get_registry
 
     registry = _get_registry()
     assert "tester" in registry
@@ -187,8 +184,9 @@ def test_tester_agent_system_prompt_no_code_writing(tmp_path: Path) -> None:
 
 def test_auto_verify_disabled_by_default() -> None:
     """auto_verify defaults to false in orchid.defaults.yaml."""
-    import yaml
     from pathlib import Path as _Path
+
+    import yaml
 
     defaults_path = _Path(__file__).parent.parent / "orchid" / "orchid.defaults.yaml"
     with open(defaults_path) as f:

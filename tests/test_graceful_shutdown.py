@@ -2,11 +2,7 @@
 
 import threading
 import time
-from concurrent.futures import Future
-from dataclasses import dataclass, field
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from orchid.runner import BackgroundRunner, _ProjectState
 
@@ -22,7 +18,7 @@ class TestGracefulShutdown:
         return r
 
     def test_shutdown_sets_global_event(self):
-        from orchid.shutdown import is_shutting_down, clear
+        from orchid.shutdown import is_shutting_down
         r = self._make_runner()
         r.graceful_shutdown(timeout_s=0.1)
         assert is_shutting_down()

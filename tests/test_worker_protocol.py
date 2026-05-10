@@ -1,5 +1,5 @@
 import json
-from dataclasses import asdict
+
 from orchid.worker_protocol import TaskContext, WorkerEvent, WorkerResult
 
 

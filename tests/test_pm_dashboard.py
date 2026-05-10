@@ -6,9 +6,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
 from fastapi.testclient import TestClient
-
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 

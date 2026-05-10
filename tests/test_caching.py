@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
-
 
 # ── ProviderBase flags ────────────────────────────────────────────────────────
 
@@ -55,7 +51,7 @@ def test_ollama_provider_implicit_caching_flag():
 
 
 def test_optimize_for_caching_anthropic_returns_blocks():
-    from orchid.providers.anthropic import AnthropicProvider, _MIN_CACHE_CHARS
+    from orchid.providers.anthropic import _MIN_CACHE_CHARS, AnthropicProvider
     p = AnthropicProvider()
     stable = "x" * _MIN_CACHE_CHARS
     dynamic = "current user message"
@@ -141,7 +137,7 @@ def _make_fake_anthropic_client(captured: dict, response=None):
 
 def test_cache_control_added_to_large_system():
     """Large system prompt is wrapped with cache_control when caching is enabled."""
-    from orchid.providers.anthropic import AnthropicProvider, _MIN_CACHE_CHARS
+    from orchid.providers.anthropic import _MIN_CACHE_CHARS, AnthropicProvider
 
     captured = {}
     fake_client = _make_fake_anthropic_client(captured)
@@ -181,7 +177,7 @@ def test_cache_control_not_added_to_small_system():
 
 def test_cacheable_prefix_adds_cache_control_to_messages():
     """cacheable_prefix=1 adds cache_control to the first large message."""
-    from orchid.providers.anthropic import AnthropicProvider, _MIN_CACHE_CHARS
+    from orchid.providers.anthropic import _MIN_CACHE_CHARS, AnthropicProvider
 
     captured = {}
     fake_client = _make_fake_anthropic_client(captured)
@@ -211,7 +207,7 @@ def test_cacheable_prefix_adds_cache_control_to_messages():
 
 def test_cache_stats_tracked_after_call():
     """Cache stats accumulate from response.usage."""
-    from orchid.providers.anthropic import AnthropicProvider, reset_session_stats, get_session_stats
+    from orchid.providers.anthropic import AnthropicProvider, get_session_stats, reset_session_stats
 
     reset_session_stats()
 
@@ -239,7 +235,7 @@ def test_cache_stats_reset():
     ap._session_stats["cache_writes"] = 99
     ap._session_stats["cache_hits"] = 50
 
-    from orchid.providers.anthropic import reset_session_stats, get_session_stats
+    from orchid.providers.anthropic import get_session_stats, reset_session_stats
     reset_session_stats()
     stats = get_session_stats()
     assert stats["cache_writes"] == 0
@@ -380,8 +376,8 @@ def test_local_provider_response_keys_logged_once(caplog):
 
 def test_get_current_session_returns_loaded_session(tmp_path):
     """get_current_session() returns the session set by Session.load()."""
-    from orchid.session import get_current_session
     import orchid.session as _sess_mod
+    from orchid.session import get_current_session
 
     # Reset any existing current session
     _sess_mod._current_session = None
@@ -418,7 +414,6 @@ def test_session_stats_logged_at_session_end(tmp_path):
          patch.object(s, "save", return_value=None), \
          patch.object(s, "_finalize_live_log", return_value=None), \
          patch.object(s, "_auto_embed_session", return_value=None):
-        import json as _json
         events: list[dict] = []
         original_log = s.log_event
 

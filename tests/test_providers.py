@@ -2,20 +2,17 @@
 
 from __future__ import annotations
 
-import os
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from orchid.providers.base import ProviderBase, ProviderUnavailableError
 from orchid.providers.registry import (
-    ProviderRegistry,
     _AGENT_DEFAULTS,
     _TASK_TYPE_DEFAULTS,
-    get_registry,
+    ProviderRegistry,
     reset_registry,
 )
-
 
 # ── Fixtures ───────────────────────────────────────────────────────────────────
 
@@ -408,7 +405,6 @@ def test_orchestrator_respects_project_provider_override():
     must use 'local', not 'claude'.  Also verifies that a cli_provider_overrides
     entry for 'orchestrator' takes priority over the project config.
     """
-    from dataclasses import dataclass, field
     from pathlib import Path
     from unittest.mock import MagicMock, patch
 
@@ -689,9 +685,10 @@ def _mock_openai_client(empty_choices: bool = True) -> MagicMock:
 
 def test_local_provider_raises_on_empty_choices():
     """LocalProvider.complete() should raise ProviderError when choices is empty."""
-    from orchid.providers.local import LocalProvider
-    from orchid.errors import ProviderError
     import openai as _openai_mod
+
+    from orchid.errors import ProviderError
+    from orchid.providers.local import LocalProvider
 
     p = LocalProvider()
     with patch.object(_openai_mod, "OpenAI", return_value=_mock_openai_client()):
@@ -701,9 +698,10 @@ def test_local_provider_raises_on_empty_choices():
 
 def test_ollama_provider_raises_on_empty_choices():
     """OllamaProvider.complete() should raise ProviderError when choices is empty."""
-    from orchid.providers.ollama import OllamaProvider
-    from orchid.errors import ProviderError
     import openai as _openai_mod
+
+    from orchid.errors import ProviderError
+    from orchid.providers.ollama import OllamaProvider
 
     p = OllamaProvider()
     with patch.object(_openai_mod, "OpenAI", return_value=_mock_openai_client()):
@@ -713,9 +711,10 @@ def test_ollama_provider_raises_on_empty_choices():
 
 def test_openai_provider_raises_on_empty_choices():
     """OpenAIProvider.complete() should raise ProviderError when choices is empty."""
-    from orchid.providers.openai import OpenAIProvider
-    from orchid.errors import ProviderError
     import openai as _openai_mod
+
+    from orchid.errors import ProviderError
+    from orchid.providers.openai import OpenAIProvider
 
     p = OpenAIProvider(api_key="test-key")
     with patch.object(_openai_mod, "OpenAI", return_value=_mock_openai_client()):
@@ -749,7 +748,6 @@ def test_bedrock_complete_returns_text(monkeypatch):
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret")
     from orchid.providers.bedrock import BedrockProvider
-    from orchid.errors import ProviderError
 
     p = BedrockProvider()
     fake_response = {
@@ -770,8 +768,8 @@ def test_bedrock_complete_returns_text(monkeypatch):
 def test_bedrock_raises_provider_error_on_bad_response(monkeypatch):
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret")
-    from orchid.providers.bedrock import BedrockProvider
     from orchid.errors import ProviderError
+    from orchid.providers.bedrock import BedrockProvider
 
     p = BedrockProvider()
     mock_client = MagicMock()
@@ -787,9 +785,10 @@ def test_bedrock_raises_provider_error_on_bad_response(monkeypatch):
 
 def test_bedrock_raises_provider_error_when_boto3_missing():
     """Missing boto3 should raise ProviderError, not ImportError."""
-    from orchid.providers.bedrock import BedrockProvider
-    from orchid.errors import ProviderError
     import sys
+
+    from orchid.errors import ProviderError
+    from orchid.providers.bedrock import BedrockProvider
 
     p = BedrockProvider()
     # Temporarily hide boto3 from sys.modules

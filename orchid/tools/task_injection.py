@@ -10,9 +10,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from orchid.session import Session
 
-from orchid import config as cfg
 from orchid.memory.state import Task, TaskStatus, load_tasks, save_tasks
-from orchid.scheduler import DependencyGraph, CyclicDependencyError
+from orchid.scheduler import CyclicDependencyError, DependencyGraph
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +19,7 @@ logger = logging.getLogger(__name__)
 _local = threading.local()
 
 
-def set_active_session(session: "Session") -> None:
+def set_active_session(session: Session) -> None:
     """Wire the current session into this thread's task injection context."""
     _local.session = session
 

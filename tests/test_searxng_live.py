@@ -8,8 +8,8 @@ suite (marked 'network') so CI doesn't depend on an external service.
 from __future__ import annotations
 
 import pytest
-from orchid.tools.search import SearXNGBackend, reset_backend_cache, _detect_backend
 
+from orchid.tools.search import SearXNGBackend, _detect_backend, reset_backend_cache
 
 SEARXNG_URL = "https://searxng.scheidy.com"
 

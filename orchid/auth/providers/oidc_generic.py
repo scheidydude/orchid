@@ -10,7 +10,7 @@ the provider can verify it.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from urllib.parse import urlencode
 
@@ -77,7 +77,7 @@ class GenericOIDCProvider(OIDCProvider):
     async def handle_callback(
         self,
         code: str,
-        store: "UserStore",
+        store: UserStore,
         code_verifier: str = "",
     ) -> tuple[User, OAuthAccount]:
         meta = await self._get_metadata()
@@ -91,7 +91,7 @@ class GenericOIDCProvider(OIDCProvider):
 
         expires_at = None
         if "expires_in" in tokens:
-            expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(tokens["expires_in"]))
+            expires_at = datetime.now(UTC) + timedelta(seconds=int(tokens["expires_in"]))
 
         return link_or_create_user(
             store=store,

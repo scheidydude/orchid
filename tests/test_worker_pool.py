@@ -2,11 +2,9 @@
 
 import json
 import threading
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-import pytest
-
-from orchid.subprocess_runner import WorkerPool, _PoolWorker, _child_cpu, _apply_resource_limits
+from orchid.subprocess_runner import WorkerPool, _apply_resource_limits, _child_cpu, _PoolWorker
 from orchid.worker_protocol import TaskContext, WorkerResult
 
 

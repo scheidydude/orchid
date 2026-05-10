@@ -1,5 +1,3 @@
-import threading
-import pytest
 from orchid.locks import FileLockRegistry
 
 

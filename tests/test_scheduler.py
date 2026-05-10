@@ -12,15 +12,11 @@ from __future__ import annotations
 import threading
 import time
 
-import pytest
-
 from orchid.memory.state import Task, TaskStatus
-
 from orchid.scheduler import (
     DependencyGraph,
     ParallelGroupDetector,
     Scheduler,
-    ScheduleResult,
     build_dependency_graph,
     has_cycles,
     next_runnable_task,

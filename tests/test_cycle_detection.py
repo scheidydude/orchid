@@ -8,8 +8,8 @@ _project_root = Path(__file__).resolve().parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
-from orchid.scheduler import DependencyGraph, CyclicDependencyError, Scheduler
 from orchid.memory.state import Task, TaskStatus
+from orchid.scheduler import DependencyGraph
 
 
 def _make_task(task_id: str, depends_on: list[str] | None = None,

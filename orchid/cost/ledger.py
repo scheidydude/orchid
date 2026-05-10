@@ -16,8 +16,8 @@ from __future__ import annotations
 import json
 import logging
 import threading
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, UTC
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -75,7 +75,7 @@ class TokenRecord:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "TokenRecord":
+    def from_dict(cls, data: dict[str, Any]) -> TokenRecord:
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
 
@@ -176,7 +176,7 @@ class CostLedger:
         )
         return record
 
-    def merge_from_file(self, path: "Path") -> int:
+    def merge_from_file(self, path: Path) -> int:
         """Merge TokenRecords from a remote node's JSONL ledger file.
 
         Returns the number of records merged.

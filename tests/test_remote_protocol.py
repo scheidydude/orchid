@@ -1,7 +1,7 @@
-from dataclasses import asdict
 import json
+from dataclasses import asdict
 
-from orchid.remote.types import WorkerNode, RemoteTaskRequest, RemoteTaskResponse
+from orchid.remote.types import RemoteTaskRequest, RemoteTaskResponse, WorkerNode
 
 
 def test_worker_node_is_available():

@@ -1,14 +1,11 @@
 """Tests for orchid/project_creator.py — ProjectCreator."""
 
-import subprocess
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from orchid.machine_profile import MachineProfile, _DEFAULT_DATA
+from orchid.machine_profile import _DEFAULT_DATA, MachineProfile
 from orchid.project_creator import ProjectCreator
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 

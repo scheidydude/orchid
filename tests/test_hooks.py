@@ -1,55 +1,53 @@
 """Unit tests for the Orchid V2 hook system."""
 
-import os
 import tempfile
 import threading
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from orchid.hooks.events import (
-    HookEvent,
-    AGENT_ITER_START,
-    AGENT_ITER_END,
     AGENT_ACTION,
+    AGENT_FINAL_ANSWER,
+    AGENT_ITER_END,
+    AGENT_ITER_START,
     AGENT_OBSERVATION,
     AGENT_THOUGHT,
-    AGENT_FINAL_ANSWER,
-    TASK_START,
-    TASK_END,
-    TASK_COMPLETE,
-    TASK_FAILED,
-    TASK_BLOCKED,
-    TASK_SKIPPED,
-    TASK_STATUS_CHANGE,
-    SESSION_START,
-    SESSION_END,
-    PHASE_TRANSITION,
-    PHASE_ENTER,
-    PHASE_EXIT,
+    HOOK_ERROR,
     HOOK_REGISTERED,
     HOOK_UNREGISTERED,
-    HOOK_ERROR,
+    PHASE_ENTER,
+    PHASE_EXIT,
+    PHASE_TRANSITION,
+    SESSION_END,
+    SESSION_START,
+    TASK_BLOCKED,
+    TASK_COMPLETE,
+    TASK_END,
+    TASK_FAILED,
+    TASK_SKIPPED,
+    TASK_START,
+    TASK_STATUS_CHANGE,
+    HookEvent,
 )
-from orchid.hooks.registry import HookRegistry, HookHandler
 from orchid.hooks.loader import HookLoader
-from orchid.hooks.types import HookCategory, HookExecutionMode, ShellHook, HTTPHook, PythonHook
+from orchid.hooks.registry import HookHandler, HookRegistry
 from orchid.hooks.schema import (
-    HooksConfigSchema,
-    ShellHookSchema,
+    BUILTIN_SHELL_ALLOWLIST,
+    VALID_EVENT_TYPES,
+    VALID_EXECUTION_MODES,
+    VALID_HOOK_TYPES,
     HTTPHookSchema,
     PythonHookSchema,
-    VALID_EVENT_TYPES,
-    VALID_HOOK_TYPES,
-    VALID_EXECUTION_MODES,
-    BUILTIN_SHELL_ALLOWLIST,
-    validate_hooks_config,
-    validate_hook,
-    validate_shell_command,
+    ShellHookSchema,
     get_schema_documentation,
+    validate_hook,
+    validate_hooks_config,
+    validate_shell_command,
 )
+from orchid.hooks.types import HookCategory, HookExecutionMode, HTTPHook, PythonHook, ShellHook
 
 
 def _clear_registry():

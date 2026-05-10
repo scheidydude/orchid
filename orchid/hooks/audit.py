@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -141,7 +141,7 @@ class AuditLogger:
         """Read the last *limit* entries from the audit log."""
         if not self._log_path.exists():
             return []
-        with open(self._log_path, "r", encoding="utf-8") as f:
+        with open(self._log_path, encoding="utf-8") as f:
             lines = f.readlines()
         entries = []
         for line in lines[-limit:]:

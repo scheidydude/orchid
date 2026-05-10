@@ -1,13 +1,12 @@
-import json
 import os
 import socket
 from pathlib import Path
 
 from fastapi import FastAPI
 
-from orchid.worker_protocol import TaskContext, WorkerResult
-from orchid.subprocess_runner import SubprocessRunner
 from orchid.remote.types import RemoteTaskRequest, RemoteTaskResponse
+from orchid.subprocess_runner import SubprocessRunner
+from orchid.worker_protocol import TaskContext
 
 app = FastAPI(title="Orchid Worker Node")
 

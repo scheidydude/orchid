@@ -6,7 +6,7 @@ UserStore CRUD, endpoint integration, API key issue/verify/revoke,
 scope enforcement.
 """
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -26,8 +26,7 @@ from orchid.auth.jwt import (
     verify_refresh_token,
 )
 from orchid.auth.store import UserStore
-from orchid.auth.types import ApiKey, AuthError, RefreshToken, User
-
+from orchid.auth.types import AuthError, User
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -84,8 +83,9 @@ class TestAccessTokens:
             verify_access_token(tampered)
 
     def test_expired_token_raises(self, monkeypatch):
-        import orchid.auth.jwt as jwt_mod
         from datetime import timedelta
+
+        import orchid.auth.jwt as jwt_mod
         monkeypatch.setattr(jwt_mod, "ACCESS_TOKEN_TTL", timedelta(seconds=-1))
         user = make_user()
         token = issue_access_token(user)
@@ -144,7 +144,7 @@ class TestRefreshTokens:
         store.add_user(user)
 
         raw, rt = issue_refresh_token(user)
-        rt.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        rt.expires_at = datetime.now(UTC) - timedelta(seconds=1)
         store.store_refresh_token(rt)
 
         with pytest.raises(AuthError, match="expired"):
@@ -467,7 +467,7 @@ class TestApiKeyUnit:
         store = make_store(tmp_path)
         user = make_user()
         store.add_user(user)
-        expires = datetime.now(timezone.utc) - timedelta(seconds=1)
+        expires = datetime.now(UTC) - timedelta(seconds=1)
         raw, key = issue_api_key(user, "bot", [], expires_at=expires)
         store.store_api_key(key)
 
@@ -628,6 +628,7 @@ class TestScopeEnforcement:
     def test_jwt_session_bypasses_scope_check(self, client):
         """Logged-in user (JWT) can always hit scope-enforced endpoints."""
         from fastapi import Depends
+
         import orchid.web.server as srv
         from orchid.auth.middleware import require_scope
 
@@ -642,6 +643,7 @@ class TestScopeEnforcement:
 
     def test_api_key_with_matching_scope_passes(self, client):
         from fastapi import Depends
+
         import orchid.web.server as srv
         from orchid.auth.middleware import require_scope
 
@@ -661,6 +663,7 @@ class TestScopeEnforcement:
 
     def test_api_key_wildcard_scope_passes(self, client):
         from fastapi import Depends
+
         import orchid.web.server as srv
         from orchid.auth.middleware import require_scope
 
@@ -680,6 +683,7 @@ class TestScopeEnforcement:
 
     def test_api_key_missing_scope_blocked(self, client):
         from fastapi import Depends
+
         import orchid.web.server as srv
         from orchid.auth.middleware import require_scope
 
@@ -700,8 +704,8 @@ class TestScopeEnforcement:
 
 # ── Phase 3: OAuth 2.0 / OIDC ────────────────────────────────────────────────
 
-import respx
 import httpx as _httpx
+import respx
 
 # Minimal OIDC discovery document returned by the mock provider
 _DISCOVERY = {
@@ -846,8 +850,8 @@ class TestOAuthUnit:
 
 class TestProviderRegistry:
     def test_register_and_get(self):
-        from orchid.auth.providers.registry import ProviderRegistry
         from orchid.auth.providers.oidc_generic import GenericOIDCProvider
+        from orchid.auth.providers.registry import ProviderRegistry
         reg = ProviderRegistry()
         p = GenericOIDCProvider("test-idp", "https://x.com/.well-known/openid-configuration",
                                 "cid", "cs", "https://x.com/cb")
@@ -936,7 +940,7 @@ class TestOAuthEndpoints:
             return_value=_httpx.Response(302, headers={"location": "/"})
         )
         start = oauth_client.get("/api/auth/oauth/mock-idp/start")
-        from urllib.parse import urlparse, parse_qs
+        from urllib.parse import parse_qs, urlparse
         location = start.headers["location"]
         state = parse_qs(urlparse(location).query)["state"][0]
 
@@ -959,10 +963,10 @@ class TestOAuthEndpoints:
         # Inject state manually (simulates POST from provider)
         import orchid.web.server as srv
         state = "test-state-post"
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
         srv._oauth_states[state] = {
             "provider": "mock-idp",
-            "expires_at": datetime.now(timezone.utc) + timedelta(minutes=5),
+            "expires_at": datetime.now(UTC) + timedelta(minutes=5),
         }
 
         r = oauth_client.post(
@@ -999,10 +1003,8 @@ class TestOAuthEndpoints:
             return_value=_httpx.Response(200, json=_USERINFO)
         )
 
-        import orchid.web.server as srv
 
         async def do_callback():
-            from orchid.auth.providers.oidc_generic import GenericOIDCProvider
             import orchid.web.server as s
             provider = s._provider_registry.get("mock-idp")
             store = s._auth_store
@@ -1021,7 +1023,8 @@ class TestPKCEHelpers:
     """Unit tests for PKCE S256 verification."""
 
     def test_valid_verifier_passes(self):
-        import hashlib, base64
+        import base64
+        import hashlib
         verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
         digest = hashlib.sha256(verifier.encode("ascii")).digest()
         challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
@@ -1030,7 +1033,8 @@ class TestPKCEHelpers:
         assert srv._verify_pkce_s256(verifier, challenge) is True
 
     def test_wrong_verifier_fails(self):
-        import hashlib, base64
+        import base64
+        import hashlib
         verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
         digest = hashlib.sha256(verifier.encode("ascii")).digest()
         challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
@@ -1040,7 +1044,6 @@ class TestPKCEHelpers:
 
     def test_rfc7636_test_vector(self):
         """RFC 7636 Appendix B test vector."""
-        import hashlib, base64
         verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
         expected_challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
 
@@ -1053,7 +1056,8 @@ class TestPKCEOAuthFlow:
 
     @respx.mock
     def test_start_with_pkce_includes_challenge_in_redirect(self, oauth_client):
-        import hashlib, base64
+        import base64
+        import hashlib
         verifier = "test-code-verifier-long-enough-for-pkce-flow"
         digest = hashlib.sha256(verifier.encode("ascii")).digest()
         challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
@@ -1080,7 +1084,10 @@ class TestPKCEOAuthFlow:
 
     @respx.mock
     def test_state_stores_pkce_challenge(self, oauth_client):
-        import hashlib, base64, orchid.web.server as srv
+        import base64
+        import hashlib
+
+        import orchid.web.server as srv
 
         verifier = "test-verifier-long-enough-for-pkce-abc123"
         digest = hashlib.sha256(verifier.encode("ascii")).digest()
@@ -1092,7 +1099,7 @@ class TestPKCEOAuthFlow:
         r = oauth_client.get(
             f"/api/auth/oauth/mock-idp/start?code_challenge={challenge}&code_challenge_method=S256"
         )
-        from urllib.parse import urlparse, parse_qs
+        from urllib.parse import parse_qs, urlparse
         state = parse_qs(urlparse(r.headers["location"]).query)["state"][0]
 
         stored = srv._oauth_states.get(state)
@@ -1102,7 +1109,9 @@ class TestPKCEOAuthFlow:
     @respx.mock
     def test_mobile_token_endpoint_success(self, oauth_client):
         """Full PKCE mobile flow: /start → state → POST /token with verifier."""
-        import hashlib, base64, orchid.web.server as srv
+        import base64
+        import hashlib
+
 
         verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
         digest = hashlib.sha256(verifier.encode("ascii")).digest()
@@ -1121,7 +1130,7 @@ class TestPKCEOAuthFlow:
         start = oauth_client.get(
             f"/api/auth/oauth/mock-idp/start?code_challenge={challenge}&code_challenge_method=S256"
         )
-        from urllib.parse import urlparse, parse_qs
+        from urllib.parse import parse_qs, urlparse
         state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
 
         r = oauth_client.post(
@@ -1138,7 +1147,9 @@ class TestPKCEOAuthFlow:
     @respx.mock
     def test_mobile_token_wrong_verifier_rejected(self, oauth_client):
         """PKCE fails when code_verifier doesn't match stored challenge."""
-        import hashlib, base64, orchid.web.server as srv
+        import base64
+        import hashlib
+
 
         real_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
         digest = hashlib.sha256(real_verifier.encode("ascii")).digest()
@@ -1150,7 +1161,7 @@ class TestPKCEOAuthFlow:
         start = oauth_client.get(
             f"/api/auth/oauth/mock-idp/start?code_challenge={challenge}&code_challenge_method=S256"
         )
-        from urllib.parse import urlparse, parse_qs
+        from urllib.parse import parse_qs, urlparse
         state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
 
         r = oauth_client.post(
@@ -1162,7 +1173,9 @@ class TestPKCEOAuthFlow:
 
     @respx.mock
     def test_mobile_token_missing_verifier_rejected(self, oauth_client):
-        import hashlib, base64, orchid.web.server as srv
+        import base64
+        import hashlib
+
 
         verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
         digest = hashlib.sha256(verifier.encode("ascii")).digest()
@@ -1174,7 +1187,7 @@ class TestPKCEOAuthFlow:
         start = oauth_client.get(
             f"/api/auth/oauth/mock-idp/start?code_challenge={challenge}&code_challenge_method=S256"
         )
-        from urllib.parse import urlparse, parse_qs
+        from urllib.parse import parse_qs, urlparse
         state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
 
         # Missing code_verifier
@@ -1196,7 +1209,7 @@ class TestPKCEOAuthFlow:
         state = "no-pkce-state"
         srv._oauth_states[state] = {
             "provider": "mock-idp",
-            "expires_at": datetime.now(timezone.utc) + timedelta(minutes=5),
+            "expires_at": datetime.now(UTC) + timedelta(minutes=5),
             "code_challenge": "",
             "code_challenge_method": "S256",
         }
@@ -1359,7 +1372,8 @@ class TestAuditStore:
         audit_dir.mkdir(parents=True, exist_ok=True)
 
         # Write events to two different day files
-        import dataclasses, json
+        import dataclasses
+        import json
         for day in ("2026-01-01", "2026-01-02"):
             ev = make_event("alice", AuditAction.LOGIN, "alice", "success")
             with open(audit_dir / f"audit-{day}.jsonl", "a") as f:
@@ -1373,7 +1387,8 @@ class TestAuditStore:
         store = AuditStore(audit_dir=audit_dir)
         audit_dir.mkdir(parents=True, exist_ok=True)
 
-        import dataclasses, json
+        import dataclasses
+        import json
         ev = make_event("alice", AuditAction.LOGIN, "alice", "success")
         old_file = audit_dir / "audit-2025-01-01.jsonl"
         with open(old_file, "a") as f:

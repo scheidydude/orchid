@@ -10,15 +10,14 @@ import pytest
 
 from orchid.memory.state import Task, TaskStatus, load_tasks
 from orchid.tools.task_injection import (
-    inject_task,
-    remove_task,
     get_task,
+    inject_task,
     list_tasks,
-    task_exists,
+    remove_task,
     set_active_session,
     spawn_task,
+    task_exists,
 )
-
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -366,8 +365,9 @@ def test_inject_task_appends_to_tasks_md(tmp_path):
         project_dir = tmp_path
 
         def inject_task(self, title, agent=None, depends_on=None, **kwargs):
-            from orchid.memory.state import Task, TaskStatus
             import re
+
+            from orchid.memory.state import Task, TaskStatus
             with self._lock:
                 max_n = max((int(m.group(1)) for t in self.tasks if (m := re.match(r"T(\d+)$", t.id))), default=0)
                 new_id = f"T{max_n + 1:03d}"

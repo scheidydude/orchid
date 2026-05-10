@@ -5,9 +5,7 @@ from pathlib import Path
 import pytest
 
 from orchid.checkpoint.restore import list_checkpoints, rewind_session
-from orchid.checkpoint.schema import CheckpointMetadata
 from orchid.checkpoint.store import CheckpointStore
-from orchid.memory.state import Task, TaskStatus
 from orchid.session import Session
 
 

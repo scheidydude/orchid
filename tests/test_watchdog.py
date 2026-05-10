@@ -2,8 +2,8 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from orchid.watchdog import TaskWatchdog
 from orchid.memory.state import Task, TaskStatus
+from orchid.watchdog import TaskWatchdog
 
 
 def _make_task(task_id: str, status: TaskStatus) -> Task:

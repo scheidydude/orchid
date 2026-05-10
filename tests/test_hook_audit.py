@@ -13,7 +13,6 @@ from orchid.hooks.audit import (
     AuditEntry,
     AuditLogger,
     _get_logger,
-    _logger,
     audit_hook,
     configure_audit_logger,
     get_audit_logger,

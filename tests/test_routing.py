@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-
-from orchid.tools.models import route, RouteDecision, COMPLEXITY_KEYWORDS
-from orchid import config as cfg
+from orchid.tools.models import COMPLEXITY_KEYWORDS, RouteDecision, route
 
 
 def test_cli_flag_overrides_all():
@@ -124,7 +121,7 @@ def test_complexity_keywords_list_not_empty():
 
 
 def test_model_annotation_parsed_from_tasks_md(tmp_path):
-    from orchid.memory.state import load_tasks, save_tasks, Task
+    from orchid.memory.state import load_tasks
 
     content = (
         "# Tasks\n\n"

@@ -1,5 +1,4 @@
-import pytest
-from orchid.mailbox import get_mailbox, drop_mailbox, MailboxMessage
+from orchid.mailbox import drop_mailbox, get_mailbox
 
 
 def test_send_and_receive():

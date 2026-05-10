@@ -1,6 +1,5 @@
 """Integration test for StdioMCPClient against a real subprocess MCP server."""
 
-import json
 import sys
 
 import pytest

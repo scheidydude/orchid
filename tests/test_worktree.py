@@ -10,7 +10,6 @@ Covers every public method in orchid.worktree.WorktreeManager:
 from __future__ import annotations
 
 import subprocess
-from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -18,7 +17,6 @@ import pytest
 
 from orchid.errors import ToolError
 from orchid.worktree import WorktreeInfo, WorktreeManager
-
 
 # -- WorktreeInfo --
 

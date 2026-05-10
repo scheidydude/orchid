@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typer.testing import CliRunner
+
 from orchid.interfaces.cli import app
 
 runner = CliRunner()

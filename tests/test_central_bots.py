@@ -14,16 +14,10 @@ All tests are offline — no real Telegram/Slack connections.
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 import threading
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, call, patch
-
-import pytest
-
+from unittest.mock import MagicMock, patch
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -324,7 +318,7 @@ class TestSlackChannelMap:
         say = MagicMock()
         command = {
             "channel_id": "CLINK001",
-            "text": f"--project webchess",
+            "text": "--project webchess",
         }
         bot._handle_add_channel(ack, respond, say, command)
 
@@ -584,6 +578,7 @@ class TestDeprecationWarnings:
     def test_deprecated_telegram_prints_warning(self):
         """'orchid telegram' handler body includes the deprecation console.print call."""
         import inspect
+
         from orchid.interfaces.cli import telegram
         src = inspect.getsource(telegram)
         assert "DEPRECATED" in src
@@ -592,6 +587,7 @@ class TestDeprecationWarnings:
     def test_deprecated_slack_prints_warning(self):
         """'orchid slack' handler body includes the deprecation console.print call."""
         import inspect
+
         from orchid.interfaces.cli import slack
         src = inspect.getsource(slack)
         assert "DEPRECATED" in src
@@ -600,6 +596,7 @@ class TestDeprecationWarnings:
     def test_serve_bots_flag_passes_to_server(self):
         """'orchid serve --bots' passes enable_telegram=True, enable_slack=True to web serve."""
         from typer.testing import CliRunner
+
         from orchid.interfaces.cli import app
 
         runner = CliRunner()
@@ -617,6 +614,7 @@ class TestDeprecationWarnings:
     def test_serve_telegram_flag_only_enables_telegram(self):
         """'orchid serve --telegram' enables Telegram but not Slack."""
         from typer.testing import CliRunner
+
         from orchid.interfaces.cli import app
 
         runner = CliRunner()
@@ -823,6 +821,7 @@ class TestSlackUnlinkChannel:
     def test_unlink_registered_as_slash_command(self):
         """start() registers /orchid-unlink-channel as an app.command handler."""
         import inspect
+
         from orchid.interfaces import slack_central
         src = inspect.getsource(slack_central.CentralSlackBot.start)
         assert "/orchid-unlink-channel" in src
@@ -901,6 +900,7 @@ class TestSlackCancel:
     def test_cancel_registered_as_slash_command(self):
         """start() registers /orchid-cancel as an app.command handler."""
         import inspect
+
         from orchid.interfaces import slack_central
         src = inspect.getsource(slack_central.CentralSlackBot.start)
         assert "/orchid-cancel" in src

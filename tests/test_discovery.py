@@ -5,14 +5,10 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from orchid.discovery import ProjectDiscovery
 from orchid.agent_manager import AgentManager, ProjectConfig
-
+from orchid.discovery import ProjectDiscovery
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 

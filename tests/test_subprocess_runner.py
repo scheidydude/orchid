@@ -1,6 +1,4 @@
-import json
 import subprocess
-import threading
 from unittest.mock import MagicMock, patch
 
 from orchid.subprocess_runner import SubprocessRunner

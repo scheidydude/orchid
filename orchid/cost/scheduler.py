@@ -19,7 +19,7 @@ import random
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from typing import Any
 
 from orchid import config as cfg
@@ -517,7 +517,6 @@ class CostAwareScheduler(CostScheduler):
         task_priority: int = 2,
     ) -> str:
         """Return best provider from candidates list; skip over-budget or rate-limited."""
-        from pathlib import Path
         for provider in candidates:
             # Budget check
             snap = self.get_snapshot()

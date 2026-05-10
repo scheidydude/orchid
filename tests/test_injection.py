@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from unittest.mock import MagicMock, patch, call as mock_call
-
-import pytest
+from unittest.mock import patch
 
 
 def test_injection_queue_file_created(tmp_path):

@@ -1,12 +1,12 @@
 """Base agent — ReAct loop (Reason → Act → Observe) with pluggable tools."""
 
 from __future__ import annotations
-import threading
-import time
 
 import json
 import logging
 import re
+import threading
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -853,9 +853,9 @@ def _get_agent_allowed_tools(agent_id: str) -> frozenset[str] | None:
     """Return the allowed_tools frozenset for an agent instance by its class name prefix, or None if unrestricted."""
     # agent_id is typically "ClassName-<id(self)>"
     class_name = agent_id.split("-")[0].lower()
-    from orchid.agents.tester import TesterAgent
-    from orchid.agents.reviewer import ReviewerAgent
     from orchid.agents.researcher import ResearcherAgent
+    from orchid.agents.reviewer import ReviewerAgent
+    from orchid.agents.tester import TesterAgent
     _AGENT_TOOL_MAP = {
         "testeragent": TesterAgent.allowed_tools,
         "revieweragent": ReviewerAgent.allowed_tools,

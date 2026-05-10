@@ -5,7 +5,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from orchid.mcp.adapter import MCPAdapter
-from orchid.mcp.client import MCPClientError
 from orchid.mcp.manager import MCPManager, MCPManagerError
 from orchid.mcp.types import MCPResult, MCPTool
 

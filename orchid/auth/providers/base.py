@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import uuid
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from orchid.auth.types import AuthError, OAuthAccount, User
+from orchid.auth.types import OAuthAccount, User
 
 if TYPE_CHECKING:
     from orchid.auth.store import UserStore
@@ -37,7 +37,7 @@ class OIDCProvider(ABC):
     async def handle_callback(
         self,
         code: str,
-        store: "UserStore",
+        store: UserStore,
         code_verifier: str = "",
     ) -> tuple[User, OAuthAccount]:
         """Exchange authorization code → tokens → userinfo → (user, oauth_account).
@@ -47,7 +47,7 @@ class OIDCProvider(ABC):
 
 
 def link_or_create_user(
-    store: "UserStore",
+    store: UserStore,
     provider: str,
     provider_user_id: str,
     email: str,
@@ -94,13 +94,13 @@ def link_or_create_user(
         access_token=access_token,
         refresh_token=refresh_token,
         expires_at=expires_at,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     store.store_oauth_account(oa)
     return user, oa
 
 
-def _derive_username(store: "UserStore", email: str, fallback: str) -> str:
+def _derive_username(store: UserStore, email: str, fallback: str) -> str:
     base = email.split("@")[0] if email else fallback
     candidate = base
     counter = 1

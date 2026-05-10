@@ -7,8 +7,8 @@ from unittest.mock import patch
 
 import pytest
 
-from orchid.hooks.events import HookEvent, TASK_START, TASK_COMPLETE, PRE_TOOL_USE
-from orchid.hooks.loader import HookLoadError, HookLoader
+from orchid.hooks.events import HookEvent
+from orchid.hooks.loader import HookLoader, HookLoadError
 from orchid.hooks.registry import HookRegistry
 
 

@@ -50,8 +50,9 @@ class TestShutdownModule:
 class TestAgentCancelOnShutdown:
     def test_cancel_event_raises_on_shutdown(self):
         """BaseAgent.run() raises AgentCancelledError when shutdown is set."""
-        from orchid.agents.base import AgentCancelledError, BaseAgent
         from unittest.mock import patch
+
+        from orchid.agents.base import AgentCancelledError, BaseAgent
 
         request_shutdown()
         agent = BaseAgent()
@@ -63,9 +64,10 @@ class TestAgentCancelOnShutdown:
 
     def test_cancel_saves_checkpoint_on_shutdown(self, tmp_path):
         """Checkpoint is written before raising on shutdown."""
+        from unittest.mock import patch
+
         from orchid.agents.base import AgentCancelledError, BaseAgent
         from orchid.checkpoint.store import CheckpointStore
-        from unittest.mock import patch
 
         store = CheckpointStore(tmp_path)
         agent = BaseAgent()

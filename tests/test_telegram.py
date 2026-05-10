@@ -6,19 +6,12 @@ The bot handler tests mock python-telegram-bot objects.
 
 from __future__ import annotations
 
-import asyncio
 import os
 import threading
 import time
-from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
-from unittest.mock import MagicMock, patch
-
-import pytest
 
 # ── Formatter tests ───────────────────────────────────────────────────────────
-
 from orchid.interfaces.telegram_formatter import (
     format_auto_summary,
     format_recall_results,
@@ -27,7 +20,6 @@ from orchid.interfaces.telegram_formatter import (
     format_task_complete,
     format_task_failed,
     format_task_list,
-    format_task_started,
 )
 
 _RICH_CHARS = set("│┌┐└┘├┤┬┴┼─═║╒╓╔╕╖╗╘╙╚╛╜╝╞╟╠╡╢╣╤╥╦╧╨╩╪╫╬")
@@ -159,7 +151,7 @@ def test_format_auto_summary():
 class _FakeSession:
     """Minimal session stub for BackgroundRunner tests."""
     def __init__(self, tasks=None):
-        from orchid.memory.state import Task, TaskStatus
+        from orchid.memory.state import Task
         self.tasks = tasks or [Task(id="T001", title="Do something", type="draft")]
         self.project_name = "fake"
         self.project_description = ""
@@ -177,7 +169,6 @@ class _FakeSession:
 
     def save(self): pass
     def update_task_status(self, tid, status):
-        from orchid.memory.state import TaskStatus
         for t in self.tasks:
             if t.id == tid:
                 t.status = status

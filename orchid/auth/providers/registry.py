@@ -50,7 +50,7 @@ class ProviderRegistry:
         return list(self._providers.keys())
 
     @classmethod
-    def from_config(cls, config: dict) -> "ProviderRegistry":
+    def from_config(cls, config: dict) -> ProviderRegistry:
         """Build a registry from the orchid config dict's auth.providers list."""
         from orchid.auth.providers.entra import EntraOIDCProvider
         from orchid.auth.providers.google import GoogleOIDCProvider

@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from datetime import datetime, UTC
+from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from dataclasses import asdict
 from orchid.checkpoint.schema import Checkpoint, CheckpointEntry, CheckpointMetadata, ReActCheckpoint
 
 logger = logging.getLogger(__name__)

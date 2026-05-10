@@ -1,10 +1,9 @@
 """Tests for V2 web API endpoints — lifecycle, discussion, artifacts, project creation."""
 
-import json
-import pytest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -24,6 +23,7 @@ def app_client(proj):
     """TestClient with a single project registered."""
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
+
     import orchid.interfaces.web_server as ws
 
     # Reset module-level state

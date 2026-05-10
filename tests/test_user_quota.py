@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, UTC, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-
-import pytest
 
 from orchid.cost.ledger import CostLedger, TokenRecord
 

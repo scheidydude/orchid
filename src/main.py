@@ -2,7 +2,7 @@
 Main module for the test project.
 """
 
-from src.utils import greet, add, multiply, format_message
+from src.utils import add, format_message, greet, multiply
 
 
 def main():

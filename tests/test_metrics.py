@@ -135,6 +135,7 @@ def test_task_metrics_written_on_blocked(orchid_project: Path) -> None:
 def test_task_metrics_endpoint_returns_data(tmp_path: Path) -> None:
     """GET /api/projects/{id}/metrics returns parsed records from task_metrics.jsonl."""
     from fastapi.testclient import TestClient
+
     import orchid.interfaces.web_server as ws
 
     # Reset module-level state
@@ -185,6 +186,7 @@ def test_task_metrics_endpoint_returns_data(tmp_path: Path) -> None:
 def test_task_metrics_endpoint_empty_when_no_file(tmp_path: Path) -> None:
     """GET /api/projects/{id}/metrics returns empty list when no metrics file exists."""
     from fastapi.testclient import TestClient
+
     import orchid.interfaces.web_server as ws
 
     ws._projects.clear()

@@ -21,7 +21,6 @@ import pytest
 
 from orchid.memory.state import TaskResultStore, TaskStatus, load_tasks
 
-
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 _FINAL_ANSWER = "Final Answer: Hello world function written successfully."
@@ -53,8 +52,8 @@ def two_task_project(tmp_path: Path) -> Path:
 
 def _run(project: Path, max_tasks: int = 10) -> None:
     """Load session, run loop, save. Core helper shared across tests."""
-    from orchid.session import Session
     from orchid.orchestrator import Orchestrator
+    from orchid.session import Session
 
     session = Session(project_dir=project)
     session.load()
@@ -150,8 +149,8 @@ def test_run_loop_no_tasks_is_noop(tmp_path: Path) -> None:
     (tmp_path / "tasks.md").write_text("# Tasks\n\n## TODO\n\n", encoding="utf-8")
     (tmp_path / "CLAUDE.md").write_text("# Empty project\n", encoding="utf-8")
 
-    from orchid.session import Session
     from orchid.orchestrator import Orchestrator
+    from orchid.session import Session
 
     session = Session(project_dir=tmp_path)
     session.load()
@@ -172,8 +171,8 @@ def test_run_loop_no_tasks_is_noop(tmp_path: Path) -> None:
 
 def test_session_save_persists_done_status(project: Path) -> None:
     """session.save() should write DONE status back to tasks.md."""
-    from orchid.session import Session
     from orchid.orchestrator import Orchestrator
+    from orchid.session import Session
 
     session = Session(project_dir=project)
     session.load()
@@ -215,8 +214,8 @@ def test_tracking_write_records_file_in_manifest(tmp_path: Path) -> None:
     )
     (tmp_path / "CLAUDE.md").write_text("# Test\n", encoding="utf-8")
 
-    from orchid.session import Session
     from orchid.orchestrator import Orchestrator
+    from orchid.session import Session
 
     session = Session(project_dir=tmp_path)
     session.load()
@@ -250,8 +249,8 @@ def test_tracking_write_missing_content_returns_error(tmp_path: Path) -> None:
     # Model uses "Action Path:" without heredoc block — dispatches write_file with path only
     _PATH_ONLY_RESP = "Thought: Writing now.\nAction: write_file\nAction Path: output.txt"
 
-    from orchid.session import Session
     from orchid.orchestrator import Orchestrator
+    from orchid.session import Session
 
     session = Session(project_dir=tmp_path)
     session.load()

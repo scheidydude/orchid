@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from orchid.memory.decisions import record_decision, load_decisions, recent_decisions
+from orchid.memory.decisions import load_decisions, recent_decisions, record_decision
 
 
 def test_record_and_load(tmp_path):

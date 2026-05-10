@@ -30,9 +30,9 @@ import secrets
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,7 @@ except ImportError:
     _FASTAPI_AVAILABLE = False
 
 try:
+    from orchid.auth.audit import AuditAction, AuditStore, make_event
     from orchid.auth.jwt import (
         hash_password,
         issue_access_token,
@@ -57,7 +58,6 @@ try:
         verify_password,
         verify_refresh_token,
     )
-    from orchid.auth.audit import AuditAction, AuditStore, make_event
     from orchid.auth.middleware import get_current_user, get_optional_user, require_auth, require_scope
     from orchid.auth.providers.registry import ProviderRegistry
     from orchid.auth.store import UserStore
@@ -96,6 +96,7 @@ def _init_auth_globals() -> None:
     global _bearer, _provider_registry
     if _AUTH_AVAILABLE and _bearer is None:
         from fastapi.security import HTTPBearer as _HTTPBearer
+
         from orchid.auth.providers.registry import ProviderRegistry as _PR
         _bearer = _HTTPBearer(auto_error=False)
         _provider_registry = _PR()
@@ -147,7 +148,7 @@ def _create_oauth_state(provider_slug: str, code_challenge: str = "",
     state = secrets.token_urlsafe(32)
     _oauth_states[state] = {
         "provider": provider_slug,
-        "expires_at": datetime.now(timezone.utc) + timedelta(minutes=10),
+        "expires_at": datetime.now(UTC) + timedelta(minutes=10),
         "code_challenge": code_challenge,
         "code_challenge_method": code_challenge_method,
     }
@@ -159,7 +160,7 @@ def _consume_oauth_state(state: str) -> dict:
     data = _oauth_states.pop(state, None)
     if data is None:
         raise _AE("Invalid or expired OAuth state")
-    if data["expires_at"] < datetime.now(timezone.utc):
+    if data["expires_at"] < datetime.now(UTC):
         raise _AE("OAuth state expired")
     return data
 
@@ -970,10 +971,10 @@ def create_app(
                 raise HTTPException(400, "name required")
             if not isinstance(scopes, list) or not all(isinstance(s, str) for s in scopes):
                 raise HTTPException(400, "scopes must be a list of strings")
-            expires_at: Optional[datetime] = None
+            expires_at: datetime | None = None
             if expires_days is not None:
                 try:
-                    expires_at = datetime.now(timezone.utc) + timedelta(days=int(expires_days))
+                    expires_at = datetime.now(UTC) + timedelta(days=int(expires_days))
                 except (TypeError, ValueError):
                     raise HTTPException(400, "expires_days must be an integer")
             raw, key = issue_api_key(current_user, name, scopes, expires_at)
@@ -1838,7 +1839,7 @@ def create_app(
             while True:
                 try:
                     await asyncio.wait_for(ws.receive_text(), timeout=_heartbeat_s)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Heartbeat ping — closes dead connections quickly
                     try:
                         await asyncio.wait_for(

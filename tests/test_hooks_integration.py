@@ -7,11 +7,11 @@
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
-from orchid.hooks.events import HookEvent, PRE_TOOL_USE, TASK_COMPLETE
+from orchid.hooks.events import PRE_TOOL_USE, TASK_COMPLETE, HookEvent
 from orchid.hooks.registry import HookRegistry
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+from datetime import UTC
 from pathlib import Path
 
 from orchid.checkpoint.schema import Checkpoint, CheckpointEntry
@@ -105,7 +106,6 @@ def resume_orphaned_tasks(project_dir: str | Path) -> int:
 
     Returns the number of tasks found (not necessarily resumed — some reset to TODO).
     """
-    from datetime import timezone
     from orchid.memory.state import TaskStatus, load_tasks, save_tasks
 
     project_dir = Path(project_dir)
@@ -121,11 +121,10 @@ def resume_orphaned_tasks(project_dir: str | Path) -> int:
     if not orphans:
         return 0
 
-    import json
     from datetime import datetime, timedelta
 
     max_age = timedelta(hours=24)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     changed = False
 
     for task in orphans:
@@ -135,7 +134,7 @@ def resume_orphaned_tasks(project_dir: str | Path) -> int:
             try:
                 ts = datetime.fromisoformat(cp.timestamp)
                 if ts.tzinfo is None:
-                    ts = ts.replace(tzinfo=timezone.utc)
+                    ts = ts.replace(tzinfo=UTC)
                 if now - ts <= max_age:
                     # Keep IN_PROGRESS — orchestrator will resume from checkpoint
                     logger.info("[recovery] task %s: will resume from iter %d", task.id, cp.iteration)

@@ -1,10 +1,9 @@
 """Tests for orchid.mcp.adapter — MCPAdapter wrapping an MCPClient."""
 
-import sys
 from unittest.mock import MagicMock
 
 from orchid.mcp.adapter import MCPAdapter
-from orchid.mcp.client import MCPClient, MCPClientError
+from orchid.mcp.client import MCPClient
 from orchid.mcp.types import MCPResult, MCPTool
 
 

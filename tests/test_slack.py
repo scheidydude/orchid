@@ -11,9 +11,6 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 
@@ -272,6 +269,7 @@ class TestTokenResolution:
         monkeypatch.delenv("SLACK_APP_TOKEN", raising=False)
 
         from typer.testing import CliRunner
+
         from orchid.interfaces.cli import app
 
         runner = CliRunner()
@@ -359,7 +357,7 @@ class TestMultiProjectChannelTagging:
 
     def test_tag_truncates_long_project_name(self):
         """Tags are limited to 10 characters."""
-        from orchid.interfaces.multi_formatter import tag_message, _MAX_TAG
+        from orchid.interfaces.multi_formatter import _MAX_TAG, tag_message
 
         long_name = "averylongprojectname"
         tagged = tag_message(long_name, "msg")

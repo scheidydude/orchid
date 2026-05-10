@@ -2,8 +2,7 @@
 
 import dataclasses
 import json
-from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -11,7 +10,6 @@ from orchid.agents.base import AgentCancelledError, BaseAgent
 from orchid.cost.ledger import CostLedger, TokenRecord
 from orchid.cost.scheduler import CostScheduler
 from orchid.worker_protocol import WorkerResult
-
 
 # ── WorkerResult cpu_seconds ──────────────────────────────────────────────────
 
@@ -218,8 +216,8 @@ class TestUserCpuBudgetField:
         assert u.cpu_budget_seconds == 0.0
 
     def test_roundtrip_through_file_store(self, tmp_path):
-        from orchid.auth.types import User
         from orchid.auth.store import FileUserStore
+        from orchid.auth.types import User
         store = FileUserStore(path=tmp_path / "users.json")
         u = User(user_id="u1", username="alice", cpu_budget_seconds=7200.0)
         store.add_user(u)

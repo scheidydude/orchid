@@ -3,21 +3,19 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from orchid.agents.project_manager import (
+    _MIN_TITLE_LEN,
     ProjectManagerAgent,
+    _extract_task_title,
     _parse_milestones,
     _parse_task_lines,
-    _extract_task_title,
-    _validate_tasks,
     _renumber_tasks,
-    _MIN_TITLE_LEN,
+    _validate_tasks,
 )
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 

@@ -698,6 +698,7 @@ def test_configure_cost_scheduler_returns_scheduler():
 
 def test_select_provider_returns_first_candidate_by_default(tmp_path):
     from unittest.mock import patch
+
     from orchid.cost.scheduler import CostAwareScheduler, _rate_flags
     _rate_flags.clear()
     sched = CostAwareScheduler(str(tmp_path))
@@ -707,7 +708,8 @@ def test_select_provider_returns_first_candidate_by_default(tmp_path):
 
 
 def test_select_provider_skips_over_budget(tmp_path):
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock, patch
+
     from orchid.cost.scheduler import CostAwareScheduler, _rate_flags
     _rate_flags.clear()
     sched = CostAwareScheduler(str(tmp_path))
@@ -727,6 +729,7 @@ def test_select_provider_skips_over_budget(tmp_path):
 
 def test_select_provider_skips_rate_limited(tmp_path):
     from unittest.mock import patch
+
     from orchid.cost.scheduler import CostAwareScheduler, _rate_flags, set_rate_pressure
     _rate_flags.clear()
     sched = CostAwareScheduler(str(tmp_path))
@@ -744,7 +747,8 @@ def test_select_provider_skips_rate_limited(tmp_path):
 
 
 def test_select_provider_fallback_when_all_fail(tmp_path):
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import patch
+
     from orchid.cost.scheduler import CostAwareScheduler, _rate_flags, set_rate_pressure
     _rate_flags.clear()
     sched = CostAwareScheduler(str(tmp_path))

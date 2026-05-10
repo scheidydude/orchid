@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from orchid.mcp.stdio_client import StdioMCPClient
-from orchid.mcp.types import MCPResult, MCPTool
+from orchid.mcp.types import MCPResult
 
 
 class TestStdioMCPClient(unittest.TestCase):

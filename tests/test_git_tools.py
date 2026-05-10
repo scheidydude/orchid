@@ -11,27 +11,26 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from orchid.errors import ToolError
 from orchid.tools.git import (
     _git_cmd,
-    git_status,
-    git_diff,
-    git_log,
-    git_show,
-    git_branches,
-    git_tags,
-    git_remote,
-    git_stash_list,
     git_blame,
+    git_branches,
     git_check_ignore,
-    git_ls_files,
+    git_diff,
     git_diff_summary,
+    git_log,
+    git_ls_files,
+    git_remote,
+    git_show,
+    git_stash_list,
+    git_status,
+    git_tags,
 )
-
 
 # -- _git_cmd helpers --
 

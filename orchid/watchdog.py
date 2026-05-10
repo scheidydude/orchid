@@ -2,8 +2,8 @@ import logging
 import threading
 import time
 
-from orchid.session import Session
 from orchid.memory.state import TaskStatus
+from orchid.session import Session
 
 logger = logging.getLogger(__name__)
 

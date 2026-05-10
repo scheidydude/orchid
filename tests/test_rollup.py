@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -15,7 +14,6 @@ from orchid.memory.state import (
     load_tasks,
     save_tasks,
 )
-
 
 # ── Parsing tests ─────────────────────────────────────────────────────────────
 
@@ -207,8 +205,8 @@ def _make_session(tmp_path: Path, tasks: list[Task]) -> MagicMock:
 
 def _make_orchestrator(tmp_path: Path, tasks: list[Task]) -> MagicMock:
     """Build a minimal mock orchestrator with proper hook registry initialization."""
-    from orchid.orchestrator import Orchestrator
     from orchid.hooks.registry import HookRegistry
+    from orchid.orchestrator import Orchestrator
 
     orch = Orchestrator.__new__(Orchestrator)
     orch.session = _make_session(tmp_path, tasks)
@@ -225,7 +223,6 @@ def _make_orchestrator(tmp_path: Path, tasks: list[Task]) -> MagicMock:
 
 
 def test_rollup_blocked_when_sources_incomplete(tmp_path):
-    from orchid.orchestrator import Orchestrator
 
     source = Task(id="T001", title="Source", type="review", status=TaskStatus.TODO)
     rollup = Task(
@@ -247,7 +244,6 @@ def test_rollup_blocked_when_sources_incomplete(tmp_path):
 
 
 def test_rollup_executes_when_sources_complete(tmp_path):
-    from orchid.orchestrator import Orchestrator
 
     # Pre-populate task result store
     store = TaskResultStore(tmp_path)
@@ -275,7 +271,6 @@ def test_rollup_executes_when_sources_complete(tmp_path):
 
 
 def test_rollup_writes_output_file(tmp_path):
-    from orchid.orchestrator import Orchestrator
 
     store = TaskResultStore(tmp_path)
     store.append("T001", "Source", "review", "OK")
@@ -305,7 +300,6 @@ def test_rollup_writes_output_file(tmp_path):
 
 
 def test_rollup_default_output_file_used_when_none(tmp_path):
-    from orchid.orchestrator import Orchestrator
 
     store = TaskResultStore(tmp_path)
     store.append("T001", "Source", "review", "OK")
@@ -332,7 +326,6 @@ def test_rollup_default_output_file_used_when_none(tmp_path):
 
 def test_rollup_always_uses_claude(tmp_path):
     """Rollup synthesis should always call with model_key='claude'."""
-    from orchid.orchestrator import Orchestrator
 
     store = TaskResultStore(tmp_path)
     store.append("T001", "Source", "review", "OK")
@@ -362,7 +355,6 @@ def test_rollup_always_uses_claude(tmp_path):
 
 
 def test_rollup_no_sources_marks_blocked(tmp_path):
-    from orchid.orchestrator import Orchestrator
 
     rollup = Task(
         id="T099",
@@ -397,6 +389,7 @@ def test_get_result_cli_returns_entry(tmp_path):
 def test_get_result_cli_exits_on_missing(tmp_path):
     """_cmd_get_result should raise an exit exception for unknown task IDs."""
     import click
+
     from orchid.interfaces.cli import _cmd_get_result
 
     with pytest.raises((SystemExit, click.exceptions.Exit)):

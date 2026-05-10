@@ -1,11 +1,10 @@
 """Tests for orchid/discussion.py — DiscussionHistory."""
 
 import json
+
 import pytest
-from pathlib import Path
 
-from orchid.discussion import DiscussionHistory, _DEFAULT_CONTEXT_MD
-
+from orchid.discussion import DiscussionHistory
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 

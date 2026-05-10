@@ -3,19 +3,15 @@
 from __future__ import annotations
 
 import threading
-from orchid.agent_pool import AgentPool, AgentPoolError  # noqa: F401 — spec-required imports
 import time
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
+from orchid.agent_pool import AgentPool, AgentPoolError  # noqa: F401 — spec-required imports
 
 # ── 1. Pool creation and defaults ─────────────────────────────────────────────
 
 def test_pool_creation_defaults():
     """AgentPool() creates with sensible defaults."""
-    from orchid.agent_pool import AgentPool
 
     pool = AgentPool()
     assert pool._max_size > 0
@@ -27,7 +23,6 @@ def test_pool_creation_defaults():
 
 def test_pool_creation_custom_max_size():
     """Pool respects a custom max_size."""
-    from orchid.agent_pool import AgentPool
 
     pool = AgentPool(max_size=2)
     assert pool._max_size == 2
@@ -37,7 +32,6 @@ def test_pool_creation_custom_max_size():
 
 def test_acquire_cache_hit():
     """Second acquire for the same (agent_type, model_key) returns the cached agent."""
-    from orchid.agent_pool import AgentPool
 
     mock_agent = MagicMock()
     mock_agent.model_key = "local"
@@ -58,7 +52,6 @@ def test_acquire_cache_hit():
 
 def test_acquire_cache_miss_creates():
     """First acquire for a key creates a new agent."""
-    from orchid.agent_pool import AgentPool
 
     mock_agent = MagicMock()
     mock_agent.model_key = "local"
@@ -74,7 +67,6 @@ def test_acquire_cache_miss_creates():
 
 def test_acquire_different_keys_are_separate():
     """Different (agent_type, model_key) pairs return different agents."""
-    from orchid.agent_pool import AgentPool
 
     mock_dev = MagicMock()
     mock_dev.model_key = "local"
@@ -104,7 +96,6 @@ def test_acquire_double_check_race():
 
     All threads should receive the same BaseAgent instance (not _PoolEntry).
     """
-    from orchid.agent_pool import AgentPool
 
     mock_agent = MagicMock()
     mock_agent.model_key = "local"
@@ -158,7 +149,6 @@ def test_acquire_double_check_race():
 
 def test_acquire_evicts_lru_when_at_capacity():
     """When pool exceeds max_size, the least-recently-used entry is evicted."""
-    from orchid.agent_pool import AgentPool
 
     agents = {}
     for i in range(5):
@@ -187,7 +177,6 @@ def test_acquire_evicts_lru_when_at_capacity():
 
 def test_acquire_mru_not_evicted():
     """Accessing an entry moves it to MRU position so it survives eviction."""
-    from orchid.agent_pool import AgentPool
 
     agents = {}
     for i in range(5):
@@ -224,7 +213,6 @@ def test_task_count_increments():
     The first acquire creates the entry with task_count=0 (dataclass default).
     Subsequent cache-hit acquires increment task_count.
     """
-    from orchid.agent_pool import AgentPool
 
     mock_agent = MagicMock()
     mock_agent.model_key = "local"
@@ -243,7 +231,6 @@ def test_task_count_increments():
 
 def test_release_is_noop():
     """release() currently does nothing — no exceptions."""
-    from orchid.agent_pool import AgentPool
 
     mock_agent = MagicMock()
 
@@ -261,7 +248,6 @@ def test_release_is_noop():
 
 def test_get_stats():
     """Pool returns accurate statistics."""
-    from orchid.agent_pool import AgentPool
 
     mock_agent = MagicMock()
     mock_agent.model_key = "local"
@@ -291,7 +277,6 @@ def test_get_stats():
 
 def test_clear_removes_all_agents():
     """clear() empties the cache."""
-    from orchid.agent_pool import AgentPool
 
     mock_agent = MagicMock()
     mock_agent.model_key = "local"
@@ -310,7 +295,6 @@ def test_clear_removes_all_agents():
 
 def test_start_creates_eviction_thread():
     """start() spawns a daemon eviction thread."""
-    from orchid.agent_pool import AgentPool
 
     pool = AgentPool(max_size=4)
     assert not pool._running
@@ -326,7 +310,6 @@ def test_start_creates_eviction_thread():
 
 def test_start_is_idempotent():
     """Calling start() multiple times does not spawn extra threads."""
-    from orchid.agent_pool import AgentPool
 
     pool = AgentPool(max_size=4)
     pool.start()
@@ -342,7 +325,6 @@ def test_start_is_idempotent():
 
 def test_stop_is_safe_when_not_started():
     """stop() does not crash if start() was never called."""
-    from orchid.agent_pool import AgentPool
 
     pool = AgentPool(max_size=4)
     pool.stop()  # should not raise
@@ -352,7 +334,6 @@ def test_stop_is_safe_when_not_started():
 
 def test_create_agent_developer():
     """_create_agent returns DeveloperAgent for 'developer' type."""
-    from orchid.agent_pool import AgentPool
     from orchid.agents.developer import DeveloperAgent
 
     pool = AgentPool(max_size=4)
@@ -367,7 +348,6 @@ def test_create_agent_developer():
 
 def test_create_agent_researcher():
     """_create_agent returns ResearcherAgent for 'researcher' type."""
-    from orchid.agent_pool import AgentPool
     from orchid.agents.researcher import ResearcherAgent
 
     pool = AgentPool(max_size=4)
@@ -382,7 +362,6 @@ def test_create_agent_researcher():
 
 def test_create_agent_reviewer():
     """_create_agent returns ReviewerAgent for 'reviewer' type."""
-    from orchid.agent_pool import AgentPool
     from orchid.agents.reviewer import ReviewerAgent
 
     pool = AgentPool(max_size=4)
@@ -397,7 +376,6 @@ def test_create_agent_reviewer():
 
 def test_create_agent_tester():
     """_create_agent returns TesterAgent for 'tester' type."""
-    from orchid.agent_pool import AgentPool
     from orchid.agents.tester import TesterAgent
 
     pool = AgentPool(max_size=4)
@@ -412,7 +390,6 @@ def test_create_agent_tester():
 
 def test_create_agent_base():
     """_create_agent returns BaseAgent for 'base' type."""
-    from orchid.agent_pool import AgentPool
     from orchid.agents.base import BaseAgent
 
     pool = AgentPool(max_size=4)
@@ -427,7 +404,6 @@ def test_create_agent_base():
 
 def test_create_agent_unknown_falls_back_to_base():
     """Unknown agent_type falls back to BaseAgent with a warning."""
-    from orchid.agent_pool import AgentPool
     from orchid.agents.base import BaseAgent
 
     pool = AgentPool(max_size=4)
@@ -441,7 +417,6 @@ def test_create_agent_unknown_falls_back_to_base():
 
 def test_create_agent_case_insensitive():
     """Agent type lookup is case-insensitive."""
-    from orchid.agent_pool import AgentPool
     from orchid.agents.developer import DeveloperAgent
 
     pool = AgentPool(max_size=4)
@@ -491,7 +466,6 @@ def test_concurrent_acquire_thread_safe():
     With max_size=10 and 20 unique keys, the pool evicts to 10 entries
     (LRU policy). All threads still get valid agents; the cache is bounded.
     """
-    from orchid.agent_pool import AgentPool
 
     mock_agent = MagicMock()
     mock_agent.model_key = "local"
@@ -528,7 +502,6 @@ def test_concurrent_acquire_thread_safe():
 
 def test_acquire_passes_kwargs_to_create():
     """acquire() forwards session_context, stream_callback, etc. to _create_agent."""
-    from orchid.agent_pool import AgentPool
 
     mock_agent = MagicMock()
     mock_agent.model_key = "local"
@@ -558,7 +531,6 @@ def test_acquire_passes_kwargs_to_create():
 
 def test_eviction_removes_idle_agents():
     """Test that the eviction logic removes agents idle past idle_timeout."""
-    from orchid.agent_pool import AgentPool
 
     mock_agent = MagicMock()
     mock_agent.model_key = "local"
@@ -593,7 +565,6 @@ def test_eviction_removes_idle_agents():
 
 def test_eviction_keeps_active_agents():
     """Agents recently used are not evicted."""
-    from orchid.agent_pool import AgentPool
 
     mock_agent = MagicMock()
     mock_agent.model_key = "local"
@@ -630,7 +601,7 @@ def test_eviction_keeps_active_agents():
 
 def test_pool_start_creates_workers():
     """start() creates the eviction background thread."""
-    from orchid.agent_pool import AgentPool, reset_agent_pool
+    from orchid.agent_pool import reset_agent_pool
     reset_agent_pool()
     pool = AgentPool()
     pool.start()
@@ -644,8 +615,9 @@ def test_pool_start_creates_workers():
 
 def test_pool_submit_returns_future():
     """acquire() returns an agent that can run a task (functional equivalent of submit+Future)."""
-    from orchid.agent_pool import AgentPool, reset_agent_pool
     from unittest.mock import MagicMock, patch
+
+    from orchid.agent_pool import reset_agent_pool
     reset_agent_pool()
     pool = AgentPool()
     pool.start()
@@ -662,7 +634,7 @@ def test_pool_submit_returns_future():
 
 def test_pool_submit_unknown_agent_type_raises():
     """acquire() with unknown agent_type raises AgentPoolError (or falls back gracefully)."""
-    from orchid.agent_pool import AgentPool, AgentPoolError, reset_agent_pool
+    from orchid.agent_pool import reset_agent_pool
     reset_agent_pool()
     pool = AgentPool()
     pool.start()
@@ -679,7 +651,7 @@ def test_pool_submit_unknown_agent_type_raises():
 
 def test_pool_stop_joins_workers():
     """stop() halts the eviction thread; _running becomes False."""
-    from orchid.agent_pool import AgentPool, reset_agent_pool
+    from orchid.agent_pool import reset_agent_pool
     reset_agent_pool()
     pool = AgentPool()
     pool.start()

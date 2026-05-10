@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from orchid.hooks.events import HookEvent, TASK_START, TASK_COMPLETE
+from orchid.hooks.events import HookEvent
 from orchid.hooks.registry import HookHandler, HookRegistry, HookResult
 
 

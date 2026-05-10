@@ -3,13 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch, call as mock_call
-
-import pytest
+from unittest.mock import patch
 
 from orchid.interfaces.telegram_formatter import format_notification
-
 
 # ── format_notification tests ─────────────────────────────────────────────────
 

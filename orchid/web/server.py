@@ -6,16 +6,19 @@ import json
 import logging
 import secrets
 from collections import deque
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPBearer
 from fastapi.staticfiles import StaticFiles
+from orchid.registry import ProjectRegistry
+
+from orchid.auth.audit import AuditAction, AuditStore, make_event
 from orchid.auth.jwt import (
     hash_password,
     issue_access_token,
@@ -25,13 +28,10 @@ from orchid.auth.jwt import (
     verify_password,
     verify_refresh_token,
 )
-from orchid.auth.audit import AuditAction, AuditStore, make_event
 from orchid.auth.middleware import get_current_user, get_optional_user, require_auth, require_scope
 from orchid.auth.providers.registry import ProviderRegistry
 from orchid.auth.store import UserStore
-from orchid.auth.types import AuditEvent, AuthError, User
-from orchid.registry import ProjectRegistry
-
+from orchid.auth.types import AuthError, User
 from orchid.planning import PlanningSession
 from orchid.runner import BackgroundRunner
 
@@ -428,10 +428,10 @@ async def create_api_key(
     if not all(isinstance(s, str) for s in scopes):
         raise HTTPException(400, "scopes must be a list of strings")
 
-    expires_at: Optional[datetime] = None
+    expires_at: datetime | None = None
     if expires_days is not None:
         try:
-            expires_at = datetime.now(timezone.utc) + timedelta(days=int(expires_days))
+            expires_at = datetime.now(UTC) + timedelta(days=int(expires_days))
         except (TypeError, ValueError):
             raise HTTPException(400, "expires_days must be an integer")
 
@@ -499,7 +499,7 @@ def _create_oauth_state(
     state = secrets.token_urlsafe(32)
     _oauth_states[state] = {
         "provider": provider_slug,
-        "expires_at": datetime.now(timezone.utc) + timedelta(minutes=10),
+        "expires_at": datetime.now(UTC) + timedelta(minutes=10),
         "code_challenge": code_challenge,
         "code_challenge_method": code_challenge_method,
     }
@@ -510,7 +510,7 @@ def _consume_oauth_state(state: str) -> dict:
     data = _oauth_states.pop(state, None)
     if data is None:
         raise AuthError("Invalid or expired OAuth state")
-    if data["expires_at"] < datetime.now(timezone.utc):
+    if data["expires_at"] < datetime.now(UTC):
         raise AuthError("OAuth state expired")
     return data
 
@@ -1021,7 +1021,7 @@ async def stream_project_sse(
         log_file = Path(project_path) / ".orchid" / "current.log"
         last_pos = 0
 
-        yield f"data: {{}}\n\n"  # connection established heartbeat
+        yield "data: {}\n\n"  # connection established heartbeat
 
         while True:
             if await request.is_disconnected():

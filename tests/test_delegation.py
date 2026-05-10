@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import MagicMock, patch
 
+import pytest
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -40,11 +40,11 @@ def test_delegate_action_parsed():
 # ── 2. Delegator instantiates correct agent class ─────────────────────────────
 
 def test_delegator_instantiates_correct_agent():
+    from orchid.agents.base import BaseAgent
     from orchid.agents.delegator import _get_agent_class
     from orchid.agents.developer import DeveloperAgent
     from orchid.agents.researcher import ResearcherAgent
     from orchid.agents.reviewer import ReviewerAgent
-    from orchid.agents.base import BaseAgent
 
     assert _get_agent_class("developer") is DeveloperAgent
     assert _get_agent_class("researcher") is ResearcherAgent

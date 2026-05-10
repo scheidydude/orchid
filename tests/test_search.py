@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import os
-import pytest
 from unittest.mock import MagicMock, patch
 
+import pytest
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -173,8 +173,7 @@ def test_fetch_page_extracts_content():
       <footer>Footer stuff</footer>
     </body></html>
     """
-    import httpx
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock, patch
 
     mock_resp = MagicMock()
     mock_resp.text = html
@@ -258,7 +257,6 @@ def test_search_result_embedded_into_vector_store(tmp_path):
 
 # Import here for the last test
 from orchid.tools.search import WebSearchTool
-
 
 # ── ReAct bracket action parsing ──────────────────────────────────────────────
 

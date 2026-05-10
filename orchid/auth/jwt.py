@@ -9,9 +9,8 @@ Passwords: argon2id with OWASP-recommended parameters.
 import os
 import secrets
 import uuid
-from datetime import datetime, timezone
-from datetime import timedelta
-from typing import TYPE_CHECKING, Optional
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 import jwt as _pyjwt
 from argon2 import PasswordHasher
@@ -52,7 +51,7 @@ def verify_password(password: str, password_hash: str) -> bool:
 # ── access tokens ─────────────────────────────────────────────────────────────
 
 def issue_access_token(user: User) -> str:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = {
         "sub": user.user_id,
         "role": user.role,
@@ -85,7 +84,7 @@ def issue_refresh_token(user: User) -> tuple[str, RefreshToken]:
     token_id = str(uuid.uuid4())
     secret = secrets.token_urlsafe(48)
     raw = f"{token_id}.{secret}"
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     rt = RefreshToken(
         token_id=token_id,
         user_id=user.user_id,
@@ -113,8 +112,8 @@ def verify_refresh_token(raw: str, store: "UserStore") -> RefreshToken:
     if isinstance(expires, str):
         expires = datetime.fromisoformat(expires)
     if expires.tzinfo is None:
-        expires = expires.replace(tzinfo=timezone.utc)
-    if expires < datetime.now(timezone.utc):
+        expires = expires.replace(tzinfo=UTC)
+    if expires < datetime.now(UTC):
         raise AuthError("Refresh token expired")
 
     try:
@@ -134,7 +133,7 @@ def issue_api_key(
     user: User,
     name: str,
     scopes: list[str],
-    expires_at: Optional[datetime] = None,
+    expires_at: datetime | None = None,
 ) -> tuple[str, ApiKey]:
     """Create an API key pair.
 
@@ -145,7 +144,7 @@ def issue_api_key(
     key_id = str(uuid.uuid4())
     secret = secrets.token_urlsafe(48)
     raw = f"{_API_KEY_PREFIX}{key_id}.{secret}"
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     key = ApiKey(
         key_id=key_id,
         secret_hash=_ph.hash(secret),
@@ -180,8 +179,8 @@ def verify_api_key(raw: str, store: "UserStore") -> tuple[User, ApiKey]:
         if isinstance(expires, str):
             expires = datetime.fromisoformat(expires)
         if expires.tzinfo is None:
-            expires = expires.replace(tzinfo=timezone.utc)
-        if expires < datetime.now(timezone.utc):
+            expires = expires.replace(tzinfo=UTC)
+        if expires < datetime.now(UTC):
             raise AuthError("API key expired")
 
     try:

@@ -1,13 +1,10 @@
 """Tests for orchid/gates.py — GateSystem."""
 
-import json
+
 import pytest
-from pathlib import Path
-from unittest.mock import patch
 
+from orchid.gates import GateStatus, GateSystem
 from orchid.lifecycle import ProjectLifecycle
-from orchid.gates import GateSystem, GateStatus
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
