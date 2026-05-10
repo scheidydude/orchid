@@ -97,6 +97,7 @@ cost:
 
 agents:
   max_react_iterations: 50
+  max_iteration_seconds: 0          # Phase 6: per-iteration latency cap (0 = disabled); 3 consecutive slow → cancel
   tool_timeout_seconds: 30
   bash_timeout_seconds: 60
   shell_mode: blocklist      # blocklist | allowlist
@@ -258,6 +259,8 @@ web:
   host: "0.0.0.0"
   port: 7842
   dev_mode: false
+  ws_send_timeout: 5.0              # Phase 5: seconds before a slow WebSocket client is disconnected
+  ws_heartbeat_s: 30.0              # Phase 5: ping interval to detect dead connections
   cors_origins:
     - "http://localhost:5173"
     - "https://orchid.scheidy.com"

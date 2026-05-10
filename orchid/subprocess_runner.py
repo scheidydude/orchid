@@ -26,6 +26,16 @@ from orchid.worker_protocol import TaskContext, WorkerEvent, WorkerResult
 logger = logging.getLogger(__name__)
 
 
+def _child_cpu() -> float:
+    """Return cumulative child CPU seconds (user + sys) for RUSAGE_CHILDREN."""
+    try:
+        import resource as _res
+        u = _res.getrusage(_res.RUSAGE_CHILDREN)
+        return u.ru_utime + u.ru_stime
+    except Exception:
+        return 0.0
+
+
 # ── Resource limits ───────────────────────────────────────────────────────────
 
 
@@ -273,6 +283,7 @@ class SubprocessRunner:
         timeout_s: float | None,
     ) -> WorkerResult:
         """Legacy one-shot: fork a fresh interpreter per task."""
+        _cpu_before = _child_cpu()
         proc = subprocess.Popen(
             [sys.executable, "-m", "orchid.worker_subprocess"],
             stdin=subprocess.PIPE,
@@ -297,7 +308,8 @@ class SubprocessRunner:
             except json.JSONDecodeError:
                 continue
             if "success" in data:
-                worker_result = WorkerResult(**data)
+                worker_result = WorkerResult(**{k: v for k, v in data.items()
+                                               if k in WorkerResult.__dataclass_fields__})
             elif stream_callback is not None:
                 stream_callback(data)
 
@@ -312,5 +324,9 @@ class SubprocessRunner:
             return WorkerResult(task_id=ctx.task_id, success=False,
                                 error=f"Worker timed out after {timeout_s}s")
 
-        return worker_result or WorkerResult(task_id=ctx.task_id, success=False,
-                                             error="Worker exited without result")
+        cpu_s = _child_cpu() - _cpu_before
+        if worker_result is not None:
+            worker_result.cpu_seconds = round(cpu_s, 3)
+            return worker_result
+        return WorkerResult(task_id=ctx.task_id, success=False,
+                            error="Worker exited without result")

@@ -37,6 +37,7 @@ class WorkerResult:
     result: str = ""
     error: str = ""
     duration_s: float = 0.0
+    cpu_seconds: float = 0.0  # Phase 6: child CPU time (user + sys)
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))

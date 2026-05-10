@@ -43,6 +43,7 @@ class TokenRecord:
     completion_tokens: int = 0   # alias for output_tokens
     total_tokens: int = 0
     cost_usd: float = 0.0
+    cpu_seconds: float = 0.0       # Phase 6: child process CPU time (user + sys)
     timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     user_id: str = ""
     node_id: str = ""
@@ -124,6 +125,7 @@ class CostLedger:
         cache_read_input_tokens: int = 0,
         completion_tokens: int = 0,
         cost_usd: float = 0.0,
+        cpu_seconds: float = 0.0,
         user_id: str = "",
         node_id: str = "",
     ) -> TokenRecord:
@@ -145,6 +147,7 @@ class CostLedger:
             cache_read_input_tokens=cache_read_input_tokens,
             completion_tokens=completion_tokens,
             cost_usd=cost_usd,
+            cpu_seconds=cpu_seconds,
             user_id=user_id,
             node_id=node_id,
         )
@@ -295,6 +298,15 @@ class CostLedger:
         with self._lock:
             return sum(
                 r.cost_usd for r in self._records
+                if r.user_id == user_id and r.timestamp[:10] == today
+            )
+
+    def daily_cpu_for_user(self, user_id: str) -> float:
+        """Return total cpu_seconds recorded today (UTC) for a specific user."""
+        today = datetime.now(UTC).date().isoformat()
+        with self._lock:
+            return sum(
+                r.cpu_seconds for r in self._records
                 if r.user_id == user_id and r.timestamp[:10] == today
             )
 

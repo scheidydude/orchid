@@ -261,12 +261,14 @@ class ConnectionManager:
             self._connections = [c for c in self._connections if c is not ws]
 
     async def broadcast(self, data: dict[str, Any]) -> None:
+        from orchid import config as _cfg
+        _timeout = float(_cfg.get("web.ws_send_timeout", 5.0))
         with self._lock:
             conns = list(self._connections)
         dead = []
         for ws in conns:
             try:
-                await ws.send_json(data)
+                await asyncio.wait_for(ws.send_json(data), timeout=_timeout)
             except Exception:
                 dead.append(ws)
         for d in dead:
@@ -924,6 +926,9 @@ def create_app(
             if "email" in data:
                 user.email = data["email"] or None
                 changes["email"] = user.email
+            if "cpu_budget_seconds" in data:
+                user.cpu_budget_seconds = float(data["cpu_budget_seconds"])
+                changes["cpu_budget_seconds"] = user.cpu_budget_seconds
             store.update_user(user)
             _log_audit(current_user, AuditAction.USER_UPDATED, target_user_id, "success", request,
                        detail=json.dumps(changes))
@@ -1831,11 +1836,24 @@ def create_app(
             "running": runner.is_running() if runner else False,
             "current_task": runner.current_task if runner else "",
         }})
+        from orchid import config as _cfg
+        _heartbeat_s = float(_cfg.get("web.ws_heartbeat_s", 30.0))
+        _send_timeout = float(_cfg.get("web.ws_send_timeout", 5.0))
         try:
             while True:
-                # Keep connection alive; receive and ignore client messages
-                await ws.receive_text()
+                try:
+                    await asyncio.wait_for(ws.receive_text(), timeout=_heartbeat_s)
+                except asyncio.TimeoutError:
+                    # Heartbeat ping — closes dead connections quickly
+                    try:
+                        await asyncio.wait_for(
+                            ws.send_json({"type": "ping"}), timeout=_send_timeout
+                        )
+                    except Exception:
+                        break
         except WebSocketDisconnect:
+            pass
+        finally:
             manager.remove(ws)
 
     @app.websocket("/ws/{project_id}/discussion")

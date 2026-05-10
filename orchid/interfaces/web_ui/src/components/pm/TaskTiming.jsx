@@ -79,6 +79,7 @@ export default function TaskTiming({ projectId }) {
               <th style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>Duration</th>
               <th style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>Iters</th>
               <th style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>Actions</th>
+              <th style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>CPU</th>
               <th style={{ padding: '6px 8px', textAlign: 'left' }}>Model</th>
             </tr>
           </thead>
@@ -107,6 +108,9 @@ export default function TaskTiming({ projectId }) {
                   </span>
                 </td>
                 <td style={{ padding: '5px 8px', textAlign: 'right', fontFamily: 'var(--mono)' }}>{countActions(rec.action_counts)}</td>
+                <td style={{ padding: '5px 8px', textAlign: 'right', fontFamily: 'var(--mono)', color: 'var(--text-dim)' }}>
+                  {rec.cpu_seconds != null && rec.cpu_seconds > 0 ? `${rec.cpu_seconds.toFixed(1)}s` : '—'}
+                </td>
                 <td style={{ padding: '5px 8px', color: 'var(--text-dim)' }}>{rec.model}</td>
               </tr>
             ))}

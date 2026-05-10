@@ -323,6 +323,7 @@ class Orchestrator:
             stream_callback=stream_cb,
             timeout_s=float(max_s) if max_s else None,
         )
+        self._last_subprocess_cpu_s = wresult.cpu_seconds  # Phase 6
         if not wresult.success:
             raise RuntimeError(f"Worker subprocess failed: {wresult.error}")
         return wresult.result
@@ -580,6 +581,7 @@ class Orchestrator:
                 _cancel_timer.daemon = True
                 _cancel_timer.start()
 
+            self._last_subprocess_cpu_s = 0.0  # reset per-task
             if cfg.get("isolation.subprocess_enabled", False):
                 result_text = self._run_task_isolated(
                     task=task,
@@ -595,6 +597,9 @@ class Orchestrator:
             # T217: Cancel the wall-clock timer after agent run completes
             if _cancel_timer is not None:
                 _cancel_timer.cancel()
+
+            # Phase 6: CPU accounting for in-process runs via RUSAGE_SELF delta
+            _task_cpu_s = getattr(self, "_last_subprocess_cpu_s", 0.0)
 
             # T203/T204: Record token/cost in ledger and scheduler after agent run
             # Token counts default to zero until provider metadata is wired (T203b)
@@ -647,6 +652,7 @@ class Orchestrator:
                     elapsed=_task_run_elapsed,
                     model=decision.model,
                     result_text=result_text,
+                    cpu_seconds=_task_cpu_s,
                 )
                 # T096: Fire task_failed hook
                 self._fire_task_failed_hook(task, result_text)
@@ -681,6 +687,7 @@ class Orchestrator:
                     trace_state=_ts,
                     elapsed=_task_run_elapsed,
                     model=decision.model,
+                    cpu_seconds=_task_cpu_s,
                 )
                 # T096: Fire task_complete hook
                 self._fire_task_complete_hook(task, result_text, files_written)
@@ -1249,6 +1256,7 @@ class Orchestrator:
         elapsed: float,
         model: str,
         result_text: str = "",
+        cpu_seconds: float = 0.0,
     ) -> None:
         """Write a structured metrics record to .orchid/task_metrics.jsonl (T085)."""
         metrics_path = self.session.project_dir / ".orchid" / "task_metrics.jsonl"
@@ -1265,6 +1273,7 @@ class Orchestrator:
             "iters_used": trace_state.get("completed_iters", 0),
             "iters_max": cfg.get("agents.max_react_iterations", 25),
             "duration_s": round(elapsed, 3),
+            "cpu_seconds": round(cpu_seconds, 3),
             "action_counts": dict(trace_state.get("action_counts", {})),
             "model": model,
             "session_id": session_id,

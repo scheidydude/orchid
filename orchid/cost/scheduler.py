@@ -189,6 +189,22 @@ class CostScheduler:
                 f"${user_budget_usd:.2f} (spent ${spent:.2f})"
             )
 
+    def check_cpu_budget(self, user_id: str, cpu_budget_seconds: float) -> None:
+        """Raise BudgetBlockedError if user has exceeded their daily CPU-seconds quota.
+
+        Only enforced when cpu_budget_seconds > 0.
+        """
+        if cpu_budget_seconds <= 0:
+            return
+        if self._ledger is None:
+            return
+        spent = self._ledger.daily_cpu_for_user(user_id)
+        if spent >= cpu_budget_seconds:
+            raise BudgetBlockedError(
+                f"User '{user_id}' CPU quota exhausted: "
+                f"{spent:.1f}s used of {cpu_budget_seconds:.0f}s daily limit"
+            )
+
     def check_rate_limit(self) -> None:
         """
         Raise ThrottleBlockedError if rate-limit back-off is active.

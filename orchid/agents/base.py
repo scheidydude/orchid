@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import threading
+import time
 
 import json
 import logging
@@ -562,6 +563,8 @@ class BaseAgent:
 
         _did_write = False        # tracks whether any write_file/append_file/bash ran
         _write_reminders = 0      # how many times we've already nudged the model
+        _slow_iters = 0           # Phase 6: consecutive slow-iteration counter
+        _max_iter_s = cfg.get("agents.max_iteration_seconds", 0)
 
         for iteration in range(_start_iteration, self.max_iterations):
             # Cancellation check — process-wide shutdown OR per-agent cancel
@@ -617,13 +620,42 @@ class BaseAgent:
                 except Exception as _cp_err:
                     logger.debug("ReAct checkpoint failed at iter %d: %s", iteration, _cp_err)
 
+            _iter_start = time.monotonic()
             response = call(
                 messages=self.history,
                 model_key=self.model_key,
                 system=self.system_prompt(),
             )
+            _iter_elapsed = time.monotonic() - _iter_start
             self.history.append(Message("assistant", response))
             logger.debug("[%s] iter=%d response=%s", self.__class__.__name__, iteration, response[:200])
+
+            # Phase 6: per-iteration latency budget
+            if _max_iter_s and _max_iter_s > 0 and _iter_elapsed > _max_iter_s:
+                _slow_iters += 1
+                logger.warning(
+                    "[%s] Slow iteration %d: %.1fs > %.0fs limit (%d/3 strikes)",
+                    self.__class__.__name__, iteration, _iter_elapsed, _max_iter_s, _slow_iters,
+                )
+                if _slow_iters >= 3:
+                    if self._checkpoint_store is not None:
+                        from orchid.checkpoint.schema import ReActCheckpoint
+                        _lat_cp = ReActCheckpoint(
+                            task_id=getattr(self, "_current_task_id", "unknown"),
+                            iteration=iteration,
+                            conversation_history=[{"role": m.role, "content": m.content}
+                                                  for m in self.history],
+                        )
+                        try:
+                            self._checkpoint_store.save_react_checkpoint(_lat_cp)
+                        except Exception:
+                            pass
+                    raise AgentCancelledError(
+                        f"Iteration latency budget exceeded: {_slow_iters} consecutive "
+                        f"iterations > {_max_iter_s}s"
+                    )
+            else:
+                _slow_iters = 0  # reset on a fast iteration
 
             # Check for final answer
             final_m = _FINAL_RE.search(response)
