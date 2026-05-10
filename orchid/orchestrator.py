@@ -136,6 +136,17 @@ def _get_registry() -> dict[str, type]:
     return _AGENT_REGISTRY
 
 
+def _is_retriable_exc(exc: Exception, retriable_codes: set[int]) -> bool:
+    """Return True if exc represents a transient provider failure worth trying a fallback for."""
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int) and status in retriable_codes:
+        return True
+    msg = str(exc).lower()
+    if any(str(c) in msg for c in retriable_codes):
+        return True
+    return any(kw in msg for kw in ("timeout", "connection error", "overloaded", "service unavailable"))
+
+
 class Orchestrator:
     """
     Top-level loop that:
@@ -343,9 +354,9 @@ class Orchestrator:
         per_agent_override = self.cli_provider_overrides.get(agent_type)
         _agent_name = getattr(agent_cls, "agent_name", agent_type)
 
-        # Resolve provider through the full registry chain
+        # Resolve provider through the full registry chain (including fallback list)
         from orchid.providers.registry import get_registry as _get_provider_registry
-        _provider_name = _get_provider_registry().resolve_name(
+        _provider_name, _fallback_names = _get_provider_registry().resolve_chain(
             agent_type=agent_type,
             agent_name=_agent_name,
             task_type=task.type,
@@ -384,9 +395,10 @@ class Orchestrator:
             except Exception as _cost_exc:
                 logger.debug("CostScheduler provider selection failed: %s", _cost_exc)
 
-        decision = RouteDecision(model=_provider_name, reason="registry", source="registry")
+        decision = RouteDecision(model=_provider_name, reason="registry", source="registry",
+                                 fallback=_fallback_names)
 
-        # Offline mode forces local regardless of routing
+        # Offline mode forces local regardless of routing; no fallback in offline mode
         if self.offline_mode:
             decision = RouteDecision(model="local", reason="offline mode", source="cli_flag")
 
@@ -582,17 +594,49 @@ class Orchestrator:
                 _cancel_timer.start()
 
             self._last_subprocess_cpu_s = 0.0  # reset per-task
-            if cfg.get("isolation.subprocess_enabled", False):
-                result_text = self._run_task_isolated(
-                    task=task,
-                    plan=plan,
-                    session_context=session_context,
-                    stream_cb=stream_cb,
-                    agent_type=agent_type,
-                    decision=decision,
-                )
-            else:
-                result_text = agent.run(plan)
+            _subprocess_mode = cfg.get("isolation.subprocess_enabled", False)
+            _fallback_codes: set[int] = set(cfg.get("providers.fallback_on_errors", [429, 503, 502]))
+            _max_attempts = int(cfg.get("providers.max_fallback_attempts", 3))
+            _provider_chain = ([decision.model] + decision.fallback)[:_max_attempts]
+
+            result_text = ""
+            _last_retriable: Exception | None = None
+            for _pi, _pname in enumerate(_provider_chain):
+                if _pi > 0:
+                    logger.warning(
+                        "[%s] Provider fallback %d/%d: %s → %s",
+                        task.id, _pi, len(_provider_chain) - 1,
+                        _provider_chain[_pi - 1], _pname,
+                    )
+                    agent.model_key = _pname
+                    try:
+                        from orchid.cost.scheduler import record_retriable_error as _rte
+                        _rte(_provider_chain[_pi - 1])
+                    except Exception:
+                        pass
+                try:
+                    if _subprocess_mode:
+                        _fb_decision = RouteDecision(
+                            model=_pname,
+                            reason="fallback" if _pi else decision.reason,
+                            source="fallback" if _pi else decision.source,
+                        )
+                        result_text = self._run_task_isolated(
+                            task=task, plan=plan, session_context=session_context,
+                            stream_cb=stream_cb, agent_type=agent_type, decision=_fb_decision,
+                        )
+                    else:
+                        result_text = agent.run(plan)
+                    _last_retriable = None
+                    break
+                except Exception as _exc:
+                    if _pi < len(_provider_chain) - 1 and _is_retriable_exc(_exc, _fallback_codes):
+                        _last_retriable = _exc
+                        continue
+                    raise
+
+            if _last_retriable is not None:
+                raise _last_retriable
 
             # T217: Cancel the wall-clock timer after agent run completes
             if _cancel_timer is not None:
