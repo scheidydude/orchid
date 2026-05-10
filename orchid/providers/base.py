@@ -20,6 +20,18 @@ class ProviderUnavailableError(Exception):
         super().__init__(msg)
 
 
+class RetriableProviderError(Exception):
+    """Transient provider failure (429/502/503/timeout) — safe to try the next fallback provider."""
+
+    def __init__(self, provider_name: str, status_or_reason: str | int, detail: str = "") -> None:
+        self.provider_name = provider_name
+        self.status_or_reason = status_or_reason
+        msg = f"Provider '{provider_name}' transient failure ({status_or_reason})"
+        if detail:
+            msg += f": {detail[:200]}"
+        super().__init__(msg)
+
+
 class ProviderBase(ABC):
     """Abstract base for a model backend.
 
