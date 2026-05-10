@@ -27,7 +27,15 @@
       "Bash(git -C /home/dave/LocalAI/orchid commit -m ' *)",
       "Bash(git *)",
       "Bash(.venv/bin/python -m pytest tests/ -q --tb=short --ignore=tests/test_parallel_runner.py)",
-      "Bash(.venv/bin/python *)"
+      "Bash(.venv/bin/python *)",
+      "Bash(.venv/bin/pytest tests/ -q --tb=short)",
+      "Bash(.venv/bin/pytest *)",
+      "Bash(awk '{print $9, \"-\", $5}')",
+      "Bash(sort -k3 -rn)",
+      "Bash(xargs ls *)",
+      "Bash(awk '{print $9, \"\\(\" $5 \"\\)\"}')",
+      "Bash(curl *)",
+      "Bash(uv tool *)"
     ]
   }
 }
