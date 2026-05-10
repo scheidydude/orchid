@@ -288,9 +288,9 @@ def client(tmp_path, monkeypatch):
     new_audit = AuditStore(audit_dir=tmp_path / "audit")
     monkeypatch.setattr(srv, "_audit_store", new_audit)
 
-    # Also patch middleware singleton so cookie-based auth uses same store
-    import orchid.auth.middleware as mw
-    monkeypatch.setattr(mw, "_default_store", new_store)
+    # Patch the get_store() singleton so middleware uses the same test store
+    import orchid.auth.store as store_mod
+    monkeypatch.setattr(store_mod, "_store_instance", new_store)
 
     return TestClient(srv.app, raise_server_exceptions=True)
 
@@ -745,8 +745,8 @@ def oauth_client(tmp_path, monkeypatch):
     new_store = UserStore(path=tmp_path / "users.json")
     monkeypatch.setattr(srv, "_auth_store", new_store)
 
-    import orchid.auth.middleware as mw
-    monkeypatch.setattr(mw, "_default_store", new_store)
+    import orchid.auth.store as store_mod
+    monkeypatch.setattr(store_mod, "_store_instance", new_store)
 
     # Fresh provider registry with one mock provider
     from orchid.auth.providers.registry import ProviderRegistry

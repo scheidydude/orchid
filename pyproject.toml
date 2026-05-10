@@ -75,7 +75,10 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-markers = ["network: tests that require real network access"]
+markers = [
+    "network: tests that require real network access",
+    "slow: tests that take >5s to run",
+]
 
 [dependency-groups]
 dev = [

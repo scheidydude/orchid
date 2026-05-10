@@ -109,8 +109,9 @@ class BackgroundRunner:
         for state in states.values():
             state.cancel_event.set()
 
-        # Wait for all futures
+        # Wait for all futures; return False if any still running at deadline
         deadline = time.monotonic() + timeout_s
+        all_done = True
         for project_path, state in states.items():
             if state.future is None or state.future.done():
                 continue
@@ -120,11 +121,15 @@ class BackgroundRunner:
                 return False
             try:
                 state.future.result(timeout=remaining)
+            except TimeoutError:
+                all_done = False
+                logger.warning("Task in %s did not finish within shutdown timeout", project_path)
             except Exception:
-                pass  # task error is fine — we just need it to stop
+                pass  # task raised an error, but it finished
 
-        logger.info("Graceful shutdown complete")
-        return True
+        if all_done:
+            logger.info("Graceful shutdown complete")
+        return all_done
 
     # -- Orphan recovery (Phase 2) --
 
