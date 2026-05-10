@@ -151,29 +151,41 @@ class BackgroundRunner:
     # -- Phase 4: suspend / resume --
 
     def suspend_task(self, task_id: str) -> bool:
-        """Suspend a running task at its next iteration boundary. Returns True if found."""
+        """Suspend a running task. In-process agents pause at iteration boundary;
+        subprocess pool workers receive SIGSTOP. Returns True if found."""
         from orchid import agent_registry as _ar
+        from orchid.subprocess_runner import pool_suspend_task
         agent = _ar.get(task_id)
-        if agent is None:
-            return False
-        agent.suspend()
-        logger.info("[runner] Suspended task %s", task_id)
-        return True
+        if agent is not None:
+            agent.suspend()
+            logger.info("[runner] Suspended in-process task %s", task_id)
+            return True
+        if pool_suspend_task(task_id):
+            logger.info("[runner] Suspended subprocess task %s via SIGSTOP", task_id)
+            return True
+        return False
 
     def resume_task(self, task_id: str) -> bool:
         """Resume a suspended task. Returns True if found."""
         from orchid import agent_registry as _ar
+        from orchid.subprocess_runner import pool_resume_task
         agent = _ar.get(task_id)
-        if agent is None:
-            return False
-        agent.resume()
-        logger.info("[runner] Resumed task %s", task_id)
-        return True
+        if agent is not None:
+            agent.resume()
+            logger.info("[runner] Resumed in-process task %s", task_id)
+            return True
+        if pool_resume_task(task_id):
+            logger.info("[runner] Resumed subprocess task %s via SIGCONT", task_id)
+            return True
+        return False
 
     def is_suspended(self, task_id: str) -> bool:
         from orchid import agent_registry as _ar
+        from orchid.subprocess_runner import pool_is_suspended
         agent = _ar.get(task_id)
-        return agent is not None and getattr(agent, "_suspended", False)
+        if agent is not None:
+            return getattr(agent, "_suspended", False)
+        return pool_is_suspended(task_id)
 
     # -- Orphan recovery (Phase 2) --
 

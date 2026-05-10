@@ -94,6 +94,8 @@ class _PoolWorker:
             preexec_fn=_resource_preexec,
         )
         self._lock = threading.Lock()
+        self._current_task_id: str | None = None  # set while run_task holds _lock
+        self._is_suspended: bool = False
         # Wait for worker to signal it is ready
         self._ready = False
         self._wait_ready()
@@ -123,40 +125,62 @@ class _PoolWorker:
         timeout_s: float | None,
     ) -> WorkerResult:
         with self._lock:
+            self._current_task_id = ctx.task_id
+            self._is_suspended = False
             try:
-                self._proc.stdin.write(ctx.to_json() + "\n")
-                self._proc.stdin.flush()
-            except OSError as e:
-                return WorkerResult(task_id=ctx.task_id, success=False,
-                                    error=f"Worker stdin error: {e}")
-
-            worker_result: WorkerResult | None = None
-            deadline = time.monotonic() + (timeout_s or 3600.0)
-
-            while time.monotonic() < deadline:
-                line = self._proc.stdout.readline()
-                if not line:
-                    break
-                line = line.strip()
-                if not line:
-                    continue
                 try:
-                    data: dict = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
+                    self._proc.stdin.write(ctx.to_json() + "\n")
+                    self._proc.stdin.flush()
+                except OSError as e:
+                    return WorkerResult(task_id=ctx.task_id, success=False,
+                                        error=f"Worker stdin error: {e}")
 
-                if data.get("type") == "ready":
-                    # Worker finished this task and is ready for the next one
-                    break
-                elif "success" in data:
-                    worker_result = WorkerResult(**data)
-                elif stream_callback is not None:
-                    stream_callback(data)
+                worker_result: WorkerResult | None = None
+                deadline = time.monotonic() + (timeout_s or 3600.0)
 
-            if worker_result is None:
-                return WorkerResult(task_id=ctx.task_id, success=False,
-                                    error="Worker exited without result")
-            return worker_result
+                while time.monotonic() < deadline:
+                    line = self._proc.stdout.readline()
+                    if not line:
+                        break
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        data: dict = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+
+                    if data.get("type") == "ready":
+                        # Worker finished this task and is ready for the next one
+                        break
+                    elif "success" in data:
+                        worker_result = WorkerResult(**data)
+                    elif stream_callback is not None:
+                        stream_callback(data)
+
+                if worker_result is None:
+                    return WorkerResult(task_id=ctx.task_id, success=False,
+                                        error="Worker exited without result")
+                return worker_result
+            finally:
+                self._current_task_id = None
+                self._is_suspended = False
+
+    def suspend(self) -> None:
+        """Send SIGSTOP to freeze the worker process."""
+        try:
+            os.kill(self._proc.pid, signal.SIGSTOP)
+            self._is_suspended = True
+        except OSError as e:
+            logger.warning("suspend SIGSTOP failed: %s", e)
+
+    def resume(self) -> None:
+        """Send SIGCONT to unfreeze the worker process."""
+        try:
+            os.kill(self._proc.pid, signal.SIGCONT)
+            self._is_suspended = False
+        except OSError as e:
+            logger.warning("resume SIGCONT failed: %s", e)
 
     def close(self) -> None:
         try:
@@ -223,6 +247,34 @@ class WorkerPool:
         finally:
             self._semaphore.release()
 
+    def _find_worker_for_task(self, task_id: str) -> _PoolWorker | None:
+        with self._lock:
+            for w in self._workers:
+                if w._current_task_id == task_id:
+                    return w
+        return None
+
+    def suspend_task(self, task_id: str) -> bool:
+        w = self._find_worker_for_task(task_id)
+        if w is None:
+            return False
+        w.suspend()
+        return True
+
+    def resume_task(self, task_id: str) -> bool:
+        w = self._find_worker_for_task(task_id)
+        if w is None:
+            return False
+        w.resume()
+        return True
+
+    def is_task_suspended(self, task_id: str) -> bool:
+        w = self._find_worker_for_task(task_id)
+        return w is not None and w._is_suspended
+
+    def is_task_running(self, task_id: str) -> bool:
+        return self._find_worker_for_task(task_id) is not None
+
     def shutdown(self) -> None:
         self._closed = True
         with self._lock:
@@ -247,6 +299,32 @@ def _get_pool(size: int) -> WorkerPool:
                 _pool = WorkerPool(size)
                 logger.info("WorkerPool started (size=%d)", size)
     return _pool
+
+
+def pool_suspend_task(task_id: str) -> bool:
+    """Suspend a task running in the pool via SIGSTOP. Returns True if found."""
+    if _pool is None or _pool._closed:
+        return False
+    return _pool.suspend_task(task_id)
+
+
+def pool_resume_task(task_id: str) -> bool:
+    """Resume a suspended pool task via SIGCONT. Returns True if found."""
+    if _pool is None or _pool._closed:
+        return False
+    return _pool.resume_task(task_id)
+
+
+def pool_is_suspended(task_id: str) -> bool:
+    if _pool is None or _pool._closed:
+        return False
+    return _pool.is_task_suspended(task_id)
+
+
+def pool_is_running(task_id: str) -> bool:
+    if _pool is None or _pool._closed:
+        return False
+    return _pool.is_task_running(task_id)
 
 
 # ── SubprocessRunner ──────────────────────────────────────────────────────────
