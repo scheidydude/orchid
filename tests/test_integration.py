@@ -34,6 +34,7 @@ def project(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     (tmp_path / "CLAUDE.md").write_text("# Test Project\n", encoding="utf-8")
+    (tmp_path / ".orchid.yaml").write_text("isolation:\n  subprocess_enabled: false\n", encoding="utf-8")
     return tmp_path
 
 
@@ -47,6 +48,7 @@ def two_task_project(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     (tmp_path / "CLAUDE.md").write_text("# Test Project\n", encoding="utf-8")
+    (tmp_path / ".orchid.yaml").write_text("isolation:\n  subprocess_enabled: false\n", encoding="utf-8")
     return tmp_path
 
 
@@ -213,6 +215,7 @@ def test_tracking_write_records_file_in_manifest(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     (tmp_path / "CLAUDE.md").write_text("# Test\n", encoding="utf-8")
+    (tmp_path / ".orchid.yaml").write_text("isolation:\n  subprocess_enabled: false\n", encoding="utf-8")
 
     from orchid.orchestrator import Orchestrator
     from orchid.session import Session
@@ -245,6 +248,7 @@ def test_tracking_write_missing_content_returns_error(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     (tmp_path / "CLAUDE.md").write_text("# Test\n", encoding="utf-8")
+    (tmp_path / ".orchid.yaml").write_text("isolation:\n  subprocess_enabled: false\n", encoding="utf-8")
 
     # Model uses "Action Path:" without heredoc block — dispatches write_file with path only
     _PATH_ONLY_RESP = "Thought: Writing now.\nAction: write_file\nAction Path: output.txt"

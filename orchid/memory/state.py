@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC
 from enum import Enum
 from pathlib import Path
@@ -38,6 +38,11 @@ class Task:
     model_override: str | None = None                  # claude | local | auto
     rollup_sources: list[str] = field(default_factory=list)  # task IDs to gather results from (rollup type)
     output_file: str | None = None                        # output filename for rollup synthesis
+
+    def to_dict(self) -> dict:
+        d = asdict(self)
+        d["status"] = self.status.value
+        return d
 
     def is_runnable(self, completed_ids: set[str]) -> bool:
         """True when all declared dependencies are done (includes rollup_sources)."""
