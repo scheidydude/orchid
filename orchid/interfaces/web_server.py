@@ -708,9 +708,45 @@ def create_app(
             except Exception as exc:
                 logger.warning("CentralBotManager failed to start: %s", exc)
 
+        # Phase 2: orphan recovery — check for projects interrupted by a previous crash
+        with _state_lock:
+            _all_paths = list(_projects.values())
+        for _proj_path in _all_paths:
+            try:
+                from orchid.runner import BackgroundRunner as _BR
+                _br = _BR.__new__(_BR)  # lightweight instance just for recovery scan
+                _br._lock = __import__("threading").Lock()
+                _br._states = {}
+                _br.recover_orphans(_proj_path)
+            except Exception as _rec_exc:
+                logger.warning("Orphan recovery failed for %s: %s", _proj_path, _rec_exc)
+
         yield
 
-        # Shutdown
+        # Phase 1: graceful shutdown — stop all runners cleanly before exit
+        _shutdown_timeout = float(__import__("orchid.config", fromlist=["get"]).get(
+            "runner.shutdown_timeout", 30))
+        logger.info("Graceful shutdown: waiting up to %.0fs for running tasks", _shutdown_timeout)
+
+        # Stop _WebProjectRunner instances (web-server-managed runs)
+        with _state_lock:
+            _active_runners = list(_runners.values())
+        for _wr in _active_runners:
+            _wr.stop()
+
+        # Wait for runner futures
+        import time as _time
+        _deadline = _time.monotonic() + _shutdown_timeout
+        for _wr in _active_runners:
+            _rem = _deadline - _time.monotonic()
+            if _rem <= 0:
+                break
+            if _wr._future is not None and not _wr._future.done():
+                try:
+                    _wr._future.result(timeout=_rem)
+                except Exception:
+                    pass
+
         if _discovery is not None:
             _discovery.stop()
         if _agent_manager is not None:
@@ -720,8 +756,6 @@ def create_app(
                 _central_bot_manager.stop()
             except Exception as exc:
                 logger.warning("CentralBotManager stop error: %s", exc)
-        for runner in _runners.values():
-            runner.stop()
 
     _init_auth_globals()
 

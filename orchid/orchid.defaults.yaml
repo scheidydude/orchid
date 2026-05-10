@@ -322,6 +322,7 @@ worktree:
 # Background runner — parallel task dispatch settings (T176-T181)
 runner:
   max_parallel: 4                     # max tasks in a single parallel dispatch group
+  shutdown_timeout: 30                # seconds to wait for running tasks on SIGTERM before force-kill
   provider_concurrency:               # per-provider semaphore limits for parallel dispatch
     claude: 3
     openrouter: 3

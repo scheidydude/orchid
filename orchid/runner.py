@@ -18,10 +18,12 @@ Provider semaphores (T179):
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from orchid.config import get as _cfg_get
@@ -74,6 +76,7 @@ class BackgroundRunner:
                 return False
             state = _ProjectState()
             self._states[project_path] = state
+            self._write_marker(project_path)
             state.future = self._executor.submit(self._run, project_path, state)
         return True
 
@@ -85,6 +88,75 @@ class BackgroundRunner:
                 return False
             state.cancel_event.set()
         return True
+
+    def graceful_shutdown(self, timeout_s: float | None = None) -> bool:
+        """Signal all running projects to stop and wait up to timeout_s for clean exit.
+
+        Returns True if all runs finished within the timeout, False if any were
+        still running when the timeout expired (they will be killed by the OS).
+        Called by web_server lifespan on SIGTERM.
+        """
+        import orchid.shutdown as _shutdown
+        if timeout_s is None:
+            timeout_s = float(_cfg("runner.shutdown_timeout", 30))
+
+        _shutdown.request_shutdown()
+
+        with self._lock:
+            states = dict(self._states)
+
+        # Signal every project's cancel_event
+        for state in states.values():
+            state.cancel_event.set()
+
+        # Wait for all futures
+        deadline = time.monotonic() + timeout_s
+        for project_path, state in states.items():
+            if state.future is None or state.future.done():
+                continue
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                logger.warning("Shutdown timeout reached; some tasks may still be running")
+                return False
+            try:
+                state.future.result(timeout=remaining)
+            except Exception:
+                pass  # task error is fine — we just need it to stop
+
+        logger.info("Graceful shutdown complete")
+        return True
+
+    # -- Orphan recovery (Phase 2) --
+
+    @staticmethod
+    def _marker_path(project_path: str) -> Path:
+        return Path(project_path) / ".orchid" / "running"
+
+    def _write_marker(self, project_path: str) -> None:
+        p = self._marker_path(project_path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(str(os.getpid()), encoding="utf-8")
+
+    def _remove_marker(self, project_path: str) -> None:
+        try:
+            self._marker_path(project_path).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    def recover_orphans(self, project_path: str) -> int:
+        """Check for tasks left IN_PROGRESS by a previous crash and re-queue them.
+
+        Returns the number of tasks recovered.
+        """
+        if not self._marker_path(project_path).exists():
+            return 0
+
+        from orchid.checkpoint.restore import resume_orphaned_tasks
+        count = resume_orphaned_tasks(project_path)
+        self._remove_marker(project_path)
+        if count:
+            logger.info("[recovery] %d orphaned task(s) recovered in %s", count, project_path)
+        return count
 
     def get_status(self, project_path: str) -> dict[str, Any]:
         with self._lock:
@@ -166,6 +238,7 @@ class BackgroundRunner:
             logger.exception("Auto-run failed for %s", project_path)
         finally:
             state.current_task = None
+            self._remove_marker(project_path)
             try:
                 mcp.disconnect()
             except NameError:

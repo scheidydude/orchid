@@ -14,6 +14,11 @@ ExecStart=/home/dave/.local/bin/orchid serve \
     --port 7842
 Restart=on-failure
 RestartSec=10
+# Phase 1: send SIGTERM first (uvicorn graceful drain), then SIGKILL after 35s
+# (5s buffer over runner.shutdown_timeout=30s)
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=35
 StandardOutput=journal
 StandardError=journal
 

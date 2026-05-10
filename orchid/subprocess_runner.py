@@ -1,7 +1,10 @@
 import json
 import logging
+import os
+import signal
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -64,7 +67,12 @@ class SubprocessRunner:
         try:
             proc.wait(timeout=int(timeout_s) if timeout_s else None)
         except subprocess.TimeoutExpired:
-            proc.kill()
+            # SIGTERM first — gives the child a chance to save its ReAct checkpoint
+            try:
+                proc.send_signal(signal.SIGTERM)
+                proc.wait(timeout=5)
+            except (subprocess.TimeoutExpired, OSError):
+                proc.kill()
             worker_result = WorkerResult(
                 task_id=ctx.task_id,
                 success=False,

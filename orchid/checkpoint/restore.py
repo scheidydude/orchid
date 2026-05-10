@@ -95,6 +95,65 @@ def list_checkpoints(
     return store.list()
 
 
+def resume_orphaned_tasks(project_dir: str | Path) -> int:
+    """Recover tasks left IN_PROGRESS by a previous crash.
+
+    For each IN_PROGRESS task:
+    - If a ReAct checkpoint exists and is < 24h old → task stays IN_PROGRESS,
+      orchestrator will resume from the checkpoint on next run.
+    - If no checkpoint or too old → reset to TODO so it re-runs from scratch.
+
+    Returns the number of tasks found (not necessarily resumed — some reset to TODO).
+    """
+    from datetime import timezone
+    from orchid.memory.state import TaskStatus, load_tasks, save_tasks
+
+    project_dir = Path(project_dir)
+    store = CheckpointStore(project_dir)
+
+    try:
+        tasks = load_tasks(project_dir)
+    except Exception as exc:
+        logger.warning("Could not load tasks for orphan recovery in %s: %s", project_dir, exc)
+        return 0
+
+    orphans = [t for t in tasks if t.status == TaskStatus.IN_PROGRESS]
+    if not orphans:
+        return 0
+
+    import json
+    from datetime import datetime, timedelta
+
+    max_age = timedelta(hours=24)
+    now = datetime.now(timezone.utc)
+    changed = False
+
+    for task in orphans:
+        cp = store.load_react_checkpoint(task.id)
+        recovered = False
+        if cp is not None and cp.timestamp:
+            try:
+                ts = datetime.fromisoformat(cp.timestamp)
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                if now - ts <= max_age:
+                    # Keep IN_PROGRESS — orchestrator will resume from checkpoint
+                    logger.info("[recovery] task %s: will resume from iter %d", task.id, cp.iteration)
+                    recovered = True
+            except Exception:
+                pass
+
+        if not recovered:
+            logger.info("[recovery] task %s: no valid checkpoint, resetting to TODO", task.id)
+            task.status = TaskStatus.TODO
+            changed = True
+
+    if changed:
+        save_tasks(tasks, project_dir)
+
+    return len(orphans)
+
+
 def export_checkpoint(
     checkpoint_id: str,
     source_project_dir: Path,

@@ -520,8 +520,14 @@ class Orchestrator:
             # T235: Wire ReAct checkpoint store and task_id into agent
             try:
                 from orchid.checkpoint.store import CheckpointStore
-                agent.set_checkpoint_store(CheckpointStore(self.session.project_dir))
+                _cp_store = CheckpointStore(self.session.project_dir)
+                agent.set_checkpoint_store(_cp_store)
                 agent._current_task_id = task.id
+                # Phase 2: load any existing ReAct checkpoint for resume on recovery
+                _react_cp = _cp_store.load_react_checkpoint(task.id)
+                if _react_cp is not None:
+                    agent._resume_checkpoint = _react_cp
+                    logger.info("Wired resume checkpoint for %s at iter %d", task.id, _react_cp.iteration)
             except Exception as _cs_err:
                 logger.debug("Could not wire checkpoint store into agent: %s", _cs_err)
 

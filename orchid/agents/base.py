@@ -305,6 +305,7 @@ def _extract_json_object(text: str) -> str | None:
 class AgentCancelledError(Exception):
     """Raised when the agent's cancel_event is set mid-run."""
 
+
 class BaseAgent:
     """
     ReAct agent base class.
@@ -359,6 +360,8 @@ class BaseAgent:
         self._mailbox_id: str = f"{self.__class__.__name__}-{id(self)}"
         # T234: ReAct checkpoint store — set by orchestrator before run()
         self._checkpoint_store: Any = None
+        # Phase 2: checkpoint to resume from (set by orchestrator on recovery)
+        self._resume_checkpoint: Any = None
         # Delegation — set by AgentDelegator when spawning sub-agents
         self.delegator: Any = None
         self.delegation_depth: int = 0
@@ -528,17 +531,42 @@ class BaseAgent:
 
     def run(self, task_description: str) -> str:
         """Execute the ReAct loop for a given task. Returns the final answer."""
-        self.history = [Message("user", task_description)]
+        from orchid import shutdown as _shutdown
+
+        # Phase 2: resume from a saved ReAct checkpoint if one was set
+        _resume = self._resume_checkpoint
+        if _resume is not None:
+            self.history = [Message(m["role"], m["content"]) for m in _resume.conversation_history]
+            _start_iteration = _resume.iteration + 1
+            logger.info("[%s] Resuming task %s from iteration %d",
+                        self.__class__.__name__, _resume.task_id, _resume.iteration)
+        else:
+            self.history = [Message("user", task_description)]
+            _start_iteration = 0
+
         logger.info("[%s] Starting task: %s", self.__class__.__name__, task_description[:80])
 
         _did_write = False        # tracks whether any write_file/append_file/bash ran
         _write_reminders = 0      # how many times we've already nudged the model
 
-        for iteration in range(self.max_iterations):
-            # Check for injected context before each iteration
-            # Cancellation check — first statement, before injection queue
-            if self._cancel_event.is_set():
-                raise AgentCancelledError(f"Task cancelled after {iteration} iterations")
+        for iteration in range(_start_iteration, self.max_iterations):
+            # Cancellation check — process-wide shutdown OR per-agent cancel
+            if self._cancel_event.is_set() or _shutdown.is_shutting_down():
+                # Save a final checkpoint before raising so restart recovery can pick up here
+                if self._checkpoint_store is not None:
+                    from orchid.checkpoint.schema import ReActCheckpoint
+                    _final_cp = ReActCheckpoint(
+                        task_id=getattr(self, "_current_task_id", "unknown"),
+                        iteration=iteration,
+                        conversation_history=[{"role": m.role, "content": m.content}
+                                              for m in self.history],
+                    )
+                    try:
+                        self._checkpoint_store.save_react_checkpoint(_final_cp)
+                    except Exception as _e:
+                        logger.debug("Final checkpoint on cancel failed: %s", _e)
+                reason = "shutdown" if _shutdown.is_shutting_down() else "cancelled"
+                raise AgentCancelledError(f"Task {reason} after {iteration} iterations")
 
             self._check_injection_queue()
 
