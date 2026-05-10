@@ -104,6 +104,7 @@ def test_sub_context_is_slimmed():
 
 # ── 6. Delegation result embedded into vector store ──────────────────────────
 
+@pytest.mark.network
 def test_delegation_result_embedded(tmp_path):
     from orchid.agents.delegator import AgentDelegator
     from orchid.memory.vector import VectorMemory
