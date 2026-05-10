@@ -5,7 +5,7 @@
 
 ## Description
 
-AI agent orchestration framework with a lifecycle-driven planning engine. Install once, run against any project. V2 adds a full idea-to-execution pipeline: discuss requirements with an AI product manager, generate architecture docs, break work into milestones, then execute tasks with specialized agents. V2.2 adds parallel task dispatch, native git tools, worktree isolation, dynamic task spawning, a cross-project agent pool, and cost-aware scheduling. V2.3 adds full multi-user auth: JWT sessions, argon2id passwords, API keys with scope enforcement, Google/Entra/OIDC SSO, PKCE mobile flow, append-only audit log, and per-user project scoping.
+AI agent orchestration framework with a lifecycle-driven planning engine. Install once, run against any project. V2 adds a full idea-to-execution pipeline: discuss requirements with an AI product manager, generate architecture docs, break work into milestones, then execute tasks with specialized agents. V2.2 adds parallel task dispatch, native git tools, worktree isolation, dynamic task spawning, a cross-project agent pool, and cost-aware scheduling. V2.3 adds full multi-user auth: JWT sessions, argon2id passwords, API keys with scope enforcement, Google/Entra/OIDC SSO, PKCE mobile flow, append-only audit log, per-user project scoping, a React login page, and pluggable auth storage (file or PostgreSQL).
 
 ```
 ~/orchid/              ← install here
@@ -261,6 +261,7 @@ Health check: `GET /health` → `{"status": "ok", "projects": N}` — used by Tr
 
 ### Features
 
+- **Login page** — checks `/api/auth/me` on load; shows a centered sign-in form if unauthenticated; logout button in header; no flash of UI before auth resolves
 - **PM Dashboard tab** — project health at a glance: MilestoneProgress, DependencyGraph (cytoscape.js DAG), SessionBurndown, PhaseTimeline, TaskTiming table from `task_metrics.jsonl` (deduplicates by task so re-run tasks show current status)
 - **Planning tab** — V2 lifecycle panel: phase indicator, discussion chat, artifact viewer, gate approval panel, NewProject wizard
 - **Discussion history** — persistent chat history with AI PM, view previous conversations and context
@@ -982,6 +983,18 @@ auth:
 
 **Per-user project scoping:** set `User.projects` via `PUT /api/auth/users/{id}` to restrict which projects a user can run tasks against. Empty list = unrestricted. Admins bypass all restrictions.
 
+**Web UI login:** the React frontend checks `/api/auth/me` on load and shows a sign-in form for unauthenticated users. A logout button in the header clears the session.
+
+**Pluggable auth storage:** auth data defaults to `~/.config/orchid/users.json` (zero deps). For multi-node or enterprise deployments, set `ORCHID_AUTH_STORE_DSN` to a PostgreSQL DSN and install the driver:
+
+```bash
+uv pip install 'orchid[postgres]'
+# ~/.config/orchid/.env
+ORCHID_AUTH_STORE_DSN=postgresql://user:pass@host:5432/orchid
+```
+
+Tables (`orchid_users`, `orchid_refresh_tokens`, `orchid_api_keys`, `orchid_oauth_accounts`) are created automatically on first start. See [`docs/auth-store-backends.md`](docs/auth-store-backends.md) for migration, connection pool tuning, and rollback.
+
 ### Container Isolation
 
 When Docker is available, tasks can run inside a minimal container image for the strongest isolation boundary.
@@ -1092,7 +1105,9 @@ remote/
 
 auth/
   types.py           User, RefreshToken, ApiKey, OAuthAccount, AuditEvent dataclasses
-  store.py           UserStore: thread-safe JSON-backed; users + refresh tokens + API keys + OAuth accounts
+  base.py            BaseUserStore ABC — 23 abstract methods, implemented by both backends
+  store.py           FileUserStore (JSON, default) + get_store() singleton factory (auto-selects backend)
+  store_postgres.py  PostgresUserStore — ThreadedConnectionPool, auto-schema, UPSERT-safe
   jwt.py             hash_password, verify_password, issue/verify access tokens, issue/verify refresh tokens, issue/verify API keys
   middleware.py      get_current_user, get_optional_user, require_auth(role=), require_scope(scope=)
   audit.py           AuditStore: append-only JSONL daily rotation; AuditAction constants; make_event()

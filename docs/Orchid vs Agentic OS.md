@@ -22,38 +22,41 @@ Orchid vs Agentic OS
   │ Service/daemon     │ BackgroundRunner + AgentManager + APScheduler cron — multi-project concurrent    │ Strong   │
   │                    │ background threads                                                               │          │
   ├────────────────────┼──────────────────────────────────────────────────────────────────────────────────┼──────────┤
+  │ Multi-tenancy /    │ V2.3: JWT auth, argon2id passwords, role-based access (user/admin/readonly),     │ Strong   │
+  │ Access control     │ per-user project scoping, API key scopes, OAuth/SSO, append-only audit log,      │          │
+  │                    │ pluggable store (file or PostgreSQL for shared multi-node deployments)            │          │
+  ├────────────────────┼──────────────────────────────────────────────────────────────────────────────────┼──────────┤
+  │ Permissions        │ Shell allowlist/blocklist + per-agent allowed_tools frozensets + JWT role        │ Strong   │
+  │                    │ enforcement + API key scope checks + hook audit log                              │          │
+  ├────────────────────┼──────────────────────────────────────────────────────────────────────────────────┼──────────┤
   │ I/O streams        │ Typed NDJSON event stream (output/events.py) → WebSocket → CLI — structured      │ Good     │
   │                    │ stdout equivalent                                                                │          │
   ├────────────────────┼──────────────────────────────────────────────────────────────────────────────────┼──────────┤
   │ Filesystem sandbox │ Project-dir scoped tools in _make_project_tools(), absolute paths outside        │ Good     │
   │                    │ project rejected                                                                 │          │
   ├────────────────────┼──────────────────────────────────────────────────────────────────────────────────┼──────────┤
-  │ Permissions        │ Shell allowlist/blocklist + per-agent allowed_tools frozensets + hook audit log  │ Good     │
-  ├────────────────────┼──────────────────────────────────────────────────────────────────────────────────┼──────────┤
-  │ Process isolation  │ WorktreeManager — per-task git worktrees under .orchid/worktrees/                │ Partial  │
-  ├────────────────────┼──────────────────────────────────────────────────────────────────────────────────┼──────────┤
-  │ IPC                │ spawn_task() via task queue injection; hook events fire on state changes         │ Partial  │
-  ├────────────────────┼──────────────────────────────────────────────────────────────────────────────────┼──────────┤
-  │ Multi-tenancy      │ Per-project .orchid/ state isolation; global provider semaphores across projects │ Partial  │
+  │ IPC                │ AgentMailbox (mailbox.py) — thread-safe per-agent message queue, send/receive    │ Good     │
+  │                    │ ReAct tools; spawn_task() via task queue injection; hook events on state change  │          │
+  ├────────────────────┼──────────────────────────────────────────────────────────────────────────────────┤          │
+  │ Process isolation  │ WorktreeManager — per-task git worktrees under .orchid/worktrees/;               │ Partial  │
+  │                    │ SubprocessRunner — child-process isolation with NDJSON stdio protocol;           │          │
+  │                    │ ContainerRunner — Docker-based isolation (opt-in, graceful fallback)             │          │
   └────────────────────┴──────────────────────────────────────────────────────────────────────────────────┴──────────┘
 
   ---
-  Gaps (what a real OS has that Orchid lacks):
+  Remaining gaps (what a real OS has that Orchid still lacks):
 
   ┌───────────────────────┬─────────────────────────────────────────────────────────────────────────────────────┐
   │      OS Concept       │                                         Gap                                         │
   ├───────────────────────┼─────────────────────────────────────────────────────────────────────────────────────┤
   │ Preemption            │ Tasks run to completion — no pause, suspend, or time-slice                          │
   ├───────────────────────┼─────────────────────────────────────────────────────────────────────────────────────┤
-  │ True sandbox          │ Same Python process, same user — worktrees isolate git state, not execution         │
+  │ True sandbox          │ Subprocess/container isolation is opt-in; default is same Python process, same user │
   ├───────────────────────┼─────────────────────────────────────────────────────────────────────────────────────┤
   │ Signal handling       │ No SIGTERM/graceful-shutdown equivalent for running agents                          │
   ├───────────────────────┼─────────────────────────────────────────────────────────────────────────────────────┤
-  │ Inter-agent messaging │ No direct agent-to-agent channel — only shared task queue and hook events           │
-  ├───────────────────────┼─────────────────────────────────────────────────────────────────────────────────────┤
-  │ Restart persistence   │ In-progress tasks lost on service restart — no checkpoint-resume for mid-task state │
-  ├───────────────────────┼─────────────────────────────────────────────────────────────────────────────────────┤
-  │ Per-user quotas       │ Multi-tenancy is project-scoped only; no user identity or access control            │
+  │ Restart persistence   │ Mid-task ReAct checkpoints save every 5 iterations, but full in-flight task        │
+  │                       │ recovery on service restart is not yet wired — tasks re-run from scratch           │
   ├───────────────────────┼─────────────────────────────────────────────────────────────────────────────────────┤
   │ Backpressure          │ NDJSON emitter has no buffering — slow consumers can stall the event loop           │
   ├───────────────────────┼─────────────────────────────────────────────────────────────────────────────────────┤
@@ -61,8 +64,24 @@ Orchid vs Agentic OS
   └───────────────────────┴─────────────────────────────────────────────────────────────────────────────────────┘
 
   ---
-  Bottom line: Orchid maps cleanly onto OS scheduling, memory hierarchy, resource accounting, and lifecycle management —
-  these are genuine, non-trivial implementations. The hard gaps are all in the isolation layer: same process, same user,
-  no signal handling, no restart recovery. It's closer to a sophisticated job runner with OS-shaped abstractions than a
-  true OS kernel. The next logical step toward a real Agentic OS would be container-level isolation per task and
-  checkpoint/restore for mid-task state.
+  Gaps closed since last revision:
+
+  ┌───────────────────────┬─────────────────────────────────────────────────────────────────────────────────────┐
+  │      OS Concept       │                                      Closed by                                      │
+  ├───────────────────────┼─────────────────────────────────────────────────────────────────────────────────────┤
+  │ Per-user quotas /     │ V2.3 auth: JWT roles, per-user project scoping, API key scopes, audit log;          │
+  │ access control        │ PostgresUserStore for shared multi-node deployments                                 │
+  ├───────────────────────┼─────────────────────────────────────────────────────────────────────────────────────┤
+  │ Inter-agent messaging │ AgentMailbox (mailbox.py): thread-safe per-agent queue, send_message /              │
+  │                       │ receive_message ReAct tools for direct agent-to-agent coordination                  │
+  └───────────────────────┴─────────────────────────────────────────────────────────────────────────────────────┘
+
+  ---
+  Bottom line: Orchid now maps cleanly onto OS scheduling, memory hierarchy, resource accounting, lifecycle
+  management, and access control — all with genuine, non-trivial implementations. The V2.3 auth layer closes
+  the multi-tenancy gap with JWT sessions, role-based access, per-user project scoping, and a pluggable storage
+  backend (file → PostgreSQL). The hard remaining gaps are in the isolation and preemption layers: subprocess/
+  container isolation is opt-in, there is no SIGTERM equivalent for running agents, and full mid-task restart
+  recovery is not yet wired end-to-end. It is closer to a production-grade agentic job server with OS-shaped
+  abstractions than a true OS kernel. The next logical step toward a real Agentic OS would be always-on
+  subprocess isolation with SIGTERM-safe agent suspension and automatic restart recovery from ReAct checkpoints.
