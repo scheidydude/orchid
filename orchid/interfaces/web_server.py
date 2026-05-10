@@ -21,25 +21,50 @@ Usage (via CLI):
 from __future__ import annotations
 
 import asyncio
+import base64
+import dataclasses
+import hashlib
+import json
 import logging
+import secrets
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
 try:
-    from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+    from fastapi import Depends, FastAPI, Form, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
     from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import FileResponse, JSONResponse
+    from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
+    from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
     from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel
     _FASTAPI_AVAILABLE = True
 except ImportError:
     _FASTAPI_AVAILABLE = False
+
+try:
+    from orchid.auth.jwt import (
+        hash_password,
+        issue_access_token,
+        issue_api_key,
+        issue_refresh_token,
+        verify_access_token,
+        verify_password,
+        verify_refresh_token,
+    )
+    from orchid.auth.audit import AuditAction, AuditStore, make_event
+    from orchid.auth.middleware import get_current_user, get_optional_user, require_auth, require_scope
+    from orchid.auth.providers.registry import ProviderRegistry
+    from orchid.auth.store import UserStore
+    from orchid.auth.types import AuditEvent, AuthError, User
+    _AUTH_AVAILABLE = True
+except ImportError:
+    _AUTH_AVAILABLE = False
 
 _DIST_DIR = Path(__file__).parent / "web_ui" / "dist"
 
@@ -55,6 +80,98 @@ _state_lock = threading.Lock()           # protects _projects/_managers/_runners
 _discovery: Any | None = None
 _agent_manager: Any | None = None
 _central_bot_manager: Any | None = None
+
+# ── Auth module-level state ────────────────────────────────────────────────────
+
+_auth_store: Any | None = None
+_bearer: Any = None
+_COOKIE_ACCESS = "orchid_access"
+_COOKIE_REFRESH = "orchid_refresh"
+_COOKIE_OPTS: dict = {"httponly": True, "samesite": "strict"}
+_oauth_states: dict[str, dict] = {}
+_provider_registry: Any = None
+_audit_store: Any | None = None
+
+
+def _init_auth_globals() -> None:
+    global _bearer, _provider_registry
+    if _AUTH_AVAILABLE and _bearer is None:
+        from fastapi.security import HTTPBearer as _HTTPBearer
+        from orchid.auth.providers.registry import ProviderRegistry as _PR
+        _bearer = _HTTPBearer(auto_error=False)
+        _provider_registry = _PR()
+
+
+def _get_auth_store() -> Any:
+    global _auth_store
+    if _auth_store is None:
+        from orchid.auth.store import UserStore as _US
+        _auth_store = _US()
+    return _auth_store
+
+
+def _get_audit_store() -> Any:
+    global _audit_store
+    if _audit_store is None:
+        from orchid.auth.audit import AuditStore as _AS
+        _audit_store = _AS()
+    return _audit_store
+
+
+def _log_audit(user: Any, action: str, resource: str, result: str,
+               request: Any = None, detail: str = "") -> None:
+    try:
+        from orchid.auth.audit import make_event as _me
+        ip = ""
+        if request and request.client:
+            ip = request.client.host
+        user_id = user.user_id if user else "anonymous"
+        event = _me(user_id=user_id, action=action, resource=resource,
+                    result=result, ip=ip, detail=detail)
+        _get_audit_store().log(event)
+    except Exception as exc:
+        logger.warning("Audit log failed: %s", exc)
+
+
+def _check_project_access(user: Any, project_id: str) -> None:
+    if user.role == "admin":
+        return
+    if user.projects and project_id not in user.projects:
+        _log_audit(user, AuditAction.PROJECT_ACCESS_DENIED, project_id, "denied")
+        raise HTTPException(403, f"Access to project '{project_id}' denied")
+
+
+def _set_auth_cookies(response: Any, access_token: str, refresh_raw: str) -> None:
+    response.set_cookie(_COOKIE_ACCESS, access_token, max_age=900, **_COOKIE_OPTS)
+    response.set_cookie(_COOKIE_REFRESH, refresh_raw, max_age=2_592_000, **_COOKIE_OPTS)
+
+
+def _create_oauth_state(provider_slug: str, code_challenge: str = "",
+                        code_challenge_method: str = "S256") -> str:
+    state = secrets.token_urlsafe(32)
+    _oauth_states[state] = {
+        "provider": provider_slug,
+        "expires_at": datetime.now(timezone.utc) + timedelta(minutes=10),
+        "code_challenge": code_challenge,
+        "code_challenge_method": code_challenge_method,
+    }
+    return state
+
+
+def _consume_oauth_state(state: str) -> dict:
+    from orchid.auth.types import AuthError as _AE
+    data = _oauth_states.pop(state, None)
+    if data is None:
+        raise _AE("Invalid or expired OAuth state")
+    if data["expires_at"] < datetime.now(timezone.utc):
+        raise _AE("OAuth state expired")
+    return data
+
+
+def _verify_pkce_s256(code_verifier: str, code_challenge: str) -> bool:
+    digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
+    computed = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    return secrets.compare_digest(computed, code_challenge)
 
 
 def _project_id(path: str) -> str:
@@ -610,28 +727,7 @@ def create_app(
         for runner in _runners.values():
             runner.stop()
 
-    # TODO(auth): Web UI has no authentication — acceptable for localhost use but
-    # a problem if exposed via Traefik without an external auth layer.
-    #
-    # Option A — HTTP Basic Auth middleware (no frontend changes needed):
-    #   - Add BasicAuthMiddleware to the app, gated on web.auth.enabled + web.auth.password
-    #   - Exempt /health (Traefik health probes must reach it unauthenticated)
-    #   - Browsers forward Basic Auth credentials on WebSocket upgrade to same origin
-    #   - Config: web.auth.enabled / web.auth.username / web.auth.password
-    #   - Env override: ORCHID_WEB_AUTH_PASSWORD
-    #
-    # Option B — Traefik BasicAuth middleware (zero app code):
-    #   - Add a BasicAuth middleware to the Traefik router config
-    #   - Keeps auth entirely at the edge; app stays auth-free
-    #
-    # Option C — Bearer token with React login page:
-    #   - /api/auth/token endpoint validates a shared secret, returns a signed JWT
-    #   - React app shows a login form; stores token in localStorage
-    #   - All API calls and WebSocket connections include Authorization: Bearer <token>
-    #   - More work but supports multiple users and proper logout
-    #
-    # For a single-user self-hosted install, Option A is the recommended path.
-    # Password should be accepted as plaintext in config/env (bcrypt hash optional).
+    _init_auth_globals()
 
     app = FastAPI(title="Orchid", lifespan=_lifespan)
     app.add_middleware(
@@ -641,6 +737,328 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # ── Auth endpoints ────────────────────────────────────────────────────────
+
+    if _AUTH_AVAILABLE:
+        @app.post("/api/auth/register")
+        async def auth_register(data: dict, request: Request):
+            store = _get_auth_store()
+            username = data.get("username", "").strip()
+            email = data.get("email", "").strip() or None
+            password = data.get("password", "").strip()
+            role = data.get("role", "user")
+            if not username:
+                raise HTTPException(400, "username required")
+            if not password:
+                raise HTTPException(400, "password required")
+            if role not in ("user", "admin", "readonly"):
+                raise HTTPException(400, "role must be user, admin, or readonly")
+            try:
+                user = User(
+                    user_id=username,
+                    username=username,
+                    email=email,
+                    role=role,
+                    password_hash=hash_password(password),
+                )
+                store.add_user(user)
+            except AuthError:
+                raise HTTPException(409, "User already exists")
+            _log_audit(user, AuditAction.REGISTER, user.user_id, "success", request)
+            return {"user_id": user.user_id, "username": user.username, "role": user.role}
+
+        @app.post("/api/auth/login")
+        async def auth_login(data: dict, request: Request, response: Response):
+            username = data.get("username", "").strip()
+            password = data.get("password", "").strip()
+            if not username or not password:
+                raise HTTPException(400, "username and password required")
+            store = _get_auth_store()
+            user = store.get_user(username) or store.get_user_by_username(username)
+            if user is None or not user.is_active:
+                _log_audit(None, AuditAction.LOGIN_FAILED, username, "failure", request,
+                           detail=json.dumps({"reason": "user not found or inactive"}))
+                raise HTTPException(401, "Invalid credentials")
+            if not user.password_hash or not verify_password(password, user.password_hash):
+                _log_audit(user, AuditAction.LOGIN_FAILED, username, "failure", request,
+                           detail=json.dumps({"reason": "invalid password"}))
+                raise HTTPException(401, "Invalid credentials")
+            access_token = issue_access_token(user)
+            refresh_raw, rt = issue_refresh_token(user)
+            store.store_refresh_token(rt)
+            _set_auth_cookies(response, access_token, refresh_raw)
+            _log_audit(user, AuditAction.LOGIN, user.user_id, "success", request)
+            return {"user_id": user.user_id, "username": user.username, "role": user.role,
+                    "access_token": access_token}
+
+        @app.post("/api/auth/refresh")
+        async def auth_refresh(request: Request, response: Response):
+            raw = request.cookies.get(_COOKIE_REFRESH)
+            if not raw:
+                body = {}
+                try:
+                    body = await request.json()
+                except Exception:
+                    pass
+                raw = body.get("refresh_token", "")
+            if not raw:
+                raise HTTPException(401, "No refresh token")
+            store = _get_auth_store()
+            try:
+                rt = verify_refresh_token(raw, store)
+            except AuthError as exc:
+                raise HTTPException(401, str(exc))
+            store.revoke_refresh_token(rt.token_id)
+            user = store.get_user(rt.user_id)
+            if user is None or not user.is_active:
+                raise HTTPException(403, "User inactive or not found")
+            new_access = issue_access_token(user)
+            new_raw, new_rt = issue_refresh_token(user)
+            store.store_refresh_token(new_rt)
+            _set_auth_cookies(response, new_access, new_raw)
+            _log_audit(user, AuditAction.TOKEN_REFRESHED, user.user_id, "success", request)
+            return {"user_id": user.user_id, "username": user.username, "access_token": new_access}
+
+        @app.post("/api/auth/token")
+        async def auth_token(body: dict):
+            token = body.get("token", "")
+            if not token:
+                raise HTTPException(status_code=401, detail="token required")
+            try:
+                payload = verify_access_token(token)
+                return {"user_id": payload["sub"], "valid": True}
+            except AuthError:
+                raise HTTPException(status_code=401, detail="Invalid token")
+
+        @app.get("/api/auth/me")
+        async def auth_me(current_user: User | None = Depends(get_optional_user)):
+            if current_user is None:
+                return {"authenticated": False}
+            return {
+                "authenticated": True,
+                "user_id": current_user.user_id,
+                "username": current_user.username,
+                "email": current_user.email,
+                "role": current_user.role,
+            }
+
+        @app.post("/api/auth/logout")
+        async def auth_logout(request: Request, response: Response,
+                              current_user: User | None = Depends(get_optional_user)):
+            raw = request.cookies.get(_COOKIE_REFRESH)
+            if raw:
+                store = _get_auth_store()
+                try:
+                    rt = verify_refresh_token(raw, store)
+                    store.revoke_refresh_token(rt.token_id)
+                except AuthError:
+                    pass
+            _log_audit(current_user, AuditAction.LOGOUT,
+                       current_user.user_id if current_user else "anonymous", "success", request)
+            response.delete_cookie(_COOKIE_ACCESS)
+            response.delete_cookie(_COOKIE_REFRESH)
+            return {"ok": True}
+
+        @app.get("/api/auth/users")
+        async def auth_list_users(current_user: User = Depends(get_current_user)):
+            if current_user.role != "admin":
+                raise HTTPException(403, "Admin role required")
+            store = _get_auth_store()
+            users = store.list_users()
+            return {"users": [{"user_id": u.user_id, "username": u.username,
+                                "email": u.email, "role": u.role, "is_active": u.is_active}
+                               for u in users]}
+
+        @app.put("/api/auth/users/{target_user_id}")
+        async def admin_update_user(target_user_id: str, data: dict, request: Request,
+                                    current_user: User = Depends(require_auth(role="admin"))):
+            store = _get_auth_store()
+            user = store.get_user(target_user_id)
+            if user is None:
+                raise HTTPException(404, "User not found")
+            changes: dict = {}
+            if "role" in data:
+                if data["role"] not in ("user", "admin", "readonly"):
+                    raise HTTPException(400, "role must be user, admin, or readonly")
+                user.role = data["role"]
+                changes["role"] = user.role
+            if "projects" in data:
+                if not isinstance(data["projects"], list):
+                    raise HTTPException(400, "projects must be a list")
+                user.projects = data["projects"]
+                changes["projects"] = user.projects
+            if "is_active" in data:
+                user.is_active = bool(data["is_active"])
+                changes["is_active"] = user.is_active
+            if "email" in data:
+                user.email = data["email"] or None
+                changes["email"] = user.email
+            store.update_user(user)
+            _log_audit(current_user, AuditAction.USER_UPDATED, target_user_id, "success", request,
+                       detail=json.dumps(changes))
+            return {"user_id": user.user_id, "username": user.username, "role": user.role,
+                    "projects": user.projects, "is_active": user.is_active, "email": user.email}
+
+        @app.delete("/api/auth/users/{target_user_id}")
+        async def admin_deactivate_user(target_user_id: str, request: Request,
+                                        current_user: User = Depends(require_auth(role="admin"))):
+            if target_user_id == current_user.user_id:
+                raise HTTPException(400, "Cannot deactivate your own account")
+            store = _get_auth_store()
+            user = store.get_user(target_user_id)
+            if user is None:
+                raise HTTPException(404, "User not found")
+            user.is_active = False
+            store.update_user(user)
+            store.revoke_all_refresh_tokens(target_user_id)
+            _log_audit(current_user, AuditAction.USER_DEACTIVATED, target_user_id, "success", request)
+            return {"ok": True, "user_id": target_user_id}
+
+        @app.get("/api/audit")
+        async def get_audit_log(limit: int = 50, offset: int = 0, user_id: str = "",
+                                action: str = "",
+                                current_user: User = Depends(require_auth(role="admin"))):
+            limit = min(limit, 500)
+            events, total = _get_audit_store().read(limit=limit, offset=offset,
+                                                    user_id=user_id, action=action)
+            return {"events": [dataclasses.asdict(e) for e in events],
+                    "total": total, "limit": limit, "offset": offset}
+
+        @app.post("/api/auth/apikeys")
+        async def create_api_key(data: dict, request: Request,
+                                 current_user: User = Depends(get_current_user)):
+            name = data.get("name", "").strip()
+            scopes = data.get("scopes", [])
+            expires_days = data.get("expires_days")
+            if not name:
+                raise HTTPException(400, "name required")
+            if not isinstance(scopes, list) or not all(isinstance(s, str) for s in scopes):
+                raise HTTPException(400, "scopes must be a list of strings")
+            expires_at: Optional[datetime] = None
+            if expires_days is not None:
+                try:
+                    expires_at = datetime.now(timezone.utc) + timedelta(days=int(expires_days))
+                except (TypeError, ValueError):
+                    raise HTTPException(400, "expires_days must be an integer")
+            raw, key = issue_api_key(current_user, name, scopes, expires_at)
+            _get_auth_store().store_api_key(key)
+            _log_audit(current_user, AuditAction.API_KEY_CREATED, key.key_id, "success", request,
+                       detail=json.dumps({"name": name, "scopes": scopes}))
+            return {"key_id": key.key_id, "name": key.name, "scopes": key.scopes,
+                    "secret": raw, "created_at": key.created_at, "expires_at": key.expires_at}
+
+        @app.get("/api/auth/apikeys")
+        async def list_api_keys(current_user: User = Depends(get_current_user)):
+            keys = _get_auth_store().list_api_keys(current_user.user_id)
+            return {"api_keys": [{"key_id": k.key_id, "name": k.name, "scopes": k.scopes,
+                                   "created_at": k.created_at, "last_used": k.last_used,
+                                   "expires_at": k.expires_at, "is_active": k.is_active}
+                                  for k in keys]}
+
+        @app.delete("/api/auth/apikeys/{key_id}")
+        async def revoke_api_key(key_id: str, request: Request,
+                                 current_user: User = Depends(get_current_user)):
+            store = _get_auth_store()
+            key = store.get_api_key(key_id)
+            if key is None:
+                raise HTTPException(404, "API key not found")
+            if key.user_id != current_user.user_id and current_user.role != "admin":
+                raise HTTPException(403, "Cannot revoke another user's API key")
+            store.revoke_api_key(key_id)
+            _log_audit(current_user, AuditAction.API_KEY_REVOKED, key_id, "success", request)
+            return {"ok": True}
+
+        @app.get("/api/auth/oauth/providers")
+        async def list_oauth_providers():
+            return {"providers": _provider_registry.slugs()}
+
+        @app.get("/api/auth/oauth/{provider_slug}/start")
+        async def oauth_start(provider_slug: str, code_challenge: str = "",
+                              code_challenge_method: str = "S256"):
+            provider = _provider_registry.get(provider_slug)
+            if provider is None:
+                raise HTTPException(404, f"OAuth provider '{provider_slug}' not configured")
+            if code_challenge and code_challenge_method != "S256":
+                raise HTTPException(400, "Only code_challenge_method=S256 is supported")
+            state = _create_oauth_state(provider_slug, code_challenge, code_challenge_method)
+            url = await provider.authorization_url(state, code_challenge, code_challenge_method)
+            return RedirectResponse(url, status_code=302)
+
+        async def _resolve_oauth_callback(provider_slug: str, code: str, state: str,
+                                          code_verifier: str = "") -> tuple[str, str]:
+            try:
+                state_data = _consume_oauth_state(state)
+            except AuthError as exc:
+                raise HTTPException(400, str(exc))
+            if state_data["provider"] != provider_slug:
+                raise HTTPException(400, "OAuth state provider mismatch")
+            stored_challenge = state_data.get("code_challenge", "")
+            if stored_challenge:
+                if not code_verifier:
+                    raise HTTPException(400, "code_verifier required for PKCE flow")
+                if not _verify_pkce_s256(code_verifier, stored_challenge):
+                    raise HTTPException(400, "PKCE verification failed: invalid code_verifier")
+            provider = _provider_registry.get(provider_slug)
+            if provider is None:
+                raise HTTPException(404, f"OAuth provider '{provider_slug}' not configured")
+            store = _get_auth_store()
+            try:
+                user, _oa = await provider.handle_callback(code, store, code_verifier=code_verifier)
+            except AuthError as exc:
+                raise HTTPException(401, str(exc))
+            except Exception as exc:
+                raise HTTPException(502, f"OAuth provider error: {exc}")
+            access_token = issue_access_token(user)
+            refresh_raw, rt = issue_refresh_token(user)
+            store.store_refresh_token(rt)
+            _log_audit(user, AuditAction.OAUTH_LOGIN, provider_slug, "success",
+                       detail=json.dumps({"provider": provider_slug}))
+            return access_token, refresh_raw
+
+        @app.get("/api/auth/oauth/{provider_slug}/callback")
+        async def oauth_callback_get(provider_slug: str, request: Request):
+            error = request.query_params.get("error", "")
+            if error:
+                raise HTTPException(400, f"OAuth provider returned error: {error}")
+            code = request.query_params.get("code", "")
+            state = request.query_params.get("state", "")
+            if not code or not state:
+                raise HTTPException(400, "Missing 'code' or 'state' parameter")
+            access_token, refresh_raw = await _resolve_oauth_callback(provider_slug, code, state)
+            redirect = RedirectResponse("/?oauth=success", status_code=302)
+            _set_auth_cookies(redirect, access_token, refresh_raw)
+            return redirect
+
+        @app.post("/api/auth/oauth/{provider_slug}/callback")
+        async def oauth_callback_post(provider_slug: str, request: Request, response: Response):
+            try:
+                body = await request.json()
+                code = body.get("code", "")
+                state = body.get("state", "")
+            except Exception:
+                form = await request.form()
+                code = form.get("code", "")
+                state = form.get("state", "")
+            if not code or not state:
+                raise HTTPException(400, "Missing 'code' or 'state' parameter")
+            access_token, refresh_raw = await _resolve_oauth_callback(provider_slug, code, state)
+            _set_auth_cookies(response, access_token, refresh_raw)
+            return {"access_token": access_token}
+
+        @app.post("/api/auth/oauth/{provider_slug}/token")
+        async def oauth_token_mobile(provider_slug: str, data: dict):
+            code = data.get("code", "").strip()
+            state = data.get("state", "").strip()
+            code_verifier = data.get("code_verifier", "").strip()
+            if not code or not state:
+                raise HTTPException(400, "code and state required")
+            if not code_verifier:
+                raise HTTPException(400, "code_verifier required for mobile PKCE flow")
+            access_token, refresh_raw = await _resolve_oauth_callback(
+                provider_slug, code, state, code_verifier=code_verifier)
+            return {"access_token": access_token, "refresh_token": refresh_raw,
+                    "token_type": "Bearer", "expires_in": 900}
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 
