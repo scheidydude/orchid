@@ -83,7 +83,7 @@ class AgentDelegator:
         )
 
         try:
-            agent_cls = _get_agent_class(agent_type)
+            _get_agent_class(agent_type)
         except ValueError as e:
             return f"[delegation error: {e}]"
 

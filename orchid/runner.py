@@ -24,11 +24,15 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from orchid.config import get as _cfg_get
 from orchid.memory.state import Task, TaskStatus
 from orchid.watchdog import TaskWatchdog
+
+if TYPE_CHECKING:
+    from orchid.orchestrator import Orchestrator
+    from orchid.session import Session
 
 logger = logging.getLogger(__name__)
 

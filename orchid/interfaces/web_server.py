@@ -37,10 +37,9 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 try:
-    from fastapi import Depends, FastAPI, Form, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+    from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
     from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
-    from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+    from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
     from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel
     _FASTAPI_AVAILABLE = True
@@ -48,7 +47,7 @@ except ImportError:
     _FASTAPI_AVAILABLE = False
 
 try:
-    from orchid.auth.audit import AuditAction, AuditStore, make_event
+    from orchid.auth.audit import AuditAction
     from orchid.auth.jwt import (
         hash_password,
         issue_access_token,
@@ -58,10 +57,8 @@ try:
         verify_password,
         verify_refresh_token,
     )
-    from orchid.auth.middleware import get_current_user, get_optional_user, require_auth, require_scope
-    from orchid.auth.providers.registry import ProviderRegistry
-    from orchid.auth.store import UserStore
-    from orchid.auth.types import AuditEvent, AuthError, User
+    from orchid.auth.middleware import get_current_user, get_optional_user, require_auth
+    from orchid.auth.types import AuthError, User
     _AUTH_AVAILABLE = True
 except ImportError:
     _AUTH_AVAILABLE = False

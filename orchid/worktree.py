@@ -483,7 +483,6 @@ class WorktreeManager:
                 match = re.match(r"wt-([^-]+)-(.+)", branch)
                 if match:
                     task_id = match.group(1)
-                    agent_type = match.group(2)
                     wt_path = Path(path).resolve()
                     info = WorktreeInfo(
                         branch=branch,
