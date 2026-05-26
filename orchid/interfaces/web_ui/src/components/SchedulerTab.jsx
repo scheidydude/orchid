@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import CronBuilder from './CronBuilder.jsx'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -161,6 +162,7 @@ function TaskModal({ task, onSave, onClose }) {
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
+  const [showCronBuilder, setShowCronBuilder] = useState(false)
 
   const setField = (key, val) => setForm(f => ({ ...f, [key]: val }))
 
@@ -264,7 +266,7 @@ function TaskModal({ task, onSave, onClose }) {
                 value={form.schedule}
                 onChange={e => setField('schedule', e.target.value)}
                 placeholder="0 9 * * *"
-                style={{ flex: 1 }}
+                style={{ flex: 1, fontFamily: 'var(--mono)' }}
               />
               <select
                 value=""
@@ -276,9 +278,17 @@ function TaskModal({ task, onSave, onClose }) {
                   <option key={p.value} value={p.value}>{p.label}</option>
                 ))}
               </select>
+              <button
+                type="button"
+                title="Open schedule builder"
+                onClick={() => setShowCronBuilder(true)}
+                style={{ flexShrink: 0, fontSize: 13, padding: '4px 10px' }}
+              >
+                🗓
+              </button>
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 3 }}>
-              min hour dom month dow &nbsp;·&nbsp; UTC
+              min hour dom month dow &nbsp;·&nbsp; stored as UTC
             </div>
           </div>
 
@@ -352,6 +362,16 @@ function TaskModal({ task, onSave, onClose }) {
           </div>
         </div>
       </div>
+
+      {showCronBuilder && (
+        <CronBuilder
+          onApply={(cron) => {
+            setField('schedule', cron)
+            setShowCronBuilder(false)
+          }}
+          onClose={() => setShowCronBuilder(false)}
+        />
+      )}
     </div>
   )
 }
