@@ -5,7 +5,7 @@
 
 ## Description
 
-AI agent orchestration framework with a lifecycle-driven planning engine. Install once, run against any project. V2 adds a full idea-to-execution pipeline: discuss requirements with an AI product manager, generate architecture docs, break work into milestones, then execute tasks with specialized agents. V2.2 adds parallel task dispatch, native git tools, worktree isolation, dynamic task spawning, a cross-project agent pool, and cost-aware scheduling. V2.3 adds full multi-user auth: JWT sessions, argon2id passwords, API keys with scope enforcement, Google/Entra/OIDC SSO, PKCE mobile flow, append-only audit log, per-user project scoping, a React login page, and pluggable auth storage (file or PostgreSQL). V2.4 adds OS-grade reliability: graceful shutdown, orphan recovery, subprocess worker pool, task preemption/pause-resume, WebSocket backpressure, CPU/latency budgets, and an ordered provider fallback chain that retries on 429/502/503 before marking a task BLOCKED.
+AI agent orchestration framework with a lifecycle-driven planning engine. Install once, run against any project. V2 adds a full idea-to-execution pipeline: discuss requirements with an AI product manager, generate architecture docs, break work into milestones, then execute tasks with specialized agents. V2.2 adds parallel task dispatch, native git tools, worktree isolation, dynamic task spawning, a cross-project agent pool, and cost-aware scheduling. V2.3 adds full multi-user auth: JWT sessions, argon2id passwords, API keys with scope enforcement, Google/Entra/OIDC SSO, PKCE mobile flow, append-only audit log, per-user project scoping, a React login page, and pluggable auth storage (file or PostgreSQL). V2.4 adds OS-grade reliability: graceful shutdown, orphan recovery, subprocess worker pool, task preemption/pause-resume, WebSocket backpressure, CPU/latency budgets, and an ordered provider fallback chain that retries on 429/502/503 before marking a task BLOCKED. V2.5 adds a cron-based scheduled task manager: per-user schedules stored as dicts on User, APScheduler-backed engine, `agent_prompt`/`mcp_tool`/`shell` task types, append-only JSONL run history with 30-day pruning, and a full `/api/scheduler/*` REST API.
 
 ```
 ~/orchid/              ← install here
@@ -1099,6 +1099,76 @@ ORCHID_AUTH_STORE_DSN=postgresql://user:pass@host:5432/orchid
 
 Tables (`orchid_users`, `orchid_refresh_tokens`, `orchid_api_keys`, `orchid_oauth_accounts`) are created automatically on first start. See [`docs/auth-store-backends.md`](docs/auth-store-backends.md) for migration, connection pool tuning, and rollback.
 
+### Scheduled Task Manager (D0061)
+
+Orchid V2.5 adds a cron-based scheduler so any user can run recurring agent prompts, MCP tool calls, or shell commands on a schedule — without a separate cron daemon.
+
+#### Task types
+
+| `task_type` | What runs | Required `config` keys |
+|-------------|-----------|------------------------|
+| `agent_prompt` | Sends a prompt to an LLM provider (Claude / local) | `prompt` (required), `system`, `provider`, `mcp_servers` |
+| `mcp_tool` | Calls one tool on a configured MCP server | `server`, `tool`, `args` |
+| `shell` | Runs a shell command via the existing allowlist | `command`, `timeout_sec` (default 60) |
+
+#### REST API
+
+All endpoints require authentication. Non-admin users see only their own tasks.
+
+```
+GET    /api/scheduler/tasks              list tasks
+POST   /api/scheduler/tasks             create task (returns 201)
+GET    /api/scheduler/tasks/{id}        get task
+PUT    /api/scheduler/tasks/{id}        update task
+DELETE /api/scheduler/tasks/{id}        delete task
+POST   /api/scheduler/tasks/{id}/run    trigger immediate run (async, returns queued:true)
+GET    /api/scheduler/tasks/{id}/runs   run history for one task
+GET    /api/scheduler/runs              run history (admin: all users; user: own)
+```
+
+#### Creating a scheduled task
+
+```bash
+curl -X POST /api/scheduler/tasks \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "name": "Daily standup summary",
+    "schedule": "0 9 * * 1-5",
+    "task_type": "agent_prompt",
+    "config": {
+      "prompt": "Summarise yesterday'\''s git log for the webtron project.",
+      "provider": "claude"
+    },
+    "notify_on_failure": true,
+    "notify_on_success": false
+  }'
+```
+
+#### Schedule format
+
+Standard five-field cron: `minute hour day-of-month month day-of-week`. All times UTC.
+
+```
+"0 9 * * *"        daily at 09:00 UTC
+"*/15 * * * *"     every 15 minutes
+"0 2 * * 0"        weekly, Sunday at 02:00 UTC
+```
+
+#### Run history
+
+Each run is appended to `~/.config/orchid/cron/runs.jsonl`. Runs older than 30 days are pruned automatically on startup. The API returns runs newest-first.
+
+```jsonc
+{"run_id": "run_a1b2c3d4", "task_id": "stask_00ff1234", "owner_id": "u1",
+ "task_name": "Daily standup summary", "task_type": "agent_prompt",
+ "started_at": "2026-05-25T09:00:01Z", "finished_at": "2026-05-25T09:00:08Z",
+ "status": "success", "output": "Yesterday: 3 commits…", "error": ""}
+```
+
+#### Audit events
+
+Successful runs write `scheduled_task_run` to the audit log; failures write `scheduled_task_failed` (with truncated error detail).
+
 ### Container Isolation
 
 When Docker is available, tasks can run inside a minimal container image for the strongest isolation boundary.
@@ -1211,7 +1281,7 @@ remote/
 
 auth/
   types.py           User, RefreshToken, ApiKey, OAuthAccount, AuditEvent dataclasses
-  base.py            BaseUserStore ABC — 23 abstract methods, implemented by both backends
+  base.py            BaseUserStore ABC — 27 abstract methods, implemented by both backends
   store.py           FileUserStore (JSON, default) + get_store() singleton factory (auto-selects backend)
   store_postgres.py  PostgresUserStore — ThreadedConnectionPool, auto-schema, UPSERT-safe
   jwt.py             hash_password, verify_password, issue/verify access tokens, issue/verify refresh tokens, issue/verify API keys
@@ -1223,6 +1293,13 @@ auth/
     google.py        GoogleOIDCProvider (pre-set discovery URL)
     entra.py         EntraOIDCProvider (tenant-aware discovery URL)
     registry.py      ProviderRegistry: register() + from_config(yaml)
+
+cron/
+  types.py           ScheduledTask, TaskRun dataclasses; _new_task_id/run_id/utcnow helpers
+  store.py           TaskRunStore: append-only JSONL run history; 30-day pruning; thread-safe
+  executor.py        TaskExecutor: dispatches agent_prompt/mcp_tool/shell; always returns TaskRun, never raises
+  engine.py          CronEngine: APScheduler BackgroundScheduler wrapper; get_engine() singleton; add/remove/run_now
+  api.py             register_routes(): installs all /api/scheduler/* endpoints on FastAPI app
 
 output/
   events.py          typed event dataclasses (SessionStart, TaskStart, AgentThought, …)
@@ -1272,7 +1349,7 @@ caching:
 ## Development
 
 ```bash
-pytest -m "not network" --ignore=tests/test_integration.py --ignore=tests/test_metrics.py   # 1500+ tests, no API calls required
+pytest -m "not network" --ignore=tests/test_integration.py --ignore=tests/test_metrics.py   # 1550+ tests, no API calls required
 ruff check orchid/        # 0 errors
 ```
 
@@ -1289,6 +1366,11 @@ ruff check orchid/        # 0 errors
 | `tests/test_worker_pool.py` | `WorkerPool` submit/shutdown; `_apply_resource_limits()` |
 | `tests/test_suspend_resume.py` | `_priority_score()` ordering; scheduler dispatch order; agent suspend/resume threading; runner suspend_task/resume_task; subprocess pool SIGSTOP/SIGCONT |
 | `tests/test_cpu_accounting.py` | `WorkerResult.cpu_seconds`; ledger `daily_cpu_for_user()`; `check_cpu_budget()` raises; 3-strike latency cancel |
+| `tests/test_cron_types.py` | `ScheduledTask` and `TaskRun` dataclass defaults, ID format, uniqueness, UTC timestamps |
+| `tests/test_cron_store.py` | `TaskRunStore` append/get/prune/filter; `UserStore` scheduled-task CRUD and persistence |
+| `tests/test_cron_executor.py` | `TaskExecutor` dispatch for all three task types; mocked providers and MCP; never-raises guarantee |
+| `tests/test_cron_engine.py` | `CronEngine` singleton, start/stop, job registration, invalid cron skip, add/update/remove/run_now |
+| `tests/test_cron_api.py` | `/api/scheduler/*` endpoint integration tests: CRUD, run-now, access scoping, admin override |
 
 ### Pytest marks
 
