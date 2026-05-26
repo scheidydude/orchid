@@ -179,13 +179,13 @@ class TestProviderSemaphores:
 
 
 class TestRunnerLifecycle:
-    def test_start_returns_true(self):
+    def test_start_returns_true(self, tmp_path):
         runner = BackgroundRunner()
         with patch.object(runner, "_run", return_value=None):
-            result = runner.start("/fake/project")
+            result = runner.start(str(tmp_path))
             assert result is True
 
-    def test_start_returns_false_if_already_running(self):
+    def test_start_returns_false_if_already_running(self, tmp_path):
         runner = BackgroundRunner()
         original_submit = runner._executor.submit
         def fake_submit(fn, *args, **kwargs):
@@ -195,11 +195,11 @@ class TestRunnerLifecycle:
             fut.done = fake_done
             return fut
         with patch.object(runner._executor, "submit", fake_submit):
-            runner.start("/fake/project")
-            result = runner.start("/fake/project")
+            runner.start(str(tmp_path))
+            result = runner.start(str(tmp_path))
             assert result is False
 
-    def test_stop_returns_true(self):
+    def test_stop_returns_true(self, tmp_path):
         runner = BackgroundRunner()
         original_submit = runner._executor.submit
         def fake_submit(fn, *args, **kwargs):
@@ -209,24 +209,24 @@ class TestRunnerLifecycle:
             fut.done = fake_done
             return fut
         with patch.object(runner._executor, "submit", fake_submit):
-            runner.start("/fake/project")
-            result = runner.stop("/fake/project")
+            runner.start(str(tmp_path))
+            result = runner.stop(str(tmp_path))
             assert result is True
 
-    def test_stop_returns_false_if_not_running(self):
+    def test_stop_returns_false_if_not_running(self, tmp_path):
         runner = BackgroundRunner()
-        result = runner.stop("/fake/project")
+        result = runner.stop(str(tmp_path))
         assert result is False
 
-    def test_stop_returns_false_if_done(self):
+    def test_stop_returns_false_if_done(self, tmp_path):
         runner = BackgroundRunner()
         with patch.object(runner, "_run", return_value=None):
-            runner.start("/fake/project")
-            state = runner._states["/fake/project"]
-            result = runner.stop("/fake/project")
+            runner.start(str(tmp_path))
+            state = runner._states[str(tmp_path)]
+            result = runner.stop(str(tmp_path))
             assert result is False
 
-    def test_get_status_running(self):
+    def test_get_status_running(self, tmp_path):
         runner = BackgroundRunner()
         original_submit = runner._executor.submit
         def fake_submit(fn, *args, **kwargs):
@@ -236,27 +236,27 @@ class TestRunnerLifecycle:
             fut.done = fake_done
             return fut
         with patch.object(runner._executor, "submit", fake_submit):
-            runner.start("/fake/project")
-            state = runner._states["/fake/project"]
+            runner.start(str(tmp_path))
+            state = runner._states[str(tmp_path)]
             state.current_task = "T001: Test task"
             state.tasks_done = 2
-            status = runner.get_status("/fake/project")
+            status = runner.get_status(str(tmp_path))
             assert status["running"] is True
             assert status["current_task"] == "T001: Test task"
             assert status["tasks_done"] == 2
 
-    def test_get_status_not_running(self):
+    def test_get_status_not_running(self, tmp_path):
         runner = BackgroundRunner()
-        status = runner.get_status("/fake/project")
+        status = runner.get_status(str(tmp_path))
         assert status["running"] is False
         assert status["current_task"] is None
         assert status["tasks_done"] == 0
 
-    def test_get_status_done(self):
+    def test_get_status_done(self, tmp_path):
         runner = BackgroundRunner()
         with patch.object(runner, "_run", return_value=None):
-            runner.start("/fake/project")
-            status = runner.get_status("/fake/project")
+            runner.start(str(tmp_path))
+            status = runner.get_status(str(tmp_path))
             assert status["running"] is False
 
 
