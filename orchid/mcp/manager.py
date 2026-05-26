@@ -43,8 +43,11 @@ class MCPManager:
     # ------------------------------------------------------------------
 
     def _load_server_config(self) -> dict[str, Any]:
-        """Read the MCP servers section from the project config."""
-        return get("mcp.servers", {})
+        """Read the MCP servers section from the project config.
+
+        Config key is ``mcp_servers`` (top-level, matches orchid.defaults.yaml).
+        """
+        return get("mcp_servers", {})
 
     def _create_client(self, name: str, config: dict[str, Any]) -> MCPClient:
         """Create an ``MCPClient`` instance from a server config dict.

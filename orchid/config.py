@@ -22,6 +22,10 @@ load_dotenv(dotenv_path=Path.home() / "LocalAI" / "orchid" / ".env", override=Fa
 # Orchid's own defaults live inside the package directory
 _DEFAULTS_FILE = Path(__file__).parent / "orchid.defaults.yaml"
 
+# User-level global config — merged over package defaults, under project configs.
+# Lives at ~/.config/orchid/config.yaml (XDG, D0036).
+_USER_CONFIG_FILE = Path.home() / ".config" / "orchid" / "config.yaml"
+
 # Per-project override file (placed in the project root)
 PROJECT_CONFIG_FILE = ".orchid.yaml"
 
@@ -59,8 +63,17 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 
 
 def load_defaults() -> dict[str, Any]:
-    """Load orchid's own defaults (bundled with the package)."""
-    return _expand_env(_load_yaml(_DEFAULTS_FILE))
+    """Load package defaults merged with the user-level global config.
+
+    Layer order (lowest → highest priority):
+      1. ``orchid.defaults.yaml``  — bundled package defaults
+      2. ``~/.config/orchid/config.yaml`` — user global overrides (D0036)
+    """
+    base = _expand_env(_load_yaml(_DEFAULTS_FILE))
+    user = _expand_env(_load_yaml(_USER_CONFIG_FILE))
+    if user:
+        return _deep_merge(base, user)
+    return base
 
 
 def load_project_config(project_dir: str | Path) -> dict[str, Any]:
