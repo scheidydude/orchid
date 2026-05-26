@@ -32,6 +32,7 @@ def app_client(tmp_store, tmp_path):
 
     with (
         patch("orchid.auth.store.get_store", return_value=tmp_store),
+        patch("orchid.auth.middleware.get_store", return_value=tmp_store),
         patch("orchid.cron.store.TaskRunStore.__init__", _fake_run_store_init),
         patch("orchid.cron.engine.get_engine", return_value=mock_engine),
     ):
