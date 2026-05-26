@@ -114,10 +114,10 @@ function McpToolPicker({ selectedKey, onSelect }) {
       .then(d => {
         setServers(d.servers || [])
         setError(null)
-        // Auto-expand servers that have tools
+        // Auto-expand all servers (tools or errors both want to be visible)
         const init = {}
         for (const s of (d.servers || [])) {
-          if (s.tools?.length) init[s.server] = false  // false = expanded
+          init[s.server] = false  // false = expanded
         }
         setCollapsed(init)
       })
@@ -137,7 +137,7 @@ function McpToolPicker({ selectedKey, onSelect }) {
     </div>
   )
 
-  if (!servers.length || totalTools === 0) return (
+  if (!servers.length) return (
     <div style={{
       fontSize: 12, color: 'var(--text-dim)',
       padding: '8px 10px',
@@ -145,7 +145,8 @@ function McpToolPicker({ selectedKey, onSelect }) {
       borderRadius: 'var(--radius)',
       border: '1px solid var(--border)',
     }}>
-      No MCP servers configured. Add servers to <code>mcp.servers</code> in your project config.
+      No MCP servers configured. Add servers to <code>mcp_servers:</code> in{' '}
+      <code>~/.config/orchid/config.yaml</code> then restart the server.
     </div>
   )
 
