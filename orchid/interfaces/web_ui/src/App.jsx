@@ -13,16 +13,17 @@ import NewProjectWizard from './components/planning/NewProjectWizard.jsx'
 import Settings from './components/Settings.jsx'
 import ProjectSettings from './components/ProjectSettings.jsx'
 import PMDashboard from './components/pm/PMDashboard.jsx'
+import SchedulerTab from './components/SchedulerTab.jsx'
 import { useProjects } from './hooks/useProjects.js'
 import { useAgentStream } from './hooks/useAgentStream.js'
 import { useMediaQuery } from './hooks/useMediaQuery.js'
 
-const TABS = ['Tasks', 'Planning', 'PM', 'Stream', 'Decisions', 'Sessions', 'Recall', 'Memory', 'Config', 'Settings']
+const TABS = ['Tasks', 'Planning', 'PM', 'Stream', 'Decisions', 'Sessions', 'Recall', 'Memory', 'Scheduler', 'Config', 'Settings']
 
 const TAB_SHORT = {
   Tasks: 'Tasks', Planning: 'Plan', PM: 'PM', Stream: 'Live',
   Decisions: 'Dec', Sessions: 'Hist', Recall: 'Recall',
-  Memory: 'Mem', Config: 'Cfg', Settings: 'Set',
+  Memory: 'Mem', Scheduler: 'Cron', Config: 'Cfg', Settings: 'Set',
 }
 
 export default function App() {
@@ -214,7 +215,7 @@ function AuthenticatedApp({ user, onLogout }) {
         <div className="main-content">
           {activeProject ? (
             <>
-              {activeTab !== 'Planning' && activeTab !== 'Settings' && activeTab !== 'Config' && activeTab !== 'PM' && (
+              {activeTab !== 'Planning' && activeTab !== 'Settings' && activeTab !== 'Config' && activeTab !== 'PM' && activeTab !== 'Scheduler' && (
                 <RunControls
                   projectId={activeProject}
                   runStatus={runStatus}
@@ -270,6 +271,9 @@ function AuthenticatedApp({ user, onLogout }) {
                 )}
                 {activeTab === 'Memory' && (
                   <HotMemory projectId={activeProject} />
+                )}
+                {activeTab === 'Scheduler' && (
+                  <SchedulerTab />
                 )}
                 {activeTab === 'Config' && (
                   <ProjectSettings projectId={activeProject} />
