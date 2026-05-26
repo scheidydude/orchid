@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import CronBuilder from './CronBuilder.jsx'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -18,8 +18,24 @@ const TYPE_LABELS = {
 
 const CONFIG_TEMPLATES = {
   agent_prompt: JSON.stringify({ prompt: 'Summarise today\'s activity', project: '' }, null, 2),
-  mcp_tool: JSON.stringify({ tool: 'tool_name', args: {} }, null, 2),
+  mcp_tool: JSON.stringify({ server: '', tool: '', args: {} }, null, 2),
   shell: JSON.stringify({ command: 'echo hello' }, null, 2),
+}
+
+// Build a minimal args object from a JSON Schema parameters dict
+function buildArgsTemplate(parameters) {
+  const props = parameters?.properties || {}
+  const args = {}
+  for (const [key, schema] of Object.entries(props)) {
+    if (schema.type === 'string')           args[key] = ''
+    else if (schema.type === 'integer')     args[key] = 0
+    else if (schema.type === 'number')      args[key] = 0
+    else if (schema.type === 'boolean')     args[key] = false
+    else if (schema.type === 'array')       args[key] = []
+    else if (schema.type === 'object')      args[key] = {}
+    else                                    args[key] = null
+  }
+  return args
 }
 
 const SCHEDULE_PRESETS = [
@@ -80,6 +96,127 @@ function TypeBadge({ type }) {
     }}>
       {TYPE_LABELS[type] || type}
     </span>
+  )
+}
+
+// ── McpToolPicker ─────────────────────────────────────────────────────────────
+
+function McpToolPicker({ selectedKey, onSelect }) {
+  const [servers, setServers]   = useState([])
+  const [loading, setLoading]   = useState(true)
+  const [error, setError]       = useState(null)
+  const [collapsed, setCollapsed] = useState({})   // server → bool
+
+  useEffect(() => {
+    setLoading(true)
+    fetch('/api/scheduler/mcp-tools')
+      .then(r => r.json())
+      .then(d => {
+        setServers(d.servers || [])
+        setError(null)
+        // Auto-expand servers that have tools
+        const init = {}
+        for (const s of (d.servers || [])) {
+          if (s.tools?.length) init[s.server] = false  // false = expanded
+        }
+        setCollapsed(init)
+      })
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false))
+  }, [])
+
+  const toggle = (name) => setCollapsed(c => ({ ...c, [name]: !c[name] }))
+
+  const totalTools = useMemo(() => servers.reduce((n, s) => n + (s.tools?.length || 0), 0), [servers])
+
+  if (loading) return <div className="loading" style={{ padding: '6px 0', fontSize: 12 }}>Fetching MCP tools…</div>
+
+  if (error) return (
+    <div style={{ color: 'var(--error)', fontSize: 12, padding: '4px 0' }}>
+      Failed to load MCP tools: {error}
+    </div>
+  )
+
+  if (!servers.length || totalTools === 0) return (
+    <div style={{
+      fontSize: 12, color: 'var(--text-dim)',
+      padding: '8px 10px',
+      background: 'var(--bg)',
+      borderRadius: 'var(--radius)',
+      border: '1px solid var(--border)',
+    }}>
+      No MCP servers configured. Add servers to <code>mcp.servers</code> in your project config.
+    </div>
+  )
+
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
+      {servers.map((srv, si) => (
+        <div key={srv.server} style={{ borderTop: si > 0 ? '1px solid var(--border)' : undefined }}>
+          {/* Server header */}
+          <div
+            onClick={() => toggle(srv.server)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              padding: '8px 12px',
+              background: 'var(--surface2)',
+              cursor: 'pointer',
+              userSelect: 'none',
+            }}
+          >
+            <span style={{ fontSize: 11, color: 'var(--text-dim)', transform: collapsed[srv.server] ? 'rotate(-90deg)' : 'rotate(0)', display: 'inline-block', transition: 'transform 0.15s' }}>▼</span>
+            <span style={{ fontWeight: 600, fontSize: 12 }}>{srv.server}</span>
+            <span style={{ fontSize: 11, color: 'var(--text-dim)', marginLeft: 'auto' }}>
+              {srv.error
+                ? <span style={{ color: 'var(--error)' }}>⚠ {srv.error.slice(0, 50)}</span>
+                : `${srv.tools.length} tool${srv.tools.length !== 1 ? 's' : ''}`
+              }
+            </span>
+          </div>
+
+          {/* Tool list */}
+          {!collapsed[srv.server] && !srv.error && srv.tools.map(tool => {
+            const key = `${srv.server}::${tool.name}`
+            const active = selectedKey === key
+            return (
+              <div
+                key={tool.name}
+                onClick={() => onSelect(srv.server, tool.name, tool.parameters)}
+                style={{
+                  display: 'flex', alignItems: 'flex-start', gap: 10,
+                  padding: '8px 14px',
+                  cursor: 'pointer',
+                  background: active ? 'var(--accent)18' : 'transparent',
+                  borderLeft: active ? '3px solid var(--accent)' : '3px solid transparent',
+                  transition: 'background 0.1s',
+                }}
+                onMouseEnter={e => { if (!active) e.currentTarget.style.background = 'var(--surface2)' }}
+                onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent' }}
+              >
+                <span style={{ fontSize: 14, marginTop: 1, flexShrink: 0 }}>
+                  {active ? '✅' : '○'}
+                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13, fontFamily: 'var(--mono)' }}>
+                    {tool.name}
+                  </div>
+                  {tool.description && (
+                    <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 2 }}>
+                      {tool.description}
+                    </div>
+                  )}
+                  {tool.parameters?.properties && Object.keys(tool.parameters.properties).length > 0 && (
+                    <div style={{ fontSize: 11, color: 'var(--accent-2)', marginTop: 4 }}>
+                      params: {Object.keys(tool.parameters.properties).join(', ')}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      ))}
+    </div>
   )
 }
 
@@ -164,14 +301,32 @@ function TaskModal({ task, onSave, onClose }) {
   const [error, setError] = useState(null)
   const [showCronBuilder, setShowCronBuilder] = useState(false)
 
+  // Track selected MCP tool as "server::toolName" for the picker
+  const initMcpKey = () => {
+    if ((task?.task_type || 'agent_prompt') !== 'mcp_tool') return null
+    try {
+      const cfg = typeof task?.config === 'object' ? task.config : JSON.parse(task?.config || '{}')
+      return cfg.server && cfg.tool ? `${cfg.server}::${cfg.tool}` : null
+    } catch { return null }
+  }
+  const [mcpToolKey, setMcpToolKey] = useState(initMcpKey)
+
   const setField = (key, val) => setForm(f => ({ ...f, [key]: val }))
 
   const handleTypeChange = (type) => {
+    if (type !== 'mcp_tool') setMcpToolKey(null)
     setForm(f => ({
       ...f,
       task_type: type,
       config: CONFIG_TEMPLATES[type] || '{}',
     }))
+  }
+
+  const handleMcpToolSelect = (server, toolName, parameters) => {
+    const key = `${server}::${toolName}`
+    setMcpToolKey(key)
+    const args = buildArgsTemplate(parameters)
+    setField('config', JSON.stringify({ server, tool: toolName, args }, null, 2))
   }
 
   const handlePreset = (val) => setField('schedule', val)
@@ -305,16 +460,42 @@ function TaskModal({ task, onSave, onClose }) {
             </select>
           </div>
 
-          {/* Config JSON */}
-          <div className="form-group">
-            <label>Config (JSON) *</label>
-            <textarea
-              value={form.config}
-              onChange={e => setField('config', e.target.value)}
-              rows={6}
-              style={{ fontFamily: 'var(--mono)', fontSize: 12, resize: 'vertical' }}
-            />
-          </div>
+          {/* Config — mcp_tool gets a tool picker; others get raw JSON */}
+          {form.task_type === 'mcp_tool' ? (
+            <>
+              <div className="form-group">
+                <label>Select tool *</label>
+                <McpToolPicker
+                  selectedKey={mcpToolKey}
+                  onSelect={handleMcpToolSelect}
+                />
+              </div>
+              <div className="form-group">
+                <label>
+                  Config (JSON) *
+                  <span style={{ fontWeight: 400, color: 'var(--text-dim)', marginLeft: 8, fontSize: 11 }}>
+                    server &amp; tool set by picker · edit <code>args</code> as needed
+                  </span>
+                </label>
+                <textarea
+                  value={form.config}
+                  onChange={e => setField('config', e.target.value)}
+                  rows={6}
+                  style={{ fontFamily: 'var(--mono)', fontSize: 12, resize: 'vertical' }}
+                />
+              </div>
+            </>
+          ) : (
+            <div className="form-group">
+              <label>Config (JSON) *</label>
+              <textarea
+                value={form.config}
+                onChange={e => setField('config', e.target.value)}
+                rows={6}
+                style={{ fontFamily: 'var(--mono)', fontSize: 12, resize: 'vertical' }}
+              />
+            </div>
+          )}
 
           {/* Enabled */}
           <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>

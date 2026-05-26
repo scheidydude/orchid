@@ -264,3 +264,50 @@ def register_routes(app: Any) -> None:
         }
 
     app.add_api_route("/api/scheduler/runs", list_runs, methods=["GET"])
+
+    # ── endpoint: GET /api/scheduler/mcp-tools ────────────────────────────
+
+    async def list_mcp_tools(current_user = Depends(require_auth())):
+        """Return MCP tools available to the scheduler, grouped by server.
+
+        Each server entry has ``{server, tools, error}`` where *error* is set
+        if the server could not be reached, and *tools* is an empty list in
+        that case.  Auth is required but no admin role is needed.
+        """
+        from orchid.mcp.manager import MCPManager
+
+        mgr = MCPManager()
+        mgr.discover_servers()
+
+        servers: list[dict] = []
+        # Iterate internal adapters — discover_servers() already populated them.
+        for server_name, adapter in mgr._adapters.items():
+            entry: dict = {"server": server_name, "tools": [], "error": None}
+            try:
+                adapter.connect()
+                raw_tools = adapter.list_tools()
+                entry["tools"] = [
+                    {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.parameters,
+                    }
+                    for t in raw_tools
+                ]
+            except Exception as exc:
+                entry["error"] = str(exc)
+            finally:
+                try:
+                    adapter.disconnect()
+                except Exception:
+                    pass
+            servers.append(entry)
+
+        total_tools = sum(len(s["tools"]) for s in servers)
+        return {"servers": servers, "total_tools": total_tools}
+
+    app.add_api_route(
+        "/api/scheduler/mcp-tools",
+        list_mcp_tools,
+        methods=["GET"],
+    )
