@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from typing import Any
 
@@ -36,12 +37,17 @@ class StdioMCPClient(MCPClient):
 
     def connect(self) -> None:
         """Start the subprocess and perform the MCP initialisation handshake."""
+        # Merge parent env with any extra vars from config so PATH, HOME, etc.
+        # are inherited and vars like GITHUB_TOKEN are injected correctly.
+        proc_env = {**os.environ, **(self._env or {})}
+
         self._process = subprocess.Popen(
             self._command,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            env=proc_env,
         )
         response = self._send_request("initialize", {
             "protocolVersion": "2024-11-05",
@@ -54,8 +60,9 @@ class StdioMCPClient(MCPClient):
                 f"Initialisation failed: {response['error'].get('message')}",
                 response["error"].get("code", -1),
             )
-        self._send_request("notifications/initialized", {})
-        self._read_notification()
+        # Send as a proper JSON-RPC notification (no id, no response expected).
+        # Do NOT call _read_notification() after — server sends nothing back.
+        self._send_notification("notifications/initialized", {})
         self._tools = self.list_tools()
 
     def disconnect(self) -> None:
@@ -121,6 +128,15 @@ class StdioMCPClient(MCPClient):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _send_notification(self, method: str, params: dict[str, Any] | None = None) -> None:
+        """Send a JSON-RPC notification (no id, no response expected)."""
+        payload = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params or {},
+        }
+        self._write(json.dumps(payload) + "\n")
 
     def _send_request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """Send a JSON-RPC request and return the response dict."""
