@@ -8,6 +8,9 @@ export function useAgentStream(projectId) {
   const [runStatus, setRunStatus] = useState({ running: false, current_task: '', tasks_done: 0 })
 
   const handleMessage = useCallback((msg) => {
+    // Heartbeat keepalive — never show in stream
+    if (msg.type === 'ping') return
+
     const ts = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
 
     setEntries(prev => {
