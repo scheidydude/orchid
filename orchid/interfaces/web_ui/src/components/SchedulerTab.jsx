@@ -129,7 +129,7 @@ function McpToolPicker({ selectedKey, onSelect }) {
 
   const totalTools = useMemo(() => servers.reduce((n, s) => n + (s.tools?.length || 0), 0), [servers])
 
-  if (loading) return <div className="loading" style={{ padding: '6px 0', fontSize: 12 }}>Fetching MCP tools…</div>
+  if (loading) return <div className="loading" style={{ padding: '6px 0', fontSize: 12 }}>Fetching MCP tools… (up to 30s per server)</div>
 
   if (error) return (
     <div style={{ color: 'var(--error)', fontSize: 12, padding: '4px 0' }}>

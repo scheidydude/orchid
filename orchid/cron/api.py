@@ -271,37 +271,68 @@ def register_routes(app: Any) -> None:
         """Return MCP tools available to the scheduler, grouped by server.
 
         Each server entry has ``{server, tools, error}`` where *error* is set
-        if the server could not be reached, and *tools* is an empty list in
-        that case.  Auth is required but no admin role is needed.
+        if the server could not be reached.  All servers are probed concurrently;
+        each connect runs in a thread with a 30-second timeout so a hanging
+        subprocess (e.g. npx downloading) never blocks the endpoint.
         """
+        import asyncio
+        from concurrent.futures import ThreadPoolExecutor
         from orchid.mcp.manager import MCPManager
+
+        TIMEOUT = 30.0  # seconds per server
 
         mgr = MCPManager()
         mgr.discover_servers()
 
-        servers: list[dict] = []
-        # Iterate internal adapters — discover_servers() already populated them.
-        for server_name, adapter in mgr._adapters.items():
-            entry: dict = {"server": server_name, "tools": [], "error": None}
+        def _probe(server_name: str, adapter) -> dict:
+            """Synchronous connect+list+disconnect — run in a thread."""
             try:
                 adapter.connect()
-                raw_tools = adapter.list_tools()
-                entry["tools"] = [
-                    {
-                        "name": t.name,
-                        "description": t.description,
-                        "parameters": t.parameters,
-                    }
-                    for t in raw_tools
-                ]
+                raw = adapter.list_tools()
+                return {
+                    "server": server_name,
+                    "tools": [
+                        {
+                            "name": t.name,
+                            "description": t.description,
+                            "parameters": t.parameters,
+                        }
+                        for t in raw
+                    ],
+                    "error": None,
+                }
             except Exception as exc:
-                entry["error"] = str(exc)
+                return {"server": server_name, "tools": [], "error": str(exc)}
             finally:
                 try:
                     adapter.disconnect()
                 except Exception:
                     pass
-            servers.append(entry)
+
+        async def _probe_async(server_name: str, adapter) -> dict:
+            loop = asyncio.get_running_loop()
+            with ThreadPoolExecutor(max_workers=1) as exe:
+                try:
+                    return await asyncio.wait_for(
+                        loop.run_in_executor(exe, _probe, server_name, adapter),
+                        timeout=TIMEOUT,
+                    )
+                except asyncio.TimeoutError:
+                    try:
+                        adapter.disconnect()
+                    except Exception:
+                        pass
+                    return {
+                        "server": server_name,
+                        "tools": [],
+                        "error": f"Timed out after {TIMEOUT:.0f}s — server may still be starting",
+                    }
+
+        tasks = [
+            _probe_async(name, adapter)
+            for name, adapter in mgr._adapters.items()
+        ]
+        servers: list[dict] = list(await asyncio.gather(*tasks))
 
         total_tools = sum(len(s["tools"]) for s in servers)
         return {"servers": servers, "total_tools": total_tools}
