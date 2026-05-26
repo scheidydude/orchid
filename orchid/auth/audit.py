@@ -36,6 +36,8 @@ class AuditAction:
     PROJECT_ACCESS_DENIED = "project_access_denied"
     USER_UPDATED = "user_updated"
     USER_DEACTIVATED = "user_deactivated"
+    SCHEDULED_TASK_RUN = "scheduled_task_run"
+    SCHEDULED_TASK_FAILED = "scheduled_task_failed"
 
 
 def make_event(

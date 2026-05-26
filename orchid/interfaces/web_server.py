@@ -77,6 +77,7 @@ _state_lock = threading.Lock()           # protects _projects/_managers/_runners
 _discovery: Any | None = None
 _agent_manager: Any | None = None
 _central_bot_manager: Any | None = None
+_cron_engine: Any | None = None
 
 # ── Auth module-level state ────────────────────────────────────────────────────
 
@@ -721,6 +722,16 @@ def create_app(
             except Exception as _rec_exc:
                 logger.warning("Orphan recovery failed for %s: %s", _proj_path, _rec_exc)
 
+
+        # Start cron engine for scheduled tasks (D0061)
+        global _cron_engine
+        try:
+            from orchid.cron.engine import get_engine as _get_cron_engine
+            _cron_engine = _get_cron_engine()
+            _cron_engine.start()
+            logger.info("CronEngine started")
+        except Exception as _cron_exc:
+            logger.warning("CronEngine failed to start: %s", _cron_exc)
         yield
 
         # Phase 1: graceful shutdown — stop all runners cleanly before exit
@@ -757,6 +768,12 @@ def create_app(
             except Exception as exc:
                 logger.warning("CentralBotManager stop error: %s", exc)
 
+        if _cron_engine is not None:
+            try:
+                _cron_engine.stop()
+            except Exception as exc:
+                logger.warning("CronEngine stop error: %s", exc)
+
     _init_auth_globals()
 
     app = FastAPI(title="Orchid", lifespan=_lifespan)
@@ -767,6 +784,14 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Register scheduler API routes (D0061)
+    try:
+        from orchid.cron.api import register_routes as _register_cron_routes
+        _register_cron_routes(app)
+        logger.debug("Scheduler API routes registered")
+    except Exception as _cron_api_exc:
+        logger.warning("Scheduler API routes not registered: %s", _cron_api_exc)
 
     # ── Auth endpoints ────────────────────────────────────────────────────────
 

@@ -251,6 +251,60 @@ class FileUserStore(BaseUserStore):
         with self._lock:
             return [oa for oa in self._oauth_accounts.values() if oa.user_id == user_id]
 
+    # ── scheduled tasks ───────────────────────────────────────────────────────
+
+    def upsert_scheduled_task(self, user_id: str, task_data: dict) -> None:
+        """Create or replace a scheduled task for *user_id*. *task_data* is a dict."""
+        with self._lock:
+            user = self._users.get(user_id)
+            if user is None:
+                raise AuthError(f"User {user_id!r} not found")
+            task_id = task_data["task_id"]
+            # Replace existing or append new
+            tasks = list(user.scheduled_tasks)
+            for i, t in enumerate(tasks):
+                if t.get("task_id") == task_id:
+                    tasks[i] = dict(task_data)
+                    break
+            else:
+                tasks.append(dict(task_data))
+            user.scheduled_tasks = tasks
+            self._save()
+
+    def get_scheduled_task(self, user_id: str, task_id: str) -> dict | None:
+        """Return the stored dict for one scheduled task, or ``None``."""
+        with self._lock:
+            user = self._users.get(user_id)
+            if user is None:
+                return None
+            for t in user.scheduled_tasks:
+                if t.get("task_id") == task_id:
+                    return dict(t)
+            return None
+
+    def delete_scheduled_task(self, user_id: str, task_id: str) -> bool:
+        """Remove a scheduled task. Returns ``True`` if it existed."""
+        with self._lock:
+            user = self._users.get(user_id)
+            if user is None:
+                return False
+            original_len = len(user.scheduled_tasks)
+            user.scheduled_tasks = [t for t in user.scheduled_tasks if t.get("task_id") != task_id]
+            changed = len(user.scheduled_tasks) < original_len
+            if changed:
+                self._save()
+            return changed
+
+    def get_all_enabled_scheduled_tasks(self) -> list[tuple[str, dict]]:
+        """Return all enabled scheduled tasks across all users as ``(user_id, task_dict)`` tuples."""
+        with self._lock:
+            results: list[tuple[str, dict]] = []
+            for uid, user in self._users.items():
+                for t in user.scheduled_tasks:
+                    if t.get("enabled", True):
+                        results.append((uid, dict(t)))
+            return results
+
 
 # Backward-compat alias — existing code calling UserStore() still works.
 UserStore = FileUserStore

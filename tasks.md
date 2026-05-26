@@ -3,35 +3,208 @@
 
 ## DONE
 
+- [x] **T285** Create `orchid/cron/__init__.py` and `orchid/cron/types.py`. `type:code_generate` `p1` `model:local` `output:str = ""`
+  - - `orchid/cron/__init__.py` content: exactly one line → `"""Cron-based scheduled task manager for Orchid (D0061)."""`
+- `orchid/cron/types.py` imports: `from __future__ import annotations`, `from dataclasses import dataclass, field`, `from datetime import UTC, datetime`, `import uuid`
+- Module-level helpers (not exported, used as `default_factory`):
+- `def _new_task_id() -> str: return f"stask_{uuid.uuid4().hex[:8]}"`
+- `def _new_run_id() -> str: return f"run_{uuid.uuid4().hex[:8]}"`
+- `def _utcnow() -> datetime: return datetime.now(UTC)`
+- `@dataclass class ScheduledTask:` fields in order:
+- `task_id: str = field(default_factory=_new_task_id)` — unique task ID, never changes after creation
+- `owner_id: str = ""` — user_id from UserStore
+- `name: str = ""` — human-readable display name
+- `description: str = ""` — optional longer description
+- `enabled: bool = True` — if False, task is not scheduled but kept in store
+- `schedule: str = "0 9 * * *"` — cron expression string (five-field standard cron)
+- `task_type: str = "agent_prompt"` — must be one of: `"agent_prompt"`, `"mcp_tool"`, `"shell"`
+- `config: dict = field(default_factory=dict)` — type-specific execution config (see executor docs)
+- `notify_on_failure: bool = True` — log warning + audit event on failure
+- `notify_on_success: bool = False` — log audit event on success (always logged regardless)
+- `created_at: datetime = field(default_factory=_utcnow)` — UTC creation time
+- `last_run_at: datetime | None = None` — UTC time of most recent run completion
+- `last_run_status: str | None = None` — status of most recent run: `"success"`, `"failure"`, `"timeout"`, or `None` if never run
+- `next_run_at: datetime | None = None` — not computed by dataclass; populated by API layer from APScheduler
+- `@dataclass class TaskRun:` fields in order:
+- `run_id: str = field(default_factory=_new_run_id)` — unique run ID
+- `task_id: str = ""` — references ScheduledTask.task_id
+- `owner_id: str = ""` — references User.user_id
+- `task_name: str = ""` — snapshot of task name at run time (task may be renamed later)
+- `task_type: str = ""` — snapshot of task_type at run time
+- `started_at: datetime = field(default_factory=_utcnow)` — UTC start time
+- `finished_at: datetime | None = None` — UTC end time; None while running
+- `status: str = "running"` — `"running"` | `"success"` | `"failure"` | `"timeout"`
+- `output: str = ""` — captured stdout/response (may be empty)
+- `error: str = ""` — error message if status is not `"success"` (empty string otherwise)
+- Verify: `python3 -c "from orchid.cron.types import ScheduledTask, TaskRun, _new_task_id, _new_run_id; t=ScheduledTask(owner_id='u1', name='test'); r=TaskRun(task_id=t.task_id, owner_id='u1'); assert t.task_id.startswith('stask_'); assert r.run_id.startswith('run_'); print('OK')"` must print `OK`
+- [x] **T286** Create `orchid/cron/store.py` (TaskRunStore — append-only JSONL run history with 30-day pruning). `type:code_generate` `p1` `needs:T285` `model:local`
+  - - Imports: `import dataclasses, json, logging, threading` from stdlib. `from datetime import UTC, datetime, timedelta`. `from pathlib import Path`. `from orchid.cron.types import TaskRun`
+- Module constants: `logger = logging.getLogger(__name__)`. `_TASK_RUN_FIELDS = {f.name for f in dataclasses.fields(TaskRun)}`. `_RETENTION_DAYS = 30`
+- `class TaskRunStore:` — manages `~/.config/orchid/cron/runs.jsonl`; one JSON object per line; thread-safe via `self._lock = threading.Lock()`
+- `__init__(self, runs_file: Path | None = None) -> None:` — `self._file = runs_file or Path.home() / ".config" / "orchid" / "cron" / "runs.jsonl"`. `self._lock = threading.Lock()`. At end of `__init__`, call `self._prune()`.
+- `_prune(self) -> None:` — removes runs older than `_RETENTION_DAYS` days. If `self._file` does not exist, return immediately. Compute `cutoff = datetime.now(UTC) - timedelta(days=_RETENTION_DAYS)`. Read all lines from file. For each line: parse JSON, read `"started_at"` field as ISO string, parse with `datetime.fromisoformat()`, if `tzinfo is None` replace with UTC. Keep line if `started_at >= cutoff` OR if parsing fails. Rewrite file with kept lines only. Catch all exceptions with `logger.warning(...)` — never raises.
+- `append(self, run: TaskRun) -> None:` — writes one `TaskRun` as JSON line. Acquire `self._lock`. Create parent dirs (`self._file.parent.mkdir(parents=True, exist_ok=True)`). Serialize with `json.dumps(dataclasses.asdict(run), default=str) + "\n"`. Open file in append mode `"a"`. Catch all exceptions with `logger.error(...)` — never raises.
+- `get_runs(self, task_id: str = "", owner_id: str = "", limit: int = 50) -> list[TaskRun]:` — read all lines, filter by `task_id` and `owner_id` if non-empty. Parse datetime fields `"started_at"` and `"finished_at"` with `datetime.fromisoformat()` (set to `None` on parse failure). Filter parsed dict keys to `_TASK_RUN_FIELDS`. Construct `TaskRun(**filtered)`. Sort result newest-first by `started_at` (use `datetime.min.replace(tzinfo=UTC)` as fallback for None). Return first `limit` items. Return `[]` if file doesn't exist. Catch all exceptions with `logger.warning(...)`.
+- Verify: `python3 -c "import tempfile, pathlib; from orchid.cron.store import TaskRunStore; from orchid.cron.types import TaskRun; s=TaskRunStore(pathlib.Path(tempfile.mktemp())); r=TaskRun(task_id='t1',owner_id='u1',status='success'); s.append(r); runs=s.get_runs(task_id='t1'); assert len(runs)==1 and runs[0].task_id=='t1'; print('OK')"` must print `OK`
+- [x] **T287** Update `orchid/auth/types.py` — add `scheduled_tasks` field to `User`. `type:code_generate` `p1` `model:local`
+  - - In `orchid/auth/types.py`, inside `@dataclass class User:`, add one field after the last existing field `token: str = ""`:
+- `scheduled_tasks: list[dict] = field(default_factory=list)` — list of raw dicts, each representing one `ScheduledTask`; stored as dicts to avoid circular import with `orchid.cron.types`
+- Do NOT change any other field or import. Do NOT add any import for `orchid.cron`.
+- Verify: `python3 -c "from orchid.auth.types import User; u=User(user_id='x'); assert isinstance(u.scheduled_tasks, list) and len(u.scheduled_tasks)==0; print('OK')"` must print `OK`
+- [x] **T288** Update `orchid/auth/base.py`, `orchid/auth/store.py`, and `orchid/auth/audit.py` to support scheduled tasks. `type:code_generate` `p1` `needs:T287` `model:local`
+  - - **`orchid/auth/base.py`**: Add 4 abstract methods to `BaseUserStore` class after `list_oauth_accounts_for_user`:
+- `@abstractmethod` `def get_scheduled_task(self, user_id: str, task_id: str) -> dict | None: ...`
+- `@abstractmethod` `def upsert_scheduled_task(self, user_id: str, task: dict) -> None: ...`
+- `@abstractmethod` `def delete_scheduled_task(self, user_id: str, task_id: str) -> bool: ...`
+- `@abstractmethod` `def get_all_enabled_scheduled_tasks(self) -> list[tuple[str, dict]]: ...`
+- No new imports needed.
+- **`orchid/auth/store.py`**: Add 4 concrete methods to `FileUserStore` class after `list_oauth_accounts_for_user`:
+- `get_scheduled_task(self, user_id: str, task_id: str) -> dict | None:` — acquire `self._lock`. Get user from `self._users`. If user is None, return None. Iterate `user.scheduled_tasks`; return `dict(task)` where `task.get("task_id") == task_id`. Return None if not found.
+- `upsert_scheduled_task(self, user_id: str, task: dict) -> None:` — acquire `self._lock`. Get user; raise `AuthError(f"User {user_id!r} not found")` if None. Build new list: all existing tasks where `task.get("task_id") != task["task_id"]`, then append `task`. Set `user.scheduled_tasks = new_list`. Call `self._save()`.
+- `delete_scheduled_task(self, user_id: str, task_id: str) -> bool:` — acquire `self._lock`. Get user; return False if None. Filter `user.scheduled_tasks` removing item with matching `task_id`. If length unchanged, return False. Call `self._save()`. Return True.
+- `get_all_enabled_scheduled_tasks(self) -> list[tuple[str, dict]]:` — acquire `self._lock`. Iterate all users. For each user, iterate `user.scheduled_tasks`. If `task.get("enabled", True)` is True, append `(user.user_id, dict(task))` to result. Return result list.
+- No new imports needed (already imports `AuthError`).
+- **`orchid/auth/audit.py`**: Add 2 class attributes to `AuditAction` after the last existing attribute `USER_DEACTIVATED = "user_deactivated"`:
+- `SCHEDULED_TASK_RUN = "scheduled_task_run"`
+- `SCHEDULED_TASK_FAILED = "scheduled_task_failed"`
+- No new imports needed.
+- Verify: `python3 -c "from orchid.auth.audit import AuditAction; assert AuditAction.SCHEDULED_TASK_RUN=='scheduled_task_run'; assert AuditAction.SCHEDULED_TASK_FAILED=='scheduled_task_failed'; print('audit OK')"` must print `audit OK`
+- Verify: `python3 -c "import tempfile, pathlib; from orchid.auth.store import UserStore; from orchid.auth.types import User; s=UserStore(path=pathlib.Path(tempfile.mktemp())); u=User(user_id='u1',username='u1'); s.add_user(u); task={'task_id':'stask_00000001','name':'T','enabled':True}; s.upsert_scheduled_task('u1',task); assert s.get_scheduled_task('u1','stask_00000001')['name']=='T'; assert s.delete_scheduled_task('u1','stask_00000001'); print('store OK')"` must print `store OK`
+- [x] **T289** Create `orchid/cron/executor.py` (TaskExecutor — dispatches by task_type). `type:code_generate` `p1` `needs:T285` `model:local`
+  - - Imports: `import logging` from stdlib. `from orchid.cron.types import TaskRun, _utcnow`
+- `logger = logging.getLogger(__name__)`
+- `class TaskExecutionError(Exception): pass` — raised for known, non-retriable config errors
+- Module-level function `_run_agent_prompt(config: dict) -> str:` — executes `agent_prompt` type:
+- Import inside function body: `from orchid.providers.registry import get_registry`
+- Read `prompt = config.get("prompt", "").strip()`. If empty, raise `TaskExecutionError("agent_prompt config missing required field: 'prompt'")`
+- Build `system_parts: list[str] = []`. If `config.get("system", "").strip()` is non-empty, append to `system_parts`.
+- If `config.get("mcp_servers", [])` is non-empty: import inside try-block `from orchid.mcp.manager import MCPManager`. Create `mgr = MCPManager()`. Call `mgr.discover_servers()`. For each server name in `mcp_servers`: call `mgr.get_adapter(server_name)`. If adapter is None, append `f"  [server '{server_name}' not found in config]"` to `tool_lines`. Else: call `adapter.connect()`, get `adapter.list_tools()`, for each tool append `f"  - {tool.name}: {tool.description}"` to `tool_lines`, call `adapter.disconnect()`. Wrap adapter operations in try/except catching all exceptions, appending `f"  [server '{server_name}' error: {exc}]"`. Wrap entire MCP block in try/except logging to `logger.warning(...)`. If `tool_lines` is non-empty, append `"Available MCP tools (reference only):\n" + "\n".join(tool_lines)` to `system_parts`.
+- Set `system = "\n\n".join(system_parts) if system_parts else None`
+- Get registry: `registry = get_registry()`. Read `provider_name = config.get("provider", "").strip()`. If non-empty, get provider via `registry.get_by_key(provider_name)`. Else get via `registry.resolve(agent_type="base")`.
+- Call `provider.complete([{"role": "user", "content": prompt}], system=system)`. Return the string result.
+- Module-level function `_run_mcp_tool(config: dict) -> str:` — executes `mcp_tool` type:
+- Import inside: `from orchid.mcp.manager import MCPManager`
+- Read `server_name = config.get("server", "").strip()`. If empty, raise `TaskExecutionError("mcp_tool config missing required field: 'server'")`.
+- Read `tool_name = config.get("tool", "").strip()`. If empty, raise `TaskExecutionError("mcp_tool config missing required field: 'tool'")`.
+- Read `args = config.get("args", {})`. If not `isinstance(args, dict)`, raise `TaskExecutionError("mcp_tool config field 'args' must be a dict")`.
+- Create `mgr = MCPManager()`. Call `mgr.discover_servers()`. Get `adapter = mgr.get_adapter(server_name)`. If None, raise `TaskExecutionError(f"MCP server '{server_name}' not found in config")`.
+- Call `adapter.connect()`. In a try/finally block: call `result = adapter.call_tool(tool_name, args)`. In finally: call `adapter.disconnect()`.
+- Process `result.content`: if it is a `list`, for each item extract `item.get("text", str(item))` if item is dict else `str(item)`, join with `"\n"`. If not list, return `str(result.content)`.
+- Module-level function `_run_shell(config: dict) -> str:` — executes `shell` type:
+- Import inside: `from orchid.tools.shell import bash`
+- Read `command = config.get("command", "").strip()`. If empty, raise `TaskExecutionError("shell config missing required field: 'command'")`.
+- Read `timeout = int(config.get("timeout_sec", 60))`.
+- Return `bash(command, timeout=timeout, agent_id="cron")`.
+- `class TaskExecutor:` — one class attribute `_DISPATCH: dict = {"agent_prompt": _run_agent_prompt, "mcp_tool": _run_mcp_tool, "shell": _run_shell}`
+- `def execute(self, task_dict: dict, owner_id: str) -> TaskRun:` — dispatches execution; always returns a TaskRun, never raises:
+- Create `run = TaskRun(task_id=task_dict.get("task_id",""), owner_id=owner_id, task_name=task_dict.get("name",""), task_type=task_dict.get("task_type",""), started_at=_utcnow())`
+- Read `task_type = task_dict.get("task_type", "")`. Read `config = task_dict.get("config", {})`. Look up `dispatch_fn = self._DISPATCH.get(task_type)`.
+- If `dispatch_fn is None`: set `run.finished_at = _utcnow()`, `run.status = "failure"`, `run.error = f"Unknown task_type: {task_type!r}. Must be one of: {sorted(self._DISPATCH)}"`. Return `run`.
+- In try block: `output = dispatch_fn(config)`. Set `run.finished_at = _utcnow()`, `run.status = "success"`, `run.output = output or ""`.
+- Except `TaskExecutionError as exc`: set `run.finished_at = _utcnow()`, `run.status = "failure"`, `run.error = str(exc)`.
+- Except `Exception as exc`: set `run.finished_at = _utcnow()`, `run.status = "failure"`, `run.error = f"{type(exc).__name__}: {exc}"`. Call `logger.exception("Scheduled task %s raised unexpectedly", task_dict.get("task_id"))`.
+- Return `run`.
+- Verify: `python3 -c "from orchid.cron.executor import TaskExecutor, TaskExecutionError; e=TaskExecutor(); r=e.execute({'task_id':'t1','task_type':'shell','config':{'command':'echo hello'},'name':'test'},'u1'); assert r.status in ('success','failure'); print('executor OK')"` must print `executor OK` (shell command will run; status depends on allowlist config but executor itself must not raise)
+- [x] **T290** Create `orchid/cron/engine.py` (CronEngine — APScheduler BackgroundScheduler wrapper). `type:code_generate` `p1` `needs:T289` `model:local`
+  - - Imports: `import logging, threading` from stdlib. `from typing import Any`
+- `logger = logging.getLogger(__name__)`
+- Module-level singleton: `_engine_instance: "CronEngine | None" = None` and `_engine_lock = threading.Lock()`
+- `def get_engine() -> "CronEngine":` — if `_engine_instance is None`, acquire `_engine_lock`, check again, create `CronEngine()`, assign to `_engine_instance`. Return `_engine_instance`. Thread-safe double-checked locking.
+- `def reset_engine() -> None:` — set `_engine_instance = None`. Used in tests.
+- `class CronEngine:` — wraps APScheduler `BackgroundScheduler`
+- `__init__(self) -> None:` — `from apscheduler.schedulers.background import BackgroundScheduler`. Set `self._scheduler = BackgroundScheduler(timezone="UTC")`. Set `self._lock = threading.Lock()`. Set `self._run_store: Any | None = None`. Set `self._executor: Any | None = None`.
+- `_get_run_store(self):` — lazy-init: if `self._run_store is None`, `from orchid.cron.store import TaskRunStore; self._run_store = TaskRunStore()`. Return `self._run_store`.
+- `_get_executor(self):` — lazy-init: if `self._executor is None`, `from orchid.cron.executor import TaskExecutor; self._executor = TaskExecutor()`. Return `self._executor`.
+- `start(self) -> None:` — `from orchid.auth.store import get_store`. Call `get_store().get_all_enabled_scheduled_tasks()`. For each `(owner_id, task_dict)` in result, call `self._register_job(owner_id, task_dict)`. If `not self._scheduler.running`, call `self._scheduler.start()`. Log `logger.info("CronEngine started with %d scheduled task(s)", len(result))`.
+- `stop(self) -> None:` — if `self._scheduler.running`, call `self._scheduler.shutdown(wait=False)`. Log `logger.info("CronEngine stopped")`.
+- `_register_job(self, owner_id: str, task_dict: dict) -> None:` — `from apscheduler.triggers.cron import CronTrigger`. Read `task_id = task_dict.get("task_id", "")`. Read `schedule = task_dict.get("schedule", "0 9 * * *")`. In try block: `trigger = CronTrigger.from_crontab(schedule, timezone="UTC")`. On exception: `logger.error("Invalid cron expression %r for task %s: %s", schedule, task_id, exc)` and return. Call `self._scheduler.add_job(func=self._run_task, trigger=trigger, args=[owner_id, task_dict], id=task_id, replace_existing=True, misfire_grace_time=300)`. Log `logger.debug("Registered cron job: %s schedule=%s owner=%s", task_id, schedule, owner_id)`.
+- `_unregister_job(self, task_id: str) -> None:` — call `self._scheduler.remove_job(task_id)` wrapped in try/except (silently ignore `JobLookupError` and all exceptions).
+- `add_or_update_task(self, owner_id: str, task_dict: dict) -> None:` — if `task_dict.get("enabled", True)` is True, call `self._register_job(owner_id, task_dict)`. Else call `self._unregister_job(task_dict.get("task_id",""))`. Callable after `start()` to update live schedule.
+- `remove_task(self, task_id: str) -> None:` — call `self._unregister_job(task_id)`.
+- `run_now(self, owner_id: str, task_dict: dict) -> None:` — start a daemon thread named `f"cron-manual-{task_dict.get('task_id','?')}"` that calls `self._run_task(owner_id, task_dict)`. Non-blocking.
+- `_run_task(self, owner_id: str, task_dict: dict) -> None:` — called by APScheduler jobs and `run_now()`. Never raises. Logic:
+1. Log `logger.info("Executing scheduled task %s (%s) for user %s", task_dict.get("task_id"), task_dict.get("name"), owner_id)`.
+2. In try/except: `run = self._get_executor().execute(task_dict, owner_id)`. On exception: `logger.error(...)` and return.
+3. In try/except: `self._get_run_store().append(run)`. On exception: `logger.error(...)`.
+4. In try/except: `from orchid.auth.store import get_store`. Build `updated_task = dict(task_dict)`. Set `updated_task["last_run_at"] = run.finished_at.isoformat() if run.finished_at else None`. Set `updated_task["last_run_status"] = run.status`. Call `get_store().upsert_scheduled_task(owner_id, updated_task)`. On exception: `logger.error(...)`.
+5. In try/except: `from orchid.auth.audit import AuditAction, AuditStore, make_event`. Create `AuditStore()`. If `run.status == "success"`: `make_event(user_id=owner_id, action=AuditAction.SCHEDULED_TASK_RUN, resource=task_dict.get("task_id",""), result="success")` and `audit.log(event)`. Else: `make_event(user_id=owner_id, action=AuditAction.SCHEDULED_TASK_FAILED, resource=task_dict.get("task_id",""), result="failure", detail=run.error[:500] if run.error else "")` and `audit.log(event)`. Also log `logger.warning("Scheduled task %s failed: %s", task_dict.get("task_id"), run.error)`. On exception: `logger.error(...)`.
+- Verify: `python3 -c "from orchid.cron.engine import CronEngine, reset_engine; reset_engine(); e=CronEngine(); e.start(); e.stop(); print('engine OK')"` must print `engine OK`
+- [x] **T291** Create `orchid/cron/api.py` (register_routes — installs all `/api/scheduler/*` endpoints on FastAPI app). `type:code_generate` `p1` `needs:T290` `model:local`
+  - - Imports at module level: `import dataclasses, logging` from stdlib. `from datetime import UTC, datetime`. `from typing import Any`
+- `logger = logging.getLogger(__name__)`
+- Single public function: `def register_routes(app: Any) -> None:` — takes the FastAPI `app` instance (typed as `Any` to avoid import-time FastAPI dependency). If imports fail, `logger.warning(...)` and return without raising.
+- Inside `register_routes`, do all framework imports inside the function body (not at module level), wrapped in try/except ImportError that calls `logger.warning(...)` and returns:
+- `from fastapi import Depends, HTTPException, Request`
+- `from orchid.auth.middleware import require_auth`
+- `from orchid.auth.store import get_store`
+- `from orchid.cron.types import ScheduledTask`
+- `from orchid.cron.store import TaskRunStore`
+- `from orchid.cron.engine import get_engine`
+- Inside `register_routes` (as local variables/nested functions), define:
+- `_run_store = TaskRunStore()` — local variable, instantiated once when `register_routes` is called
+- `def _task_to_dict(task_dict: dict) -> dict:` — copies `task_dict`, converts any `datetime` values in keys `created_at`, `last_run_at`, `next_run_at` to ISO strings via `.isoformat()`. Returns cleaned dict.
+- `def _run_to_dict(run) -> dict:` — calls `dataclasses.asdict(run)`, converts any `datetime` values in keys `started_at`, `finished_at` to ISO strings. Returns dict.
+- `def _validate_task_body(body: dict) -> list[str]:` — returns list of error strings (empty = valid). Checks:
+- `body.get("name","").strip()` must be non-empty → error: `"'name' is required and must be non-empty"`
+- `body.get("task_type","")` must be in `{"agent_prompt","mcp_tool","shell"}` → error: `"'task_type' must be one of: agent_prompt, mcp_tool, shell"`
+- `body.get("schedule","").strip()` must be non-empty → error: `"'schedule' is required (cron expression, e.g. '0 9 * * *')"`
+- `body.get("config",{})` must be a `dict` → error: `"'config' must be a dict"`
+- `def _find_task_for_user(task_id: str, current_user) -> tuple[dict, str]:` — returns `(task_dict, owner_id)` or raises HTTPException. Logic: if `current_user.role == "admin"`: iterate `get_store().list_users()`; for each user iterate `user.scheduled_tasks`; if `t.get("task_id") == task_id`, return `(dict(t), user.user_id)`. Raise `HTTPException(404, "Task not found")` if not found. Else (non-admin): call `get_store().get_scheduled_task(current_user.user_id, task_id)`. If None, raise `HTTPException(404, "Task not found")`. Return `(task, current_user.user_id)`.
+- Note: `_task_to_dict`, `_run_to_dict`, `_validate_task_body`, `_find_task_for_user`, and `_run_store` are all defined as local variables/nested functions inside `register_routes` so the endpoint handlers (also nested inside `register_routes`) can close over them.
+- **Endpoint `GET /api/scheduler/tasks`** — `async def list_tasks(current_user=Depends(require_auth())):` — if `current_user.role == "admin"`, collect ALL tasks from all users via `[t for user in get_store().list_users() for t in user.scheduled_tasks]`. Else get `get_store().get_user(current_user.user_id)` and use `user.scheduled_tasks if user else []`. Return `{"tasks": [_task_to_dict(t) for t in tasks], "total": len(tasks)}`.
+- **Endpoint `POST /api/scheduler/tasks`** (status_code=201) — `async def create_task(request: Request, current_user=Depends(require_auth())):` — body = `await request.json()`. Validate with `_validate_task_body(body)`. If errors, raise `HTTPException(status_code=400, detail={"errors": errors})`. Build `task_dict` from body: copy keys `name`, `description`, `enabled`, `schedule`, `task_type`, `config`, `notify_on_failure`, `notify_on_success` from body (use defaults if missing: `enabled=True`, `description=""`, `config={}`, `notify_on_failure=True`, `notify_on_success=False`). Generate task ID: `import uuid; task_dict["task_id"] = f"stask_{uuid.uuid4().hex[:8]}"` (do NOT use ScheduledTask dataclass to generate the ID). Set `task_dict["owner_id"] = current_user.user_id`. Set `task_dict["created_at"] = datetime.now(UTC).isoformat()`. Set `task_dict["last_run_at"] = None`. Set `task_dict["last_run_status"] = None`. Set `task_dict["next_run_at"] = None`. Call `get_store().upsert_scheduled_task(current_user.user_id, task_dict)`. If `task_dict.get("enabled", True)`, call `get_engine().add_or_update_task(current_user.user_id, task_dict)`. Return `_task_to_dict(task_dict)`.
+- **Endpoint `GET /api/scheduler/tasks/{task_id}`** — `async def get_task(task_id: str, current_user=Depends(require_auth())):` — call `task, owner_id = _find_task_for_user(task_id, current_user)`. Return `_task_to_dict(task)`.
+- **Endpoint `PUT /api/scheduler/tasks/{task_id}`** — `async def update_task(task_id: str, request: Request, current_user=Depends(require_auth())):` — body = `await request.json()`. Call `existing_task, owner_id = _find_task_for_user(task_id, current_user)`. Validate body with `_validate_task_body(body)`. If errors, raise `HTTPException(400, detail={"errors": errors})`. Build `updated = dict(existing_task)`. For each key in `["name","description","enabled","schedule","task_type","config","notify_on_failure","notify_on_success"]`, if key is present in body, set `updated[key] = body[key]`. Do NOT update `task_id`, `owner_id`, `created_at`, `last_run_at`, `last_run_status`, `next_run_at` from body. Call `get_store().upsert_scheduled_task(owner_id, updated)`. Call `get_engine().add_or_update_task(owner_id, updated)`. Return `_task_to_dict(updated)`.
+- **Endpoint `DELETE /api/scheduler/tasks/{task_id}`** — `async def delete_task(task_id: str, current_user=Depends(require_auth())):` — call `_task, owner_id = _find_task_for_user(task_id, current_user)`. Call `get_store().delete_scheduled_task(owner_id, task_id)`. Call `get_engine().remove_task(task_id)`. Return `{"deleted": True, "task_id": task_id}`.
+- **Endpoint `POST /api/scheduler/tasks/{task_id}/run`** — `async def run_task_now(task_id: str, current_user=Depends(require_auth())):` — call `task, owner_id = _find_task_for_user(task_id, current_user)`. Call `get_engine().run_now(owner_id, task)`. Return `{"queued": True, "task_id": task_id}`. Note: run is asynchronous (background thread); this endpoint returns immediately.
+- **Endpoint `GET /api/scheduler/tasks/{task_id}/runs`** — `async def get_task_runs(task_id: str, limit: int = 50, current_user=Depends(require_auth())):` — call `_task, _owner_id = _find_task_for_user(task_id, current_user)`. Call `runs = _run_store.get_runs(task_id=task_id, limit=limit)`. Return `{"runs": [_run_to_dict(r) for r in runs], "total": len(runs)}`.
+- **Endpoint `GET /api/scheduler/runs`** — `async def list_runs(limit: int = 50, current_user=Depends(require_auth())):` — if admin, call `_run_store.get_runs(limit=limit)`. Else call `_run_store.get_runs(owner_id=current_user.user_id, limit=limit)`. Return `{"runs": [_run_to_dict(r) for r in runs], "total": len(runs)}`.
+- Verify: `python3 -c "from orchid.cron.api import register_routes; print('import OK')"` must print `import OK`
+- [x] **T292** Update `orchid/interfaces/web_server.py` to wire the CronEngine into the server lifecycle and register scheduler API routes. `type:code_generate` `p1` `needs:T291` `model:local`
+  - - This task modifies `orchid/interfaces/web_server.py` in exactly 4 places. Do NOT modify any other part of the file.
+- **Change 1**: Add module-level variable after the line `_central_bot_manager: Any | None = None` (around line 80):
+```python
+_cron_engine: Any | None = None
+```
+- **Change 2**: In the `_lifespan` async context manager, BEFORE the `yield` statement, add the following block after the orphan recovery loop (after the `for _proj_path in _all_paths:` block ends, before `yield`):
+```python
+# Start cron engine for scheduled tasks (D0061)
+global _cron_engine
+try:
+from orchid.cron.engine import get_engine as _get_cron_engine
+_cron_engine = _get_cron_engine()
+_cron_engine.start()
+logger.info("CronEngine started")
+except Exception as _cron_exc:
+logger.warning("CronEngine failed to start: %s", _cron_exc)
+```
+- **Change 3**: In the `_lifespan` async context manager, in the shutdown section AFTER `yield`, add the following block after the `if _central_bot_manager is not None:` block ends:
+```python
+if _cron_engine is not None:
+try:
+_cron_engine.stop()
+except Exception as exc:
+logger.warning("CronEngine stop error: %s", exc)
+```
+- **Change 4**: In the `create_app` function, after the `app.add_middleware(CORSMiddleware, ...)` call, add:
+```python
+# Register scheduler API routes (D0061)
+try:
+from orchid.cron.api import register_routes as _register_cron_routes
+_register_cron_routes(app)
+logger.debug("Scheduler API routes registered")
+except Exception as _cron_api_exc:
+logger.warning("Scheduler API routes not registered: %s", _cron_api_exc)
+```
+- Verify: `python3 -c "from orchid.interfaces.web_server import create_app; print('import OK')"` must print `import OK`
 - [x] **T266** Create `orchid/remote/__init__.py` with content `# Remote worker protocol` and `orchid/remote/types.py`. `type:code_generate` `p1` `model:local`
-  - - `orchid/remote/__init__.py` content: exactly `# Remote worker protocol`
-- `orchid/remote/types.py` imports: `from dataclasses import dataclass, field`. `from typing import Any`
-- `@dataclass class WorkerNode:` — `node_id: str`, `url: str` (HTTP base URL like `http://host:8001`), `capacity: int = 4` (max concurrent tasks), `current_load: int = 0` (tasks currently running). Method `is_available(self) -> bool: return self.current_load < self.capacity`
-- `@dataclass class RemoteTaskRequest:` — `task_context_json: str` (serialized `TaskContext.to_json()`), `timeout_s: float = 0.0`
-- `@dataclass class RemoteTaskResponse:` — `worker_result_json: str` (serialized `WorkerResult.to_json()`), `node_id: str = ""`
-- All 3 must be importable from `orchid.remote.types`
-- Verify: `grep -n "class WorkerNode\|class RemoteTaskRequest\|class RemoteTaskResponse\|def is_available" orchid/remote/types.py` must return 4 lines
+  - - - `orchid/remote/__init__.py` content: exactly `# Remote worker protocol`
 - [x] **T267** Create `orchid/remote/worker_server.py`. A FastAPI server that accepts remote task requests and runs them via `SubprocessRunner`. `type:code_generate` `p1` `needs:T266` `model:local`
-  - - Imports: `import json, os, socket` from stdlib. `from fastapi import FastAPI`. `from orchid.worker_protocol import TaskContext, WorkerResult`. `from orchid.subprocess_runner import SubprocessRunner`. `from orchid.remote.types import RemoteTaskRequest, RemoteTaskResponse`
-- `app = FastAPI(title="Orchid Worker Node")`
-- `NODE_ID: str = os.environ.get("ORCHID_NODE_ID", socket.gethostname())`
-- `_runner = SubprocessRunner()`
-- `GET /health` endpoint: returns `{"status": "ok", "node_id": NODE_ID}`
-- `POST /task` endpoint: body is `RemoteTaskRequest`. Deserializes `TaskContext.from_json(req.task_context_json)`. Calls `_runner.run_task_isolated(ctx, stream_callback=None, timeout_s=req.timeout_s or None)`. Returns `RemoteTaskResponse(worker_result_json=result.to_json(), node_id=NODE_ID)`.
-- `GET /ledger` endpoint: returns the contents of `.orchid/cost_ledger.jsonl` from `ORCHID_PROJECT_DIR` env var. If env var not set or file doesn't exist, returns `{"lines": []}`. Otherwise returns `{"lines": [line for line in path.read_text().splitlines() if line.strip()]}`.
-- Bottom of file: `if __name__ == "__main__": import uvicorn; uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("ORCHID_WORKER_PORT", "8001")))`
-- Verify: `grep -n "POST /task\|GET /health\|GET /ledger\|NODE_ID\|_runner" orchid/remote/worker_server.py` must return 5 lines
+  - - - Imports: `import json, os, socket` from stdlib. `from fastapi import FastAPI`. `from orchid.worker_protocol import TaskContext, WorkerResult`. `from orchid.subprocess_runner import SubprocessRunner`. `from orchid.remote.types import RemoteTaskRequest, RemoteTaskResponse`
 - [x] **T268** Create `orchid/remote/dispatcher.py`. One class: `RemoteDispatcher`. `type:code_generate` `p1` `needs:T267` `model:local`
-  - - Imports: `import json, logging, threading` from stdlib. `import httpx`. `from orchid.worker_protocol import TaskContext, WorkerResult`. `from orchid.remote.types import WorkerNode, RemoteTaskRequest, RemoteTaskResponse`
-- `class RemoteDispatcherError(Exception): pass`
-- `class RemoteDispatcher:` — selects the least-loaded available node and submits tasks via HTTP
-- `__init__(self, nodes: list[WorkerNode]) -> None` — `self._nodes = nodes`, `self._lock = threading.Lock()`
-- `_select_node(self) -> WorkerNode` — acquires lock, finds node where `is_available()` is True with lowest `current_load`. Raises `RemoteDispatcherError("No available worker nodes")` if none available. Returns selected node without releasing lock yet (caller increments load then releases).
-- `dispatch(self, ctx: TaskContext, timeout_s: float = 0.0) -> WorkerResult:` — calls `_select_node()`. Increments `node.current_load` by 1, releases lock. Builds `RemoteTaskRequest(task_context_json=ctx.to_json(), timeout_s=timeout_s)`. POSTs to `f"{node.url}/task"` using `httpx.post(url, json=req.__dict__, timeout=timeout_s + 30 if timeout_s else 300)`. On success, deserializes response as `RemoteTaskResponse`, deserializes `worker_result_json` as `WorkerResult`. In finally, decrements `node.current_load` by 1. Returns WorkerResult. On `httpx.HTTPError as e`: raise `RemoteDispatcherError(str(e))`.
-- `fetch_and_merge_ledger(self, dest_ledger_path: "Path") -> int:` — for each node, GET `{node.url}/ledger`. Parse the `{"lines": [...]}` response. Append each line to `dest_ledger_path` (create if not exists). Return total lines merged across all nodes. On any per-node error, log warning and continue.
-- Verify: `grep -n "class RemoteDispatcher\|class RemoteDispatcherError\|def dispatch\|def _select_node\|def fetch_and_merge_ledger" orchid/remote/dispatcher.py` must return 5 lines
+  - - - Imports: `import json, logging, threading` from stdlib. `import httpx`. `from orchid.worker_protocol import TaskContext, WorkerResult`. `from orchid.remote.types import WorkerNode, RemoteTaskRequest, RemoteTaskResponse`
 - [x] **T269** Add `remote` config block to `orchid/orchid.defaults.yaml`. Read the file first. Append at the bottom. `type:code_generate` `p1` `model:local`
-  - - Append exactly:
+  - - - Append exactly:
 ```yaml
 # T269: Remote worker settings
 remote:
@@ -39,48 +212,12 @@ enabled: false            # true = dispatch task groups to remote worker nodes
 nodes: []                 # list of {node_id: str, url: str, capacity: int} dicts
 merge_ledger_after_group: true  # pull and merge cost ledger from nodes after each group
 ```
-- Verify: `grep -n "remote:" orchid/orchid.defaults.yaml` must return 1 line
 - [x] **T270** Extend `orchid/runner.py` — use `RemoteDispatcher` when `remote.enabled` is true. Read the file first. Find `_execute_group()` method (around line 245). `type:code_generate` `p1` `needs:T268,T269` `model:local`
-  - - Add import at top: `from orchid.config import cfg`
-- In `_run_loop()`, after `_watchdog.start()` and before the main scheduler while-loop, add:
-```python
-# T270: Build RemoteDispatcher if remote.enabled
-_remote_dispatcher = None
-if cfg.get("remote.enabled", False):
-from orchid.remote.dispatcher import RemoteDispatcher
-from orchid.remote.types import WorkerNode
-_raw_nodes = cfg.get("remote.nodes", [])
-_nodes = [WorkerNode(**n) for n in _raw_nodes]
-if _nodes:
-_remote_dispatcher = RemoteDispatcher(_nodes)
-logger.info("[runner] Remote dispatch enabled: %d nodes", len(_nodes))
-```
-- After each parallel group completes (after `_execute_group()` returns), add:
-```python
-# T270: Merge remote ledger if enabled
-if _remote_dispatcher is not None and cfg.get("remote.merge_ledger_after_group", True):
-try:
-_ledger_path = project_path / ".orchid" / "cost_ledger.jsonl"
-_merged = _remote_dispatcher.fetch_and_merge_ledger(_ledger_path)
-if _merged:
-logger.info("[runner] Merged %d cost ledger lines from remote nodes", _merged)
-except Exception as _re:
-logger.warning("[runner] Remote ledger merge failed: %s", _re)
-```
-- Verify: `grep -n "remote.enabled\|_remote_dispatcher\|fetch_and_merge_ledger" orchid/runner.py` must return at least 3 lines
+  - - - Add import at top: `from orchid.config import cfg`
 - [x] **T271** Create `orchid/capability.py`. One dataclass and one registry dict. `type:code_generate` `p1` `model:local`
-  - - Imports: `from dataclasses import dataclass, field`
-- `@dataclass class AgentCapability:` — `agent_type: str`, `allowed_tools: frozenset[str] | None = None` (None = unrestricted), `allowed_file_patterns: list[str] = field(default_factory=list)` (glob patterns like `["src/**", "tests/**"]`; empty = unrestricted), `max_iterations: int = 0` (0 = use config default), `network_access: bool = True`
-- `CAPABILITY_REGISTRY: dict[str, AgentCapability] = {` — define entries for each agent type:
-- `"developer": AgentCapability(agent_type="developer", allowed_tools=None, network_access=True)` — unrestricted
-- `"tester": AgentCapability(agent_type="tester", allowed_tools=frozenset({"bash", "read_file", "list_dir"}), network_access=False)`
-- `"researcher": AgentCapability(agent_type="researcher", allowed_tools=frozenset({"read_file", "list_dir", "bash", "search"}), network_access=True)`
-- `"reviewer": AgentCapability(agent_type="reviewer", allowed_tools=frozenset({"read_file", "list_dir"}), network_access=False)`
-- `"base": AgentCapability(agent_type="base", allowed_tools=None, network_access=True)`
-- `def get_capability(agent_type: str) -> AgentCapability:` — returns `CAPABILITY_REGISTRY.get(agent_type.lower(), CAPABILITY_REGISTRY["base"])`
-- Verify: `grep -n "class AgentCapability\|CAPABILITY_REGISTRY\|def get_capability" orchid/capability.py` must return 3 lines
+  - - - Imports: `from dataclasses import dataclass, field`
 - [x] **T272** Extend `orchid/agents/base.py` — read capability from `CAPABILITY_REGISTRY` in `__init__` and use to enforce allowed_tools. Read the file first. Find `__init__()`. `type:code_generate` `p1` `needs:T271` `model:local`
-  - - In `__init__()`, AFTER the existing `allowed_tools` logic (the block around line 342-359 that reads `_config_allowed`), add:
+  - - - In `__init__()`, AFTER the existing `allowed_tools` logic (the block around line 342-359 that reads `_config_allowed`), add:
 ```python
 # T272: Override allowed_tools from AgentCapability registry if capability is stricter
 try:
@@ -97,40 +234,10 @@ self.max_iterations = _cap.max_iterations
 except Exception as _cap_err:
 logger.debug("Capability registry lookup failed: %s", _cap_err)
 ```
-- Note: check the actual attribute name for the effective allowed tools set — it may be `self._effective_allowed_tools` or another name. Read the existing code to find it. Use the correct attribute name.
-- Verify: `grep -n "get_capability\|_cap\|CAPABILITY_REGISTRY" orchid/agents/base.py` must return at least 2 lines
 - [x] **T273** Extend `orchid/cost/ledger.py` — add `node_id` field to `TokenRecord` and `merge_from_file()` to `CostLedger`. Read the file first. `type:code_generate` `p1` `model:local`
-  - - Add `node_id: str = ""` as the LAST field in `@dataclass class TokenRecord:` (after `user_id` added in T258, or after the last existing field)
-- Add this method to `CostLedger` after `merge_from_file` (add it — it doesn't exist yet):
-```python
-def merge_from_file(self, path: "Path") -> int:
-"""Merge TokenRecords from a remote node's JSONL ledger file.
-
-Returns the number of records merged.
-"""
-from pathlib import Path as _Path
-path = _Path(path)
-if not path.exists():
-return 0
-merged = 0
-for line in path.read_text().splitlines():
-line = line.strip()
-if not line:
-continue
-try:
-data = json.loads(line)
-record = TokenRecord(**{k: v for k, v in data.items() if k in TokenRecord.__dataclass_fields__})
-with self._lock:
-self._records.append(record)
-self._append_to_file(record)
-merged += 1
-except Exception as _e:
-logger.debug("Skipping malformed ledger line: %s", _e)
-return merged
-```
-- Verify: `grep -n "node_id\|def merge_from_file" orchid/cost/ledger.py` must return at least 2 lines
+  - - - Add `node_id: str = ""` as the LAST field in `@dataclass class TokenRecord:` (after `user_id` added in T258, or after the last existing field)
 - [x] **T274** Extend `orchid/checkpoint/restore.py` — add `export_checkpoint()` function. Read the file first. Add after `list_checkpoints()`. `type:code_generate` `p1` `model:local`
-  - - Add this function:
+  - - - Add this function:
 ```python
 def export_checkpoint(
 checkpoint_id: str,
@@ -156,51 +263,26 @@ import json, dataclasses
 dest_file.write_text(json.dumps(dataclasses.asdict(cp)))
 return dest_file
 ```
-- Verify: `grep -n "def export_checkpoint" orchid/checkpoint/restore.py` must return 1 line
 - [x] **T275** Extend `orchid/remote/dispatcher.py` — add task migration: if a node becomes overloaded mid-dispatch, retry on another node. Read the file first. Modify `dispatch()`. `type:code_generate` `p1` `needs:T268` `model:local`
-  - - Modify `dispatch()` to retry on a different node if the HTTP call fails with `RemoteDispatcherError`:
-- Change `dispatch()` to accept a `max_retries: int = 2` parameter
-- Add a retry loop: try the dispatch, on `RemoteDispatcherError`, decrement `max_retries`, if `max_retries > 0` call `_select_node()` again and retry. If retries exhausted, re-raise.
-- The node's `current_load` must still be decremented in the `finally` of each attempt.
-- Add this method to `RemoteDispatcher`:
-```python
-def get_least_loaded_node(self) -> WorkerNode | None:
-"""Return the node with the lowest current_load, or None if all full."""
-with self._lock:
-available = [n for n in self._nodes if n.is_available()]
-if not available:
-return None
-return min(available, key=lambda n: n.current_load)
-```
-- Verify: `grep -n "max_retries\|def get_least_loaded_node" orchid/remote/dispatcher.py` must return 2 lines
+  - - - Modify `dispatch()` to retry on a different node if the HTTP call fails with `RemoteDispatcherError`:
 - [x] **T280** Review Tier 4 implementation (T266-T279). Check: remote protocol types are correct, dispatcher selects nodes correctly, capability registry matches existing agent frozensets, export_checkpoint works with real CheckpointStore. `type:review` `p1` `needs:T276,T277,T278,T279` `model:claude`
-  - - Run `python -c "from orchid.remote.types import WorkerNode, RemoteTaskRequest, RemoteTaskResponse"` — must not error
-- Run `python -c "from orchid.remote.dispatcher import RemoteDispatcher, RemoteDispatcherError"` — must not error
-- Run `python -c "from orchid.capability import CAPABILITY_REGISTRY, get_capability; print(len(CAPABILITY_REGISTRY))"` — must print 5
-- Run `python -c "from orchid.checkpoint.restore import export_checkpoint"` — must not error
-- Run `python -c "from orchid.cost.ledger import CostLedger; print(hasattr(CostLedger, 'merge_from_file'))"` — must print True
-- Run `python -m pytest tests/test_remote_protocol.py tests/test_remote_dispatcher.py tests/test_capability.py tests/test_export_checkpoint.py -q` — all must pass
-- Check that `CAPABILITY_REGISTRY["reviewer"].allowed_tools` is consistent with `ReviewerAgent.allowed_tools` in `orchid/agents/reviewer.py` (they should match or the registry should be stricter)
-- Report PASS or FAIL for each check with the error message if FAIL
+  - - - Run `python -c "from orchid.remote.types import WorkerNode, RemoteTaskRequest, RemoteTaskResponse"` — must not error
 - [x] **T281** Fix all issues found in T280. Read the T280 result first. Make exactly the fixes listed. `type:code_generate` `p1` `needs:T280` `model:local`
 - [x] **T282** Run full test suite and report results. `type:verify` `p1` `needs:T281` `model:claude`
-  - - Run: `source .venv/bin/activate && python -m pytest tests/ -q --ignore=tests/test_agent_pool.py --ignore=tests/test_parallel_runner.py 2>&1 | tail -20`
-- Report total passed/failed/error counts
-- List any new failures that were not present in Tier 3 (compare against TIER3-REPORT.md)
-- Flag any regressions in existing tests (T000-T208 area)
+  - - - Run: `source .venv/bin/activate && python -m pytest tests/ -q --ignore=tests/test_agent_pool.py --ignore=tests/test_parallel_runner.py 2>&1 | tail -20`
 - [x] **T283** Fix regressions found in T282. `type:code_generate` `p1` `needs:T282` `model:local`
 - [x] **T250** Create `orchid/auth/store.py`. One class: `UserStore`. `type:code_generate` `p1` `needs:T249` `model:local`
-  - - - - - - - - - Imports: `import json, logging, threading` from stdlib. `from pathlib import Path`. `from orchid.auth.types import User, AuthError`
+  - - - - - - - - - - Imports: `import json, logging, threading` from stdlib. `from pathlib import Path`. `from orchid.auth.types import User, AuthError`
 - [x] **T251** Create `orchid/auth/middleware.py`. FastAPI dependency for token-based auth. `type:code_generate` `p1` `needs:T250` `model:local`
-  - - - - - - - - - Imports: `from fastapi import Depends, HTTPException, status`. `from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials`. `from orchid.auth.store import UserStore`. `from orchid.auth.types import User, AuthError`
+  - - - - - - - - - - Imports: `from fastapi import Depends, HTTPException, status`. `from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials`. `from orchid.auth.store import UserStore`. `from orchid.auth.types import User, AuthError`
 - [x] **T252** Extend `orchid/web/server.py` — add auth endpoints and optional auth guard. Read the file first. Find the FastAPI `app` instance. `type:code_generate` `p1` `needs:T251` `model:local`
-  - - - - - - - - - Add these imports near the top: `from orchid.auth.store import UserStore`. `from orchid.auth.types import User, AuthError`. `from orchid.auth.middleware import get_optional_user`
+  - - - - - - - - - - Add these imports near the top: `from orchid.auth.store import UserStore`. `from orchid.auth.types import User, AuthError`. `from orchid.auth.middleware import get_optional_user`
 - [x] **T255** Extend `orchid/subprocess_runner.py` — if `isolation.container_enabled` is true, use `ContainerRunner` instead of bare subprocess. Read the file first. `type:code_generate` `p1` `needs:T254` `model:local`
-  - - - - - - - - - Add import at top: `from orchid.config import cfg`
+  - - - - - - - - - - Add import at top: `from orchid.config import cfg`
 - [x] **T257** Extend `orchid/tools/filesystem.py` — call `log_file_write()` after every successful `write_file()` and `append_file()`. Read the file first. `type:code_generate` `p1` `needs:T256` `model:local`
-  - - - - - - - - - Add import: `from orchid.hooks.audit import log_file_write as _audit_file_write`
+  - - - - - - - - - - Add import: `from orchid.hooks.audit import log_file_write as _audit_file_write`
 - [x] **T259** Extend `orchid/cost/scheduler.py` — add `check_user_budget()` method. Read the file first. Find `CostScheduler` class. Add after `check_budget()`. `type:code_generate` `p1` `needs:T258` `model:local`
-  - - - - - - - - - Add this method to `CostScheduler`:
+  - - - - - - - - - - Add this method to `CostScheduler`:
 ```python
 def check_user_budget(self, user_id: str, user_budget_usd: float) -> None:
 """Raise BudgetBlockedError if user has exceeded their personal daily budget.
@@ -219,12 +301,12 @@ f"${user_budget_usd:.2f} (spent ${spent:.2f})"
 )
 ```
 - [x] **T263** Review Tier 3 implementation (T249-T262). Check: auth layer is importable, UserStore persists correctly, container runner handles unavailable docker gracefully, file write audit fires, user quota enforcement works. `type:review` `p1` `needs:T260,T261,T262` `model:claude`
-  - - - - - - - - - Run `python -c "from orchid.auth.types import User, AuthError; from orchid.auth.store import UserStore; from orchid.auth.middleware import get_current_user"` — must not error
+  - - - - - - - - - - Run `python -c "from orchid.auth.types import User, AuthError; from orchid.auth.store import UserStore; from orchid.auth.middleware import get_current_user"` — must not error
 - [x] **T264** Fix all issues found in T263. Read the T263 result first. Make exactly the fixes listed. `type:code_generate` `p1` `needs:T263` `model:local`
 - [x] **T258** Extend `orchid/cost/ledger.py` — add `user_id` field to `TokenRecord` and `daily_spend_for_user()` method to `CostLedger`. Read the file first. `type:code_generate` `p1` `model:local`
-  - - - - - - - - - Find `@dataclass class TokenRecord:` (line 32). Add `user_id: str = ""` as the LAST field (with default so existing code constructing `TokenRecord` without it still works).
+  - - - - - - - - - - Find `@dataclass class TokenRecord:` (line 32). Add `user_id: str = ""` as the LAST field (with default so existing code constructing `TokenRecord` without it still works).
 - [x] **T256** Extend `orchid/hooks/audit.py` — add `log_file_write()` function to `AuditLogger`. Read the file first. Find the `AuditLogger` class. Add the method after the last existing log method. `type:code_generate` `p1` `model:local`
-  - - - - - - - - - Add this method to `AuditLogger`:
+  - - - - - - - - - - Add this method to `AuditLogger`:
 ```python
 def log_file_write(
 self,
@@ -245,20 +327,20 @@ self._write({
 })
 ```
 - [x] **T254** Create `orchid/container_runner.py`. One class: `ContainerRunner`. Opt-in; skips gracefully if Docker unavailable. `type:code_generate` `p1` `model:local`
-  - - - - - - - - - Imports: `import json, logging, shutil, subprocess, sys` from stdlib. `from pathlib import Path`. `from orchid.worker_protocol import TaskContext, WorkerResult`
+  - - - - - - - - - - Imports: `import json, logging, shutil, subprocess, sys` from stdlib. `from pathlib import Path`. `from orchid.worker_protocol import TaskContext, WorkerResult`
 - [x] **T253** Extend `orchid/providers/registry.py` — accept per-user API keys that override env/config keys. Read the file first. Find the provider resolution logic. `type:code_generate` `p1` `model:local`
-  - - - - - - - - - Find the main resolution function or class (likely `resolve_provider()` or `ProviderRegistry`). Add a parameter `user_api_keys: dict[str, str] | None = None` to the resolution function/method.
+  - - - - - - - - - - Find the main resolution function or class (likely `resolve_provider()` or `ProviderRegistry`). Add a parameter `user_api_keys: dict[str, str] | None = None` to the resolution function/method.
 - [x] **T249** Create `orchid/auth/__init__.py` with content `# Orchid auth layer` and `orchid/auth/types.py`. Define 2 things in `types.py`. `type:code_generate` `p1` `model:local`
-  - - - - - - - - - `orchid/auth/__init__.py` content: exactly `# Orchid auth layer`
+  - - - - - - - - - - `orchid/auth/__init__.py` content: exactly `# Orchid auth layer`
 - [x] **T247** Fix all issues found in T246. Read the T246 result first. Make exactly the fixes listed. `type:code_generate` `p1` `needs:T246` `model:local`
 - [x] **T246** Review Tier 2 implementation (T230-T245). Check: file locks are thread-safe, mid-task checkpoint saves/loads correctly, mailbox is thread-safe, shell permission check works, max_iterations hard cap is read correctly. `type:review` `p1` `needs:T242,T243,T244,T245` `model:claude`
-  - - - - - - - - - - - - - Run `python -c "from orchid.locks import FileLockRegistry, get_file_lock_registry"` — must not error
+  - - - - - - - - - - - - - - Run `python -c "from orchid.locks import FileLockRegistry, get_file_lock_registry"` — must not error
 - [x] **T230** Create `orchid/locks.py`. One class: `FileLockRegistry`. `type:code_generate` `p1` `model:local`
-  - - - - - - - - - - - - - Imports: `import threading, logging` from stdlib. `from pathlib import Path` from stdlib. `from collections import defaultdict`
+  - - - - - - - - - - - - - - Imports: `import threading, logging` from stdlib. `from pathlib import Path` from stdlib. `from collections import defaultdict`
 - [x] **T231** Extend `orchid/tools/filesystem.py` — use `FileLockRegistry` in `write_file()` and `append_file()`. Read the file first. `type:code_generate` `p1` `needs:T230` `model:local`
-  - - - - - - - - - - - - - Add import at the top: `from orchid.locks import get_file_lock_registry`
+  - - - - - - - - - - - - - - Add import at the top: `from orchid.locks import get_file_lock_registry`
 - [x] **T232** Extend `orchid/checkpoint/schema.py` — add `ReActCheckpoint` dataclass. Read the file first. Find the end of the file (after existing dataclasses). `type:code_generate` `p1` `model:local`
-  - - - - - - - - - - - - - Add this dataclass at the end of the file (after existing definitions):
+  - - - - - - - - - - - - - - Add this dataclass at the end of the file (after existing definitions):
 ```python
 @dataclass
 class ReActCheckpoint:
@@ -270,11 +352,11 @@ partial_result: str = ""
 timestamp: str = ""                # ISO 8601 UTC, set by store
 ```
 - [x] **T233** Extend `orchid/checkpoint/store.py` — add `save_react_checkpoint()` and `load_react_checkpoint()` methods. Read the file first. Add after the `prune()` method. `type:code_generate` `p1` `needs:T232` `model:local`
-  - - - - - - - - - - - - - Add `from orchid.checkpoint.schema import ReActCheckpoint` to the imports (check if schema is already imported; if so, add `ReActCheckpoint` to the existing import)
+  - - - - - - - - - - - - - - Add `from orchid.checkpoint.schema import ReActCheckpoint` to the imports (check if schema is already imported; if so, add `ReActCheckpoint` to the existing import)
 - [x] **T234** Extend `orchid/agents/base.py` — save a ReAct checkpoint every 5 iterations. Read the file first. Find the `run()` method and the `for iteration in range(self.max_iterations):` loop. `type:code_generate` `p1` `needs:T233` `model:local`
-  - - - - - - - - - - - - - At the TOP of `BaseAgent.__init__()`, add: `self._checkpoint_store: Any = None` (use `from typing import Any` if not already imported)
+  - - - - - - - - - - - - - - At the TOP of `BaseAgent.__init__()`, add: `self._checkpoint_store: Any = None` (use `from typing import Any` if not already imported)
 - [x] **T235** Extend `orchid/orchestrator.py` — wire checkpoint_store and task_id into agent before run. Read the file first. Find the block where `agent` is assigned (via `self._get_agent(...)`) and before `agent.run(plan)` is called. `type:code_generate` `p1` `needs:T234` `model:local`
-  - - - - - - - - - - - - - After `agent = self._get_agent(...)` and BEFORE the `if cfg.get("isolation.subprocess_enabled"...)` block, add:
+  - - - - - - - - - - - - - - After `agent = self._get_agent(...)` and BEFORE the `if cfg.get("isolation.subprocess_enabled"...)` block, add:
 ```python
 # T235: Wire ReAct checkpoint store and task_id into agent
 try:
@@ -285,11 +367,11 @@ except Exception as _cs_err:
 logger.debug("Could not wire checkpoint store into agent: %s", _cs_err)
 ```
 - [x] **T236** Create `orchid/mailbox.py`. One class: `AgentMailbox`. `type:code_generate` `p1` `model:local`
-  - - - - - - - - - - - - - Imports: `import queue, threading, logging` from stdlib. `from dataclasses import dataclass, field`. `from typing import Any`
+  - - - - - - - - - - - - - - Imports: `import queue, threading, logging` from stdlib. `from dataclasses import dataclass, field`. `from typing import Any`
 - [x] **T237** Extend `orchid/agents/base.py` — add `send_message` and `receive_message` tools. Read the file first. Find `_make_project_tools()` method. `type:code_generate` `p1` `needs:T236` `model:local`
-  - - - - - - - - - - - - - Add `from orchid.mailbox import get_mailbox` import at the top of the file
+  - - - - - - - - - - - - - - Add `from orchid.mailbox import get_mailbox` import at the top of the file
 - [x] **T238** Extend `orchid/orchestrator.py` — drop agent mailbox at task end. Read the file first. Find the `finally:` block inside `_execute_task()` (the block that runs after the agent finishes). `type:code_generate` `p1` `needs:T237` `model:local`
-  - - - - - - - - - - - - - In the `finally:` block of `_execute_task()`, add:
+  - - - - - - - - - - - - - - In the `finally:` block of `_execute_task()`, add:
 ```python
 # T238: Clean up agent mailbox
 try:
@@ -300,9 +382,9 @@ except Exception:
 pass
 ```
 - [x] **T239** Extend `orchid/tools/shell.py` — add `agent_id` parameter to `bash()`. Read the file first. Find `def bash(command: str, timeout: int | None = None) -> str:` at line 120. `type:code_generate` `p1` `model:local`
-  - - - - - - - - - - - - - Change the signature to: `def bash(command: str, timeout: int | None = None, agent_id: str = "") -> str:`
+  - - - - - - - - - - - - - - Change the signature to: `def bash(command: str, timeout: int | None = None, agent_id: str = "") -> str:`
 - [x] **T240** Add `agents.max_iterations` config block to `orchid/orchid.defaults.yaml`. Read the file first. Find the `agents:` section. Add under it. `type:code_generate` `p1` `model:local`
-  - - - - - - - - - - - - - Under the `agents:` key (after existing agent config lines), add:
+  - - - - - - - - - - - - - - Under the `agents:` key (after existing agent config lines), add:
 ```yaml
 max_iterations:          # per-agent-type hard cap on ReAct iterations (0 = use agents.max_react_iterations)
 developer: 0
@@ -312,7 +394,7 @@ reviewer: 0
 base: 0
 ```
 - [x] **T241** Extend `orchid/agents/base.py` — read per-agent-type `max_iterations` from config and enforce hard cap. Read the file first. Find `__init__()`. `type:code_generate` `p1` `needs:T240` `model:local`
-  - - - - - - - - - - - - - In `__init__()`, AFTER `self.max_iterations = cfg.get("agents.max_react_iterations", 25)`, add:
+  - - - - - - - - - - - - - - In `__init__()`, AFTER `self.max_iterations = cfg.get("agents.max_react_iterations", 25)`, add:
 ```python
 # T241: Per-agent-type hard cap from agents.max_iterations config
 _agent_type_key = self.__class__.__name__.lower().replace("agent", "")
@@ -321,13 +403,13 @@ if _hard_cap and _hard_cap > 0:
 self.max_iterations = _hard_cap
 ```
 - [x] **T209** Create `orchid/worker_protocol.py`. Define exactly 3 dataclasses using `@dataclass` from `dataclasses`. Import `json`, `field`, `asdict` from `dataclasses`. `type:code_generate` `p1` `model:local`
-  - - - - - - - - - - - - - - `TaskContext(task_id: str, task_description: str, session_context: str, agent_type: str, model_key: str, project_dir: str, injection_queue_path: str)` — all required, no defaults
+  - - - - - - - - - - - - - - - `TaskContext(task_id: str, task_description: str, session_context: str, agent_type: str, model_key: str, project_dir: str, injection_queue_path: str)` — all required, no defaults
 - [x] **T210** Create `orchid/worker_subprocess.py`. This is the subprocess entry point — run by the parent via `sys.executable -m orchid.worker_subprocess`. `type:code_generate` `p1` `needs:T209` `model:local`
-  - - - - - - - - - - - - - - Imports: `import json, sys, time, logging` from stdlib. `from pathlib import Path`. `from orchid.worker_protocol import TaskContext, WorkerEvent, WorkerResult`
+  - - - - - - - - - - - - - - - Imports: `import json, sys, time, logging` from stdlib. `from pathlib import Path`. `from orchid.worker_protocol import TaskContext, WorkerEvent, WorkerResult`
 - [x] **T211** Create `orchid/subprocess_runner.py`. One class: `SubprocessRunner`. `type:code_generate` `p1` `needs:T209` `model:local`
-  - - - - - - - - - - - - - - Imports: `import json, logging, subprocess, sys` from stdlib. `from collections.abc import Callable`. `from orchid.worker_protocol import TaskContext, WorkerEvent, WorkerResult`
+  - - - - - - - - - - - - - - - Imports: `import json, logging, subprocess, sys` from stdlib. `from collections.abc import Callable`. `from orchid.worker_protocol import TaskContext, WorkerEvent, WorkerResult`
 - [x] **T212** Append isolation config block to `orchid/orchid.defaults.yaml`. Read the file first to find its end. Append exactly this block at the bottom. `type:code_generate` `p1` `model:local`
-  - - - - - - - - - - - - - - Append exactly:
+  - - - - - - - - - - - - - - - Append exactly:
 ```yaml
 # T212: Subprocess isolation settings
 isolation:
@@ -336,7 +418,7 @@ max_task_seconds: 0         # wall-clock timeout per task (0 = no limit)
 container_enabled: false    # true = use docker container (Tier 3)
 ```
 - [x] **T213** Extend `orchid/orchestrator.py` — add `_run_task_isolated()` method. Read the file first. Find the method `_resolve_provider` (around line 297). Add the new method BEFORE `_resolve_provider`. `type:code_generate` `p1` `needs:T211` `model:local`
-  - - - - - - - - - - - - - - Add this method to the `Orchestrator` class:
+  - - - - - - - - - - - - - - - Add this method to the `Orchestrator` class:
 ```
 def _run_task_isolated(
 self,
@@ -371,7 +453,7 @@ raise RuntimeError(f"Worker subprocess failed: {wresult.error}")
 return wresult.result
 ```
 - [x] **T214** Extend `orchid/orchestrator.py` — wire subprocess opt-in into `_execute_task()`. Read the file first. Find the block where `agent.run(plan)` is called (search for `agent.run(`). Replace the `result = agent.run(plan)` call (or equivalent call to run the agent) with an if/else that checks config. `type:code_generate` `p1` `needs:T213` `model:local`
-  - - - - - - - - - - - - - - Find the line that calls `agent.run(` in `_execute_task()`. Wrap it as follows:
+  - - - - - - - - - - - - - - - Find the line that calls `agent.run(` in `_execute_task()`. Wrap it as follows:
 ```python
 if cfg.get("isolation.subprocess_enabled", False):
 result = self._run_task_isolated(
@@ -386,15 +468,15 @@ else:
 result = agent.run(plan)
 ```
 - [x] **T215** Extend `orchid/agents/base.py` — add `AgentCancelledError` exception class and `cancel_event` attribute. Read the file first. Find the class definitions near the top (look for other exception classes or the BaseAgent class definition around line 288). `type:code_generate` `p1` `model:local`
-  - - - - - - - - - - - - - - Add `import threading` to the imports at the top of the file if not already present
+  - - - - - - - - - - - - - - - Add `import threading` to the imports at the top of the file if not already present
 - [x] **T216** Extend `orchid/agents/base.py` — check cancel_event at the top of each ReAct iteration. Read the file first. Find the `run()` method and the `for iteration in range(self.max_iterations):` loop (around line 484). `type:code_generate` `p1` `needs:T215` `model:local`
-  - - - - - - - - - - - - - - Add this check as the FIRST statement inside the for loop body, BEFORE the existing `self._check_injection_queue()` call:
+  - - - - - - - - - - - - - - - Add this check as the FIRST statement inside the for loop body, BEFORE the existing `self._check_injection_queue()` call:
 ```python
 if self._cancel_event.is_set():
 raise AgentCancelledError(f"Task cancelled after {iteration} iterations")
 ```
 - [x] **T217** Extend `orchid/orchestrator.py` — start a cancellation timer before calling `agent.run()`. Read the file first. Find where `agent.run(plan)` is called in `_execute_task()` (the `else:` branch added in T214). `type:code_generate` `p1` `needs:T216` `model:local`
-  - - - - - - - - - - - - - - Add these lines BEFORE the `if cfg.get("isolation.subprocess_enabled"...)` block:
+  - - - - - - - - - - - - - - - Add these lines BEFORE the `if cfg.get("isolation.subprocess_enabled"...)` block:
 ```python
 # T217: Start wall-clock cancellation timer if max_task_seconds is set
 _max_s = cfg.get("isolation.max_task_seconds", 0)
@@ -405,11 +487,11 @@ _cancel_timer.daemon = True
 _cancel_timer.start()
 ```
 - [x] **T218** Create `orchid/watchdog.py`. One class: `TaskWatchdog`. `type:code_generate` `p1` `model:local`
-  - - - - - - - - - - - - - - Imports: `import logging, threading, time`. `from orchid.session import Session`. `from orchid.memory.state import TaskStatus`
+  - - - - - - - - - - - - - - - Imports: `import logging, threading, time`. `from orchid.session import Session`. `from orchid.memory.state import TaskStatus`
 - [x] **T219** Extend `orchid/runner.py` — wire `TaskWatchdog` into `_run_loop()`. Read the file first. Find `_run_loop()` at line 184. `type:code_generate` `p1` `needs:T218` `model:local`
-  - - - - - - - - - - - - - - Add `from orchid.watchdog import TaskWatchdog` to the imports at the top of the file
+  - - - - - - - - - - - - - - - Add `from orchid.watchdog import TaskWatchdog` to the imports at the top of the file
 - [x] **T220** Extend `orchid/scheduler.py` — add `has_cycle()` to `DependencyGraph`. Read the file first. Find the `DependencyGraph` class (line 53). Add the method after `get_ready_tasks()`. `type:code_generate` `p1` `model:local`
-  - - - - - - - - - - - - - - Add this method to `DependencyGraph`:
+  - - - - - - - - - - - - - - - Add this method to `DependencyGraph`:
 ```python
 def has_cycle(self) -> bool:
 """Return True if the dependency graph contains a cycle (DFS)."""
@@ -435,9 +517,9 @@ return True
 return False
 ```
 - [x] **T221** Extend `orchid/tools/task_injection.py` — call `has_cycle()` after successful task injection to catch runtime cycles. Read the file first. Find the `inject_task()` function at line 59. `type:code_generate` `p1` `needs:T220` `model:local`
-  - - - - - - - - - - - - - - Add these imports at the top of the file if not already present: `from orchid.scheduler import DependencyGraph, CyclicDependencyError`
+  - - - - - - - - - - - - - - - Add these imports at the top of the file if not already present: `from orchid.scheduler import DependencyGraph, CyclicDependencyError`
 - [x] **T227** Review Tier 1 implementation (T209-T226). Check: subprocess isolation compiles and is importable, cancellation token raises AgentCancelledError, watchdog marks stuck tasks BLOCKED, cycle detection finds cycles, all new tests pass. `type:review` `p1` `needs:T222,T223,T224,T225,T226` `model:claude`
-  - - - - - - - - - - - - - - Run `python -c "from orchid.worker_protocol import TaskContext, WorkerEvent, WorkerResult"` — must not error
+  - - - - - - - - - - - - - - - Run `python -c "from orchid.worker_protocol import TaskContext, WorkerEvent, WorkerResult"` — must not error
 - [x] **T228** Fix all issues found in T227. Read the T227 result first. Make exactly the fixes listed. `type:code_generate` `p1` `needs:T227` `model:local`
 - [x] **T200** Create `orchid/cost/` package with `__init__.py` and `ledger.py` `type:code_generate` `p1` `model:local`
 - [x] **T201** Create `orchid/cost/scheduler.py` `type:code_generate` `p1` `needs:T200` `model:local`
@@ -551,59 +633,136 @@ return False
 - [x] **T008** Fix decisions.json parse error - likely JSON Lines vs single JSON document format mismatch `type:code_generate` `p1`
 - [x] **T002** Hook LLM summarizer into session compression `type:code_generate` `p1`
 - [x] **T001** Review the session.py compression logic and suggest improvements `type:review` `p1`
+- [x] **T293** Create `tests/test_cron_types.py` (unit tests for ScheduledTask and TaskRun dataclasses). `type:code_generate` `p2` `needs:T285` `model:local`
+  - - Imports: `from datetime import UTC, datetime`. `import pytest`. `from orchid.cron.types import ScheduledTask, TaskRun, _new_task_id, _new_run_id, _utcnow`
+- `class TestScheduledTask:` with tests:
+- `test_default_task_id_format`: `t = ScheduledTask()`. Assert `t.task_id.startswith("stask_")`. Assert `len(t.task_id) == 14` (6 chars for "stask_" + 8 hex chars).
+- `test_default_fields`: `t = ScheduledTask(owner_id="u1", name="Daily")`. Assert `t.enabled is True`. Assert `t.schedule == "0 9 * * *"`. Assert `t.task_type == "agent_prompt"`. Assert `t.config == {}`. Assert `t.notify_on_failure is True`. Assert `t.notify_on_success is False`. Assert `t.last_run_at is None`. Assert `t.last_run_status is None`.
+- `test_unique_task_ids`: create 100 `ScheduledTask()` instances. Assert all `task_id` values are unique (use a set).
+- `test_created_at_is_utc`: `t = ScheduledTask()`. Assert `t.created_at.tzinfo is not None`.
+- `test_custom_schedule`: `t = ScheduledTask(schedule="*/5 * * * *")`. Assert `t.schedule == "*/5 * * * *"`.
+- `class TestTaskRun:` with tests:
+- `test_default_run_id_format`: `r = TaskRun()`. Assert `r.run_id.startswith("run_")`. Assert `len(r.run_id) == 12` (4 chars for "run_" + 8 hex chars).
+- `test_default_status_is_running`: `r = TaskRun()`. Assert `r.status == "running"`.
+- `test_unique_run_ids`: create 100 `TaskRun()` instances. Assert all `run_id` values are unique.
+- `test_fields_settable`: `r = TaskRun(task_id="t1", owner_id="u1", status="success", output="hello")`. Assert `r.task_id == "t1"`. Assert `r.status == "success"`. Assert `r.output == "hello"`.
+- Verify: `cd /home/dave/LocalAI/orchid && source .venv/bin/activate && python3 -m pytest tests/test_cron_types.py -v` must pass all tests.
+- [x] **T294** Create `tests/test_cron_store.py` (unit tests for TaskRunStore and UserStore scheduled task methods). `type:code_generate` `p2` `needs:T286,T288` `model:local`
+  - - Imports: `import pathlib, tempfile`. `from datetime import UTC, datetime, timedelta`. `import pytest`. `from orchid.cron.store import TaskRunStore`. `from orchid.cron.types import TaskRun`. `from orchid.auth.store import UserStore`. `from orchid.auth.types import User`
+- `@pytest.fixture def tmp_runs_file(tmp_path): return tmp_path / "runs.jsonl"`
+- `@pytest.fixture def run_store(tmp_runs_file): return TaskRunStore(runs_file=tmp_runs_file)`
+- `@pytest.fixture def user_store(tmp_path): return UserStore(path=tmp_path / "users.json")`
+- `@pytest.fixture def user_with_store(user_store): u = User(user_id="u1",username="alice"); user_store.add_user(u); return user_store`
+- `class TestTaskRunStore:` with tests:
+- `test_append_and_get_runs(run_store)`: create `TaskRun(task_id="t1",owner_id="u1",status="success")`, append, call `get_runs(task_id="t1")`, assert length 1 and `run.task_id == "t1"`.
+- `test_get_runs_filter_by_owner(run_store)`: append runs with `owner_id="u1"` and `owner_id="u2"`. Call `get_runs(owner_id="u1")`. Assert only u1 runs returned.
+- `test_get_runs_newest_first(run_store)`: append 3 runs with `task_id="t1"`. Call `get_runs(task_id="t1")`. Assert returned runs are sorted newest `started_at` first.
+- `test_get_runs_limit(run_store)`: append 10 runs with `task_id="t1"`. Call `get_runs(task_id="t1", limit=3)`. Assert length == 3.
+- `test_get_runs_empty_when_no_file`: create `TaskRunStore(runs_file=pathlib.Path("/tmp/does_not_exist_xyz.jsonl"))`. Call `get_runs()`. Assert result is `[]`.
+- `test_prune_removes_old_runs(tmp_runs_file)`: write a run with `started_at = (datetime.now(UTC) - timedelta(days=40)).isoformat()` directly to `tmp_runs_file`. Create `TaskRunStore(runs_file=tmp_runs_file)` (constructor calls `_prune`). Assert `get_runs()` returns `[]`.
+- `test_prune_keeps_recent_runs(tmp_runs_file)`: write a run with `started_at = datetime.now(UTC).isoformat()` directly to `tmp_runs_file`. Create store. Assert `get_runs()` returns 1 item.
+- `test_append_never_raises(run_store, monkeypatch)`: monkeypatch `run_store._file` to `pathlib.Path("/dev/null/bad/path")`. Call `run_store.append(TaskRun())`. Assert no exception raised.
+- `class TestUserStoreScheduledTasks:` with tests:
+- `test_upsert_and_get(user_with_store)`: call `user_with_store.upsert_scheduled_task("u1", {"task_id":"stask_00000001","name":"T","enabled":True})`. Call `get_scheduled_task("u1","stask_00000001")`. Assert result is not None and `result["name"]=="T"`.
+- `test_upsert_replaces_existing(user_with_store)`: upsert task with `name="Old"`, then upsert same `task_id` with `name="New"`. Get task. Assert `name=="New"`. Assert user has exactly 1 scheduled task.
+- `test_delete_task(user_with_store)`: upsert task, then `delete_scheduled_task("u1","stask_00000001")`. Assert get returns None.
+- `test_delete_nonexistent_returns_false(user_with_store)`: call `delete_scheduled_task("u1","stask_missing")`. Assert result is False.
+- `test_get_all_enabled(user_with_store)`: add second user `u2` to store. Upsert enabled task for u1 and disabled task for u2 (`"enabled":False`). Call `get_all_enabled_scheduled_tasks()`. Assert result contains exactly 1 tuple with `owner_id=="u1"`.
+- `test_scheduled_tasks_persisted(tmp_path)`: create store, add user, upsert task, create NEW store from same file, call `get_scheduled_task`. Assert task persists across store reload.
+- Verify: `cd /home/dave/LocalAI/orchid && source .venv/bin/activate && python3 -m pytest tests/test_cron_store.py -v` must pass all tests.
+- [x] **T295** Create `tests/test_cron_executor.py` (unit tests for TaskExecutor with mocked providers and MCP). `type:code_generate` `p2` `needs:T289` `model:local`
+  - - Imports: `from unittest.mock import MagicMock, patch`. `import pytest`. `from orchid.cron.executor import TaskExecutor, TaskExecutionError`
+- `@pytest.fixture def executor(): return TaskExecutor()`
+- `class TestTaskExecutorAgentPrompt:` with tests:
+- `test_missing_prompt_returns_failure(executor)`: call `executor.execute({"task_id":"t1","task_type":"agent_prompt","config":{},"name":"T"},"u1")`. Assert `run.status == "failure"`. Assert `"prompt" in run.error`.
+- `test_success_with_mocked_provider(executor)`: use `patch("orchid.providers.registry.get_registry")` to return mock registry whose `resolve()` returns a mock provider whose `complete()` returns `"response text"`. Call execute with `config={"prompt":"hello"}`. Assert `run.status == "success"`. Assert `run.output == "response text"`.
+- `test_provider_exception_returns_failure(executor)`: mock provider `complete()` to raise `RuntimeError("boom")`. Call execute. Assert `run.status == "failure"`. Assert `"RuntimeError" in run.error`.
+- `class TestTaskExecutorMCPTool:` with tests:
+- `test_missing_server_returns_failure(executor)`: call execute with `task_type="mcp_tool"` and `config={"tool":"search","args":{}}`. Assert `run.status == "failure"`. Assert `"server" in run.error`.
+- `test_missing_tool_returns_failure(executor)`: call execute with `task_type="mcp_tool"` and `config={"server":"gmail","args":{}}`. Assert `run.status == "failure"`. Assert `"tool" in run.error`.
+- `test_success_with_mocked_mcp(executor)`: patch `orchid.mcp.manager.MCPManager` with a mock whose `get_adapter()` returns a mock adapter whose `call_tool()` returns a mock result with `result.content = "found 5 emails"`. Call execute with `task_type="mcp_tool"` and `config={"server":"gmail","tool":"search_threads","args":{"query":"test"}}`. Assert `run.status == "success"`.
+- `test_server_not_found_returns_failure(executor)`: patch `MCPManager` so `get_adapter()` returns None. Call execute. Assert `run.status == "failure"`. Assert `"not found" in run.error`.
+- `class TestTaskExecutorShell:` with tests:
+- `test_missing_command_returns_failure(executor)`: call execute with `task_type="shell"` and `config={}`. Assert `run.status == "failure"`. Assert `"command" in run.error`.
+- `test_success_echo(executor)`: call execute with `task_type="shell"` and `config={"command":"echo hello","timeout_sec":10}`. If `run.status == "success"`, assert `"hello" in run.output`. If `run.status == "failure"`, assert `"allowlist" in run.error.lower()`. (echo may be blocked; test must not fail in either case.)
+- `class TestTaskExecutorUnknownType:` with tests:
+- `test_unknown_type_returns_failure(executor)`: call execute with `task_type="invalid_type"`. Assert `run.status == "failure"`. Assert `"Unknown task_type" in run.error`.
+- `class TestTaskExecutorNeverRaises:` with tests:
+- `test_execute_never_raises(executor, monkeypatch)`: monkeypatch `TaskExecutor._DISPATCH` to `{"shell": lambda c: (_ for _ in ()).throw(SystemExit(1))}`. Call `executor.execute({"task_id":"t1","task_type":"shell","config":{},"name":"T"},"u1")`. Assert result is a `TaskRun` instance (no exception propagated).
+- Verify: `cd /home/dave/LocalAI/orchid && source .venv/bin/activate && python3 -m pytest tests/test_cron_executor.py -v` must pass all tests.
+- [x] **T296** Create `tests/test_cron_engine.py` (unit tests for CronEngine). `type:code_generate` `p2` `needs:T290` `model:local`
+  - - Imports: `import time`. `from unittest.mock import MagicMock, patch`. `import pytest`. `from orchid.cron.engine import CronEngine, get_engine, reset_engine`
+- `@pytest.fixture(autouse=True) def reset(): reset_engine(); yield; reset_engine()`
+- `class TestCronEngineSingleton:` with tests:
+- `test_get_engine_returns_same_instance`: call `get_engine()` twice. Assert both calls return the same object (`is`).
+- `test_reset_engine_creates_new_instance`: `e1 = get_engine()`. Call `reset_engine()`. `e2 = get_engine()`. Assert `e1 is not e2`.
+- `class TestCronEngineLifecycle:` with tests:
+- `test_start_stop`: patch `orchid.auth.store.get_store` to return a mock store whose `get_all_enabled_scheduled_tasks()` returns `[]`. Create `e = CronEngine()`. Call `e.start()`. Assert `e._scheduler.running is True`. Call `e.stop()`. Assert `e._scheduler.running is False`.
+- `test_start_registers_enabled_tasks`: mock store returns `[("u1", {"task_id":"stask_t1","schedule":"0 9 * * *","enabled":True,"name":"T","task_type":"shell","config":{"command":"echo hi"}})]`. Create engine, call `start()`. Assert `engine._scheduler.get_job("stask_t1")` is not None. Call `stop()`.
+- `test_invalid_cron_expression_skips_task`: mock store returns task with `"schedule": "not-a-cron"`. Create engine, call `start()`. Assert no job registered (no exception raised). Call `stop()`.
+- `class TestCronEngineTaskManagement:` with tests:
+- `test_add_or_update_task_enabled`: patch store. Create engine, call `start()`. Call `engine.add_or_update_task("u1", {"task_id":"stask_x","schedule":"0 9 * * *","enabled":True,"name":"T","task_type":"shell","config":{}})`. Assert `engine._scheduler.get_job("stask_x")` is not None. Call `stop()`.
+- `test_add_or_update_task_disabled_removes_job`: add enabled task via `add_or_update_task`, then call again with `"enabled": False`. Assert `engine._scheduler.get_job("stask_x")` is None.
+- `test_remove_task`: add task, then call `engine.remove_task("stask_x")`. Assert `engine._scheduler.get_job("stask_x")` is None.
+- `test_run_now_calls_run_task_in_thread`: patch `CronEngine._run_task` with a MagicMock. Call `engine.run_now("u1", {"task_id":"t1","name":"T"})`. Call `time.sleep(0.2)`. Assert mock was called once with args `("u1", {"task_id":"t1","name":"T"})`.
+- Verify: `cd /home/dave/LocalAI/orchid && source .venv/bin/activate && python3 -m pytest tests/test_cron_engine.py -v` must pass all tests.
+- [x] **T297** Create `tests/test_cron_api.py` (API endpoint integration tests). `type:code_generate` `p2` `needs:T291,T292` `model:local`
+  - - First line: `import os; os.environ.setdefault("JWT_SECRET","test-secret-key-for-unit-tests-only")`
+- Imports: `from unittest.mock import MagicMock, patch`. `import pytest`. `from fastapi.testclient import TestClient`. `from orchid.auth.jwt import hash_password, issue_access_token`. `from orchid.auth.store import UserStore`. `from orchid.auth.types import User`
+- `@pytest.fixture def tmp_store(tmp_path)`: create `store = UserStore(path=tmp_path/"users.json")`. Add user `User(user_id="u1",username="alice",role="user",password_hash=hash_password("pw"))`. Add user `User(user_id="admin1",username="admin",role="admin",password_hash=hash_password("pw"))`. Return store.
+- `@pytest.fixture def app_client(tmp_store, tmp_path)`: use `patch("orchid.auth.store.get_store", return_value=tmp_store)` and `patch("orchid.cron.store.TaskRunStore.__init__", lambda self, **kw: setattr(self, "_file", tmp_path/"runs.jsonl") or setattr(self, "_lock", __import__("threading").Lock()))` and `patch("orchid.cron.engine.get_engine", return_value=MagicMock())` as context managers. Inside the patches, import `from orchid.interfaces.web_server import create_app`. Create `app = create_app(project_paths=[])`. Return `TestClient(app)`. Note: use `with patch(...), patch(...), patch(...):` syntax, yield the client inside the `with` block.
+- Helper function `auth_header(user_id: str) -> dict`: return `{"Authorization": f"Bearer {issue_access_token(user_id)}"}`.
+- `VALID_TASK_BODY = {"name":"Daily Echo","schedule":"0 9 * * *","task_type":"shell","config":{"command":"echo hi"}}`
+- `class TestSchedulerTaskCRUD:` with tests:
+- `test_list_tasks_empty(app_client)`: `GET /api/scheduler/tasks` with `auth_header("u1")`. Assert 200. Assert `response.json()["tasks"] == []`.
+- `test_create_task(app_client)`: `POST /api/scheduler/tasks` with `VALID_TASK_BODY` and `auth_header("u1")`. Assert 201. Assert `response.json()["task_id"].startswith("stask_")`. Assert `response.json()["owner_id"] == "u1"`.
+- `test_create_task_missing_name_returns_400(app_client)`: POST with `{"schedule":"0 9 * * *","task_type":"shell","config":{}}`. Assert 400.
+- `test_create_task_invalid_type_returns_400(app_client)`: POST with `VALID_TASK_BODY | {"task_type":"bad_type"}`. Assert 400.
+- `test_get_task(app_client)`: create task via POST, extract `task_id` from response. `GET /api/scheduler/tasks/{task_id}`. Assert 200 and `response.json()["task_id"] == task_id`.
+- `test_get_nonexistent_task_returns_404(app_client)`: `GET /api/scheduler/tasks/stask_missing`. Assert 404.
+- `test_update_task(app_client)`: create task. `PUT /api/scheduler/tasks/{task_id}` with `VALID_TASK_BODY | {"name":"Updated"}`. Assert 200. Assert `response.json()["name"] == "Updated"`.
+- `test_delete_task(app_client)`: create task. `DELETE /api/scheduler/tasks/{task_id}`. Assert 200. `GET` same task_id. Assert 404.
+- `test_run_now_returns_queued(app_client)`: create task. `POST /api/scheduler/tasks/{task_id}/run`. Assert 200. Assert `response.json()["queued"] is True`.
+- `test_list_runs_empty(app_client)`: create task. `GET /api/scheduler/tasks/{task_id}/runs`. Assert 200. Assert `response.json()["runs"] == []`.
+- `test_user_cannot_see_other_users_task(app_client, tmp_store)`: as u1, create task, get `task_id`. Add user `u2` to `tmp_store`. `GET /api/scheduler/tasks/{task_id}` with `auth_header("u2")`. Assert 404 (u2 cannot find u1's task).
+- `test_admin_sees_all_tasks(app_client)`: as u1, create task. `GET /api/scheduler/tasks` with `auth_header("admin1")`. Assert 200. Assert `len(response.json()["tasks"]) >= 1`. Assert any task has `owner_id == "u1"`.
+- `test_unauthenticated_returns_401_or_403(app_client)`: `GET /api/scheduler/tasks` with no auth header. Assert status code in `{401, 403}`.
+- Verify: `cd /home/dave/LocalAI/orchid && source .venv/bin/activate && python3 -m pytest tests/test_cron_api.py -v` must pass all tests.
 - [x] **T276** Create `tests/test_remote_protocol.py`. Write exactly 4 test functions. `type:code_generate` `p2` `needs:T266` `model:local`
-  - - `test_worker_node_is_available()` — create `WorkerNode(node_id="n1", url="http://x", capacity=4, current_load=0)`, assert `is_available() is True`. Set `current_load=4`, assert `is_available() is False`.
-- `test_worker_node_at_capacity()` — `capacity=2, current_load=3`, assert `is_available() is False`
-- `test_remote_task_request_json_roundtrip()` — create `RemoteTaskRequest(task_context_json='{"task_id":"T001"}', timeout_s=30.0)`, serialize with `json.dumps(dataclasses.asdict(req))`, deserialize, assert `result["timeout_s"] == 30.0`
-- `test_remote_task_response_has_node_id()` — create `RemoteTaskResponse(worker_result_json='{}', node_id="node-1")`, assert `node_id == "node-1"`
-- Import `WorkerNode, RemoteTaskRequest, RemoteTaskResponse` from `orchid.remote.types`
-- Verify: run `python -m pytest tests/test_remote_protocol.py -q` — all 4 must pass
+  - - - `test_worker_node_is_available()` — create `WorkerNode(node_id="n1", url="http://x", capacity=4, current_load=0)`, assert `is_available() is True`. Set `current_load=4`, assert `is_available() is False`.
 - [x] **T277** Create `tests/test_remote_dispatcher.py`. Write exactly 3 test functions using `unittest.mock.patch`. `type:code_generate` `p2` `needs:T268` `model:local`
-  - - `test_dispatch_posts_to_node_url()` — create two `WorkerNode` objects. Patch `httpx.post` to return a mock response with `json()` returning `{"worker_result_json": WorkerResult(task_id="T001", success=True, result="ok", duration_s=1.0).to_json(), "node_id": "n1"}` and `raise_for_status()` as a no-op. Create `RemoteDispatcher([node1, node2])`. Call `dispatch(ctx)`. Assert `httpx.post` was called once with a URL containing `/task`.
-- `test_dispatch_decrements_load_on_success()` — similar mock setup. Before dispatch: `node.current_load == 0`. After dispatch: `node.current_load == 0` again (incremented and then decremented in finally).
-- `test_dispatch_raises_when_no_nodes_available()` — create `RemoteDispatcher([WorkerNode(..., capacity=0)])`. Call `dispatch(ctx)`. Assert raises `RemoteDispatcherError`.
-- Build a dummy `TaskContext` using all-string dummy values.
-- Import `RemoteDispatcher, RemoteDispatcherError` from `orchid.remote.dispatcher`. Import `WorkerNode` from `orchid.remote.types`. Import `TaskContext` from `orchid.worker_protocol`.
-- Verify: run `python -m pytest tests/test_remote_dispatcher.py -q` — all 3 must pass
+  - - - `test_dispatch_posts_to_node_url()` — create two `WorkerNode` objects. Patch `httpx.post` to return a mock response with `json()` returning `{"worker_result_json": WorkerResult(task_id="T001", success=True, result="ok", duration_s=1.0).to_json(), "node_id": "n1"}` and `raise_for_status()` as a no-op. Create `RemoteDispatcher([node1, node2])`. Call `dispatch(ctx)`. Assert `httpx.post` was called once with a URL containing `/task`.
 - [x] **T278** Create `tests/test_capability.py`. Write exactly 4 test functions. `type:code_generate` `p2` `needs:T271` `model:local`
-  - - `test_capability_registry_has_all_agent_types()` — import `CAPABILITY_REGISTRY`. Assert all 5 keys exist: `"developer", "tester", "researcher", "reviewer", "base"`.
-- `test_developer_is_unrestricted()` — get `CAPABILITY_REGISTRY["developer"]`. Assert `cap.allowed_tools is None`.
-- `test_reviewer_cannot_bash()` — get `CAPABILITY_REGISTRY["reviewer"]`. Assert `cap.allowed_tools is not None`. Assert `"bash"` not in `cap.allowed_tools`.
-- `test_get_capability_unknown_returns_base()` — call `get_capability("unknown_agent_type")`. Assert `cap.agent_type == "base"`.
-- Import `AgentCapability, CAPABILITY_REGISTRY, get_capability` from `orchid.capability`
-- Verify: run `python -m pytest tests/test_capability.py -q` — all 4 must pass
+  - - - `test_capability_registry_has_all_agent_types()` — import `CAPABILITY_REGISTRY`. Assert all 5 keys exist: `"developer", "tester", "researcher", "reviewer", "base"`.
 - [x] **T279** Create `tests/test_export_checkpoint.py`. Write exactly 2 test functions using `tmp_path`. `type:code_generate` `p2` `needs:T274` `model:local`
-  - - `test_export_checkpoint_writes_file(tmp_path)` — create a `CheckpointStore(tmp_path)`, save a checkpoint with minimal data (pass empty lists for tasks/decisions/delegations, `hot_memory=""`, `task_id="T001"`). Get the checkpoint_id from the return value. Call `export_checkpoint(checkpoint_id, tmp_path, tmp_path / "export")`. Assert the exported file exists and `json.loads(exported_path.read_text())["metadata"]["task_id"] == "T001"` (or whatever the structure is — read CheckpointStore.save return type first to understand the checkpoint_id and data structure).
-- `test_export_checkpoint_raises_for_missing(tmp_path)` — call `export_checkpoint("NOTEXIST", tmp_path, tmp_path / "export")`. Assert raises `FileNotFoundError`.
-- Import `export_checkpoint` from `orchid.checkpoint.restore`. Import `CheckpointStore` from `orchid.checkpoint.store`.
-- Verify: run `python -m pytest tests/test_export_checkpoint.py -q` — all 2 must pass
+  - - - `test_export_checkpoint_writes_file(tmp_path)` — create a `CheckpointStore(tmp_path)`, save a checkpoint with minimal data (pass empty lists for tasks/decisions/delegations, `hot_memory=""`, `task_id="T001"`). Get the checkpoint_id from the return value. Call `export_checkpoint(checkpoint_id, tmp_path, tmp_path / "export")`. Assert the exported file exists and `json.loads(exported_path.read_text())["metadata"]["task_id"] == "T001"` (or whatever the structure is — read CheckpointStore.save return type first to understand the checkpoint_id and data structure).
 - [x] **T284** Rollup Tier 4 results `type:rollup` `p2` `model:claude` `rollup:T266,T267,T268,T269,T270,T271,T272,T273,T274,T275,T276,T277,T278,T279,T280,T281,T282,T283` `output:TIER4-REPORT.md`
 - [x] **T260** Create `tests/test_auth.py`. Write exactly 5 test functions using `tmp_path`. `type:code_generate` `p2` `needs:T249,T250` `model:local`
-  - - - - - - - - - `test_user_dataclass_defaults()` — create `User(user_id="u1", token="tok")`, assert `projects == []` and `api_keys == {}` and `budget_usd == 0.0`
+  - - - - - - - - - - `test_user_dataclass_defaults()` — create `User(user_id="u1", token="tok")`, assert `projects == []` and `api_keys == {}` and `budget_usd == 0.0`
 - [x] **T261** Create `tests/test_container_runner.py`. Write exactly 3 test functions. `type:code_generate` `p2` `needs:T254` `model:local`
-  - - - - - - - - - `test_container_runner_unavailable_when_no_docker()` — patch `shutil.which` to return None. Create `ContainerRunner()`. Assert `is_available() is False`.
+  - - - - - - - - - - `test_container_runner_unavailable_when_no_docker()` — patch `shutil.which` to return None. Create `ContainerRunner()`. Assert `is_available() is False`.
 - [x] **T262** Create `tests/test_user_quota.py`. Write exactly 3 test functions. `type:code_generate` `p2` `needs:T258,T259` `model:local`
-  - - - - - - - - - `test_daily_spend_for_user_sums_correctly(tmp_path)` — create `CostLedger(tmp_path)`. Record two `TokenRecord` objects with `user_id="alice"` and `cost_usd=1.0` each (today's UTC timestamp). Record one with `user_id="bob"` and `cost_usd=5.0`. Assert `ledger.daily_spend_for_user("alice") == 2.0` and `daily_spend_for_user("bob") == 5.0`.
+  - - - - - - - - - - `test_daily_spend_for_user_sums_correctly(tmp_path)` — create `CostLedger(tmp_path)`. Record two `TokenRecord` objects with `user_id="alice"` and `cost_usd=1.0` each (today's UTC timestamp). Record one with `user_id="bob"` and `cost_usd=5.0`. Assert `ledger.daily_spend_for_user("alice") == 2.0` and `daily_spend_for_user("bob") == 5.0`.
 - [x] **T265** Rollup Tier 3 results `type:rollup` `p2` `model:claude` `rollup:T249,T250,T251,T252,T253,T254,T255,T256,T257,T258,T259,T260,T261,T262,T263,T264` `output:TIER3-REPORT.md`
 - [x] **T248** Rollup Tier 2 results `type:rollup` `p2` `model:claude` `rollup:T230,T231,T232,T233,T234,T235,T236,T237,T238,T239,T240,T241,T242,T243,T244,T245,T246,T247` `output:TIER2-REPORT.md`
 - [x] **T245** Create `tests/test_shell_agent_id.py`. Write exactly 3 test functions. `type:code_generate` `p2` `needs:T239` `model:local`
-  - - - - - - - - - - - - - `test_bash_with_no_agent_id_executes_normally()` — call `bash("echo hello")` with no `agent_id`. Assert result contains "hello".
+  - - - - - - - - - - - - - - `test_bash_with_no_agent_id_executes_normally()` — call `bash("echo hello")` with no `agent_id`. Assert result contains "hello".
 - [x] **T242** Create `tests/test_file_locks.py`. Write exactly 5 test functions. `type:code_generate` `p2` `needs:T230` `model:local`
-  - - - - - - - - - - - - - `test_acquire_and_release_no_exception()` — create `FileLockRegistry()`, call `acquire("test.py")`, call `release("test.py")`, assert no exception
+  - - - - - - - - - - - - - - `test_acquire_and_release_no_exception()` — create `FileLockRegistry()`, call `acquire("test.py")`, call `release("test.py")`, assert no exception
 - [x] **T243** Create `tests/test_react_checkpoint.py`. Write exactly 3 test functions using `tmp_path`. `type:code_generate` `p2` `needs:T232,T233` `model:local`
-  - - - - - - - - - - - - - `test_save_react_checkpoint_writes_file(tmp_path)` — create `CheckpointStore(tmp_path)`, create `ReActCheckpoint(task_id="T001", iteration=5, conversation_history=[{"role": "user", "content": "hi"}])`, call `store.save_react_checkpoint(cp)`, assert the file `tmp_path / "checkpoints" / "react_T001.json"` exists (or wherever the store saves it — check CheckpointStore `__init__` for `_base_dir`)
+  - - - - - - - - - - - - - - `test_save_react_checkpoint_writes_file(tmp_path)` — create `CheckpointStore(tmp_path)`, create `ReActCheckpoint(task_id="T001", iteration=5, conversation_history=[{"role": "user", "content": "hi"}])`, call `store.save_react_checkpoint(cp)`, assert the file `tmp_path / "checkpoints" / "react_T001.json"` exists (or wherever the store saves it — check CheckpointStore `__init__` for `_base_dir`)
 - [x] **T244** Create `tests/test_mailbox.py`. Write exactly 4 test functions. `type:code_generate` `p2` `needs:T236` `model:local`
-  - - - - - - - - - - - - - `test_send_and_receive()` — get mailbox for "agent-A", send a message with content "hello", call receive, assert `msg.content == "hello"` and `msg.sender == "sender-X"`
+  - - - - - - - - - - - - - - `test_send_and_receive()` — get mailbox for "agent-A", send a message with content "hello", call receive, assert `msg.content == "hello"` and `msg.sender == "sender-X"`
 - [x] **T222** Create `tests/test_worker_protocol.py`. Write exactly 4 test functions, no fixtures. `type:code_generate` `p2` `needs:T209` `model:local`
-  - - - - - - - - - - - - - - `test_taskcontext_to_json_and_from_json()` — create a `TaskContext` with dummy string values, call `to_json()`, call `from_json()` on the result, assert all fields equal the original
+  - - - - - - - - - - - - - - - `test_taskcontext_to_json_and_from_json()` — create a `TaskContext` with dummy string values, call `to_json()`, call `from_json()` on the result, assert all fields equal the original
 - [x] **T223** Create `tests/test_subprocess_runner.py`. Write exactly 3 test functions using `unittest.mock.patch`. `type:code_generate` `p2` `needs:T211` `model:local`
-  - - - - - - - - - - - - - - `test_run_task_isolated_success()` — patch `subprocess.Popen` to return a mock whose `.stdout` yields two lines: `WorkerEvent(type="agent_step", task_id="T001", payload={"thought":"x"}).to_json()` and `WorkerResult(task_id="T001", success=True, result="done").to_json()`. Patch `.wait()` to return 0. Assert `SubprocessRunner().run_task_isolated(ctx, None, None).success is True`
+  - - - - - - - - - - - - - - - `test_run_task_isolated_success()` — patch `subprocess.Popen` to return a mock whose `.stdout` yields two lines: `WorkerEvent(type="agent_step", task_id="T001", payload={"thought":"x"}).to_json()` and `WorkerResult(task_id="T001", success=True, result="done").to_json()`. Patch `.wait()` to return 0. Assert `SubprocessRunner().run_task_isolated(ctx, None, None).success is True`
 - [x] **T224** Create `tests/test_agent_cancel.py`. Write exactly 3 test functions. `type:code_generate` `p2` `needs:T215,T216` `model:local`
-  - - - - - - - - - - - - - - `test_cancel_sets_event()` — import `BaseAgent` (or a concrete subclass like `DeveloperAgent`). Create an instance with minimal args (mock project_dir, empty session_context). Call `.cancel()`. Assert `agent._cancel_event.is_set() is True`
+  - - - - - - - - - - - - - - - `test_cancel_sets_event()` — import `BaseAgent` (or a concrete subclass like `DeveloperAgent`). Create an instance with minimal args (mock project_dir, empty session_context). Call `.cancel()`. Assert `agent._cancel_event.is_set() is True`
 - [x] **T225** Create `tests/test_watchdog.py`. Write exactly 4 test functions using `tmp_path` and mocks. `type:code_generate` `p2` `needs:T218` `model:local`
-  - - - - - - - - - - - - - - `test_watchdog_starts_and_stops()` — create a mock Session with `tasks=[]`. Create `TaskWatchdog(session, stuck_threshold_s=60)`. Call `start()` then `stop()`. Assert no exception is raised.
+  - - - - - - - - - - - - - - - `test_watchdog_starts_and_stops()` — create a mock Session with `tasks=[]`. Create `TaskWatchdog(session, stuck_threshold_s=60)`. Call `start()` then `stop()`. Assert no exception is raised.
 - [x] **T226** Create `tests/test_cycle_detection.py`. Write exactly 3 test functions. `type:code_generate` `p2` `needs:T220` `model:local`
-  - - - - - - - - - - - - - - Import `DependencyGraph, CyclicDependencyError, Scheduler` from `orchid.scheduler`. Use mock Task objects with `id`, `depends_on`, `rollup_sources`, `status`, `priority` attributes.
+  - - - - - - - - - - - - - - - Import `DependencyGraph, CyclicDependencyError, Scheduler` from `orchid.scheduler`. Use mock Task objects with `id`, `depends_on`, `rollup_sources`, `status`, `priority` attributes.
 - [x] **T229** Rollup Tier 1 results `type:rollup` `p2` `model:claude` `rollup:T209,T210,T211,T212,T213,T214,T215,T216,T217,T218,T219,T220,T221,T222,T223,T224,T225,T226,T227,T228` `output:TIER1-REPORT.md`
 - [x] **T139** Create `orchid/checkpoint/store.py`. Implement exactly this class: `type:draft` `p2`
 - [x] **T140** Create `orchid/checkpoint/restore.py`. Implement exactly these two functions: `type:draft` `p2`

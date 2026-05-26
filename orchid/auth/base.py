@@ -82,3 +82,25 @@ class BaseUserStore(ABC):
 
     @abstractmethod
     def list_oauth_accounts_for_user(self, user_id: str) -> list[OAuthAccount]: ...
+
+    # ── scheduled tasks ───────────────────────────────────────────────────────
+
+    @abstractmethod
+    def upsert_scheduled_task(self, user_id: str, task_data: dict) -> None:
+        """Create or replace a scheduled task for *user_id*. *task_data* is a dict."""
+        ...
+
+    @abstractmethod
+    def get_scheduled_task(self, user_id: str, task_id: str) -> dict | None:
+        """Return the stored dict for one scheduled task, or ``None``."""
+        ...
+
+    @abstractmethod
+    def delete_scheduled_task(self, user_id: str, task_id: str) -> bool:
+        """Remove a scheduled task. Returns ``True`` if it existed."""
+        ...
+
+    @abstractmethod
+    def get_all_enabled_scheduled_tasks(self) -> list[tuple[str, dict]]:
+        """Return all enabled scheduled tasks across all users as ``(user_id, task_dict)`` tuples."""
+        ...
