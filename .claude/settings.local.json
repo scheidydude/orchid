@@ -35,7 +35,21 @@
       "Bash(xargs ls *)",
       "Bash(awk '{print $9, \"\\(\" $5 \"\\)\"}')",
       "Bash(curl *)",
-      "Bash(uv tool *)"
+      "Bash(uv tool *)",
+      "Bash(grep -i \":\\\\s*[a-zA-Z0-9_\\\\-]{20,}\")",
+      "Bash(grep -r -n \"-----BEGIN\\\\|-----END\" /Users/david/Development/scheidydudes-github-repos/orchid --include=\"*.py\" --include=\"*.json\" --include=\"*.md\" --include=\"*.yaml\" --include=\"*.yml\")",
+      "Bash(grep -r -E \"['\\\\\"].*[A-Za-z0-9+/]{40,}['\\\\\"]\" /Users/david/Development/scheidydudes-github-repos/orchid --include=\"*.py\" --include=\"*.yaml\" --include=\"*.yml\" --include=\"*.json\" --include=\"*.md\")",
+      "Bash(timeout 5 codeindex serve --mcp)",
+      "Bash(gtimeout 5 codeindex serve --mcp)",
+      "Bash(codeindex --version)",
+      "Bash(codeindex serve *)",
+      "mcp__codeindex__lookup_symbol",
+      "Bash(codeindex lookup-symbol *)",
+      "Bash(codeindex lookup_symbol RemoteDispatcherError)",
+      "Bash(codeindex lookup *)"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "codeindex"
+  ]
 }

@@ -77,5 +77,8 @@ Skip: `- [~] **T003**`. Rollup: `- [ ] **T099** \`type:rollup\` \`rollup:T090,T0
 *   **Auth P4** PKCE mobile: S256 verify, `/token` endpoint, code_verifier forwarded to provider (D0058).
 *   **Auth P5** Audit log + user management + per-project scoping (D0059–D0060).
 
+## Tooling
+Prefer `codeindex` CLI via Bash over MCP tools for symbol lookup and indexing operations.
+
 ## Install
 `uv venv && uv pip install -e ".[dev]"`. Env: `~/.config/orchid/.env`. `ANTHROPIC_API_KEY` required. `JWT_SECRET` required for web auth.
