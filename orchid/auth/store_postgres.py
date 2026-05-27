@@ -5,39 +5,50 @@ Requires psycopg2-binary:
 
 Set ORCHID_AUTH_STORE_DSN to a libpq connection string and get_store()
 will automatically use this backend:
-    ORCHID_AUTH_STORE_DSN=postgresql://user:pass@host:5432/orchid
+    ORCHID_AUTH_STORE_DSN=postgresql://orchid:orchid_dev@localhost/orchid
 
 Tables are created on first connect (CREATE TABLE IF NOT EXISTS).
-All table names are prefixed with `orchid_` to avoid conflicts.
+Column additions use ALTER TABLE … IF NOT EXISTS so re-running _init_schema
+is safe on an existing database.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime
+from typing import Any
 
 import psycopg2
 import psycopg2.extras
 from psycopg2.pool import ThreadedConnectionPool
 
 from orchid.auth.base import BaseUserStore
-from orchid.auth.types import ApiKey, AuthError, OAuthAccount, RefreshToken, User
+from orchid.auth.types import ApiKey, AuthError, InviteToken, OAuthAccount, RefreshToken, User
 
 logger = logging.getLogger(__name__)
 
+# ── Schema ────────────────────────────────────────────────────────────────────
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS orchid_users (
-    user_id      TEXT PRIMARY KEY,
-    username     TEXT UNIQUE NOT NULL,
-    email        TEXT,
-    role         TEXT NOT NULL DEFAULT 'user',
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    is_active    BOOLEAN NOT NULL DEFAULT TRUE,
-    projects     JSONB NOT NULL DEFAULT '[]',
-    api_keys     JSONB NOT NULL DEFAULT '{}',
-    budget_usd   DOUBLE PRECISION NOT NULL DEFAULT 0.0,
-    password_hash TEXT,
-    token        TEXT NOT NULL DEFAULT ''
+    user_id              TEXT PRIMARY KEY,
+    username             TEXT UNIQUE NOT NULL,
+    email                TEXT,
+    role                 TEXT NOT NULL DEFAULT 'user',
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    is_active            BOOLEAN NOT NULL DEFAULT TRUE,
+    projects             JSONB NOT NULL DEFAULT '[]',
+    api_keys             JSONB NOT NULL DEFAULT '{}',
+    budget_usd           DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    budget_used_usd      DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    cpu_budget_seconds   DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    cpu_used_seconds     DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    cpu_last_reset_date  TEXT NOT NULL DEFAULT '',
+    password_hash        TEXT,
+    token                TEXT NOT NULL DEFAULT '',
+    scheduled_tasks      JSONB NOT NULL DEFAULT '[]',
+    notification_config  JSONB NOT NULL DEFAULT '{}'
 );
 
 CREATE TABLE IF NOT EXISTS orchid_refresh_tokens (
@@ -72,7 +83,45 @@ CREATE TABLE IF NOT EXISTS orchid_oauth_accounts (
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (provider, provider_user_id)
 );
+
+CREATE TABLE IF NOT EXISTS orchid_invites (
+    token_id    TEXT PRIMARY KEY,
+    secret_hash TEXT NOT NULL,
+    user_id     TEXT NOT NULL,
+    email       TEXT NOT NULL,
+    invited_by  TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL,
+    expires_at  TIMESTAMPTZ NOT NULL,
+    is_used     BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+CREATE TABLE IF NOT EXISTS orchid_scheduled_tasks (
+    task_id    TEXT NOT NULL,
+    user_id    TEXT NOT NULL,
+    task_data  JSONB NOT NULL,
+    PRIMARY KEY (task_id, user_id)
+);
 """
+
+# Idempotent column migrations for databases created with the old stub schema.
+_MIGRATIONS = [
+    "ALTER TABLE orchid_users ADD COLUMN IF NOT EXISTS budget_used_usd DOUBLE PRECISION NOT NULL DEFAULT 0.0",
+    "ALTER TABLE orchid_users ADD COLUMN IF NOT EXISTS cpu_budget_seconds DOUBLE PRECISION NOT NULL DEFAULT 0.0",
+    "ALTER TABLE orchid_users ADD COLUMN IF NOT EXISTS cpu_used_seconds DOUBLE PRECISION NOT NULL DEFAULT 0.0",
+    "ALTER TABLE orchid_users ADD COLUMN IF NOT EXISTS cpu_last_reset_date TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE orchid_users ADD COLUMN IF NOT EXISTS scheduled_tasks JSONB NOT NULL DEFAULT '[]'",
+    "ALTER TABLE orchid_users ADD COLUMN IF NOT EXISTS notification_config JSONB NOT NULL DEFAULT '{}'",
+]
+
+
+# ── Row → dataclass converters ─────────────────────────────────────────────────
+
+def _dt(v: Any) -> datetime | None:
+    if v is None:
+        return None
+    if isinstance(v, datetime):
+        return v
+    return datetime.fromisoformat(str(v))
 
 
 def _row_to_user(row: dict) -> User:
@@ -81,13 +130,19 @@ def _row_to_user(row: dict) -> User:
         username=row["username"],
         email=row["email"],
         role=row["role"],
-        created_at=row["created_at"],
+        created_at=_dt(row["created_at"]) or datetime.now(),
         is_active=row["is_active"],
-        projects=row["projects"] or [],
-        api_keys=row["api_keys"] or {},
-        budget_usd=row["budget_usd"],
-        password_hash=row["password_hash"],
-        token=row["token"] or "",
+        projects=row.get("projects") or [],
+        api_keys=row.get("api_keys") or {},
+        budget_usd=row.get("budget_usd") or 0.0,
+        budget_used_usd=row.get("budget_used_usd") or 0.0,
+        cpu_budget_seconds=row.get("cpu_budget_seconds") or 0.0,
+        cpu_used_seconds=row.get("cpu_used_seconds") or 0.0,
+        cpu_last_reset_date=row.get("cpu_last_reset_date") or "",
+        password_hash=row.get("password_hash"),
+        token=row.get("token") or "",
+        scheduled_tasks=row.get("scheduled_tasks") or [],
+        notification_config=row.get("notification_config") or {},
     )
 
 
@@ -96,8 +151,8 @@ def _row_to_rt(row: dict) -> RefreshToken:
         token_id=row["token_id"],
         user_id=row["user_id"],
         token_hash=row["token_hash"],
-        expires_at=row["expires_at"],
-        created_at=row["created_at"],
+        expires_at=_dt(row["expires_at"]),
+        created_at=_dt(row["created_at"]) or datetime.now(),
         is_revoked=row["is_revoked"],
     )
 
@@ -108,10 +163,10 @@ def _row_to_ak(row: dict) -> ApiKey:
         secret_hash=row["secret_hash"],
         user_id=row["user_id"],
         name=row["name"],
-        scopes=row["scopes"] or [],
-        created_at=row["created_at"],
-        last_used=row["last_used"],
-        expires_at=row["expires_at"],
+        scopes=row.get("scopes") or [],
+        created_at=_dt(row["created_at"]) or datetime.now(),
+        last_used=_dt(row.get("last_used")),
+        expires_at=_dt(row.get("expires_at")),
         is_active=row["is_active"],
     )
 
@@ -123,18 +178,60 @@ def _row_to_oa(row: dict) -> OAuthAccount:
         user_id=row["user_id"],
         email=row["email"],
         access_token=row["access_token"],
-        refresh_token=row["refresh_token"],
-        expires_at=row["expires_at"],
-        created_at=row["created_at"],
+        refresh_token=row.get("refresh_token"),
+        expires_at=_dt(row.get("expires_at")),
+        created_at=_dt(row["created_at"]) or datetime.now(),
     )
 
+
+def _row_to_invite(row: dict) -> InviteToken:
+    return InviteToken(
+        token_id=row["token_id"],
+        secret_hash=row["secret_hash"],
+        user_id=row["user_id"],
+        email=row["email"],
+        invited_by=row["invited_by"],
+        created_at=_dt(row["created_at"]) or datetime.now(),
+        expires_at=_dt(row["expires_at"]),
+        is_used=row["is_used"],
+    )
+
+
+# ── Pool context manager ───────────────────────────────────────────────────────
+
+class _PoolConn:
+    """Borrow a connection, auto-commit or rollback, return to pool."""
+
+    def __init__(self, pool: ThreadedConnectionPool) -> None:
+        self._pool = pool
+        self._conn = None
+        self._cur = None
+
+    def __enter__(self):
+        self._conn = self._pool.getconn()
+        self._cur = self._conn.cursor()
+        return self._cur
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is None:
+            self._conn.commit()
+        else:
+            self._conn.rollback()
+        self._cur.close()
+        self._pool.putconn(self._conn)
+        return False
+
+
+# ── PostgresUserStore ──────────────────────────────────────────────────────────
 
 class PostgresUserStore(BaseUserStore):
     """UserStore backed by PostgreSQL. Thread-safe via connection pool."""
 
     def __init__(self, dsn: str, minconn: int = 2, maxconn: int = 10) -> None:
-        self._pool = ThreadedConnectionPool(minconn, maxconn, dsn,
-                                            cursor_factory=psycopg2.extras.RealDictCursor)
+        self._pool = ThreadedConnectionPool(
+            minconn, maxconn, dsn,
+            cursor_factory=psycopg2.extras.RealDictCursor,
+        )
         self._init_schema()
         logger.info("PostgresUserStore connected (pool %d–%d)", minconn, maxconn)
 
@@ -143,11 +240,13 @@ class PostgresUserStore(BaseUserStore):
         try:
             with conn.cursor() as cur:
                 cur.execute(_SCHEMA)
+                for stmt in _MIGRATIONS:
+                    cur.execute(stmt)
             conn.commit()
         finally:
             self._pool.putconn(conn)
 
-    def _conn(self):
+    def _conn(self) -> _PoolConn:
         return _PoolConn(self._pool)
 
     # ── users ─────────────────────────────────────────────────────────────────
@@ -157,15 +256,24 @@ class PostgresUserStore(BaseUserStore):
             try:
                 cur.execute(
                     """
-                    INSERT INTO orchid_users
-                        (user_id, username, email, role, created_at, is_active,
-                         projects, api_keys, budget_usd, password_hash, token)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    INSERT INTO orchid_users (
+                        user_id, username, email, role, created_at, is_active,
+                        projects, api_keys, budget_usd, budget_used_usd,
+                        cpu_budget_seconds, cpu_used_seconds, cpu_last_reset_date,
+                        password_hash, token, scheduled_tasks, notification_config
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     """,
-                    (user.user_id, user.username, user.email, user.role,
-                     user.created_at, user.is_active,
-                     json.dumps(user.projects), json.dumps(user.api_keys),
-                     user.budget_usd, user.password_hash, user.token),
+                    (
+                        user.user_id, user.username, user.email, user.role,
+                        user.created_at, user.is_active,
+                        json.dumps(user.projects), json.dumps(user.api_keys),
+                        user.budget_usd, user.budget_used_usd,
+                        user.cpu_budget_seconds, user.cpu_used_seconds,
+                        user.cpu_last_reset_date,
+                        user.password_hash, user.token,
+                        json.dumps(user.scheduled_tasks),
+                        json.dumps(user.notification_config),
+                    ),
                 )
             except psycopg2.errors.UniqueViolation:
                 raise AuthError(f"User {user.user_id!r} already exists")
@@ -176,14 +284,25 @@ class PostgresUserStore(BaseUserStore):
                 """
                 UPDATE orchid_users SET
                     username=%s, email=%s, role=%s, is_active=%s,
-                    projects=%s, api_keys=%s, budget_usd=%s,
-                    password_hash=%s, token=%s
+                    projects=%s, api_keys=%s,
+                    budget_usd=%s, budget_used_usd=%s,
+                    cpu_budget_seconds=%s, cpu_used_seconds=%s,
+                    cpu_last_reset_date=%s,
+                    password_hash=%s, token=%s,
+                    scheduled_tasks=%s, notification_config=%s
                 WHERE user_id=%s
                 """,
-                (user.username, user.email, user.role, user.is_active,
-                 json.dumps(user.projects), json.dumps(user.api_keys),
-                 user.budget_usd, user.password_hash, user.token,
-                 user.user_id),
+                (
+                    user.username, user.email, user.role, user.is_active,
+                    json.dumps(user.projects), json.dumps(user.api_keys),
+                    user.budget_usd, user.budget_used_usd,
+                    user.cpu_budget_seconds, user.cpu_used_seconds,
+                    user.cpu_last_reset_date,
+                    user.password_hash, user.token,
+                    json.dumps(user.scheduled_tasks),
+                    json.dumps(user.notification_config),
+                    user.user_id,
+                ),
             )
             if cur.rowcount == 0:
                 raise AuthError(f"User {user.user_id!r} not found")
@@ -195,7 +314,7 @@ class PostgresUserStore(BaseUserStore):
     def delete_user(self, user_id: str) -> bool:
         with self._conn() as cur:
             cur.execute("DELETE FROM orchid_users WHERE user_id=%s", (user_id,))
-            return cur.rowcount > 0
+            return (cur.rowcount or 0) > 0
 
     def list_users(self) -> list[User]:
         with self._conn() as cur:
@@ -230,7 +349,9 @@ class PostgresUserStore(BaseUserStore):
 
     def get_user_by_email(self, email: str) -> User | None:
         with self._conn() as cur:
-            cur.execute("SELECT * FROM orchid_users WHERE lower(email)=lower(%s)", (email,))
+            cur.execute(
+                "SELECT * FROM orchid_users WHERE lower(email)=lower(%s)", (email,)
+            )
             row = cur.fetchone()
             return _row_to_user(row) if row else None
 
@@ -254,7 +375,9 @@ class PostgresUserStore(BaseUserStore):
 
     def get_refresh_token(self, token_id: str) -> RefreshToken | None:
         with self._conn() as cur:
-            cur.execute("SELECT * FROM orchid_refresh_tokens WHERE token_id=%s", (token_id,))
+            cur.execute(
+                "SELECT * FROM orchid_refresh_tokens WHERE token_id=%s", (token_id,)
+            )
             row = cur.fetchone()
             return _row_to_rt(row) if row else None
 
@@ -300,8 +423,10 @@ class PostgresUserStore(BaseUserStore):
 
     def list_api_keys(self, user_id: str) -> list[ApiKey]:
         with self._conn() as cur:
-            cur.execute("SELECT * FROM orchid_api_keys WHERE user_id=%s ORDER BY created_at",
-                        (user_id,))
+            cur.execute(
+                "SELECT * FROM orchid_api_keys WHERE user_id=%s ORDER BY created_at",
+                (user_id,),
+            )
             return [_row_to_ak(r) for r in cur.fetchall()]
 
     def revoke_api_key(self, key_id: str) -> bool:
@@ -309,7 +434,7 @@ class PostgresUserStore(BaseUserStore):
             cur.execute(
                 "UPDATE orchid_api_keys SET is_active=FALSE WHERE key_id=%s", (key_id,)
             )
-            return cur.rowcount > 0
+            return (cur.rowcount or 0) > 0
 
     def touch_api_key(self, key_id: str) -> None:
         with self._conn() as cur:
@@ -341,7 +466,8 @@ class PostgresUserStore(BaseUserStore):
     def get_oauth_account(self, provider: str, provider_user_id: str) -> OAuthAccount | None:
         with self._conn() as cur:
             cur.execute(
-                "SELECT * FROM orchid_oauth_accounts WHERE provider=%s AND provider_user_id=%s",
+                "SELECT * FROM orchid_oauth_accounts "
+                "WHERE provider=%s AND provider_user_id=%s",
                 (provider, provider_user_id),
             )
             row = cur.fetchone()
@@ -354,24 +480,79 @@ class PostgresUserStore(BaseUserStore):
             )
             return [_row_to_oa(r) for r in cur.fetchall()]
 
+    # ── Scheduled tasks ───────────────────────────────────────────────────────
 
-class _PoolConn:
-    """Context manager: borrow a connection, auto-commit or rollback, return to pool."""
+    def upsert_scheduled_task(self, user_id: str, task_data: dict) -> None:
+        task_id = task_data["task_id"]
+        with self._conn() as cur:
+            cur.execute(
+                """
+                INSERT INTO orchid_scheduled_tasks (task_id, user_id, task_data)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (task_id, user_id) DO UPDATE SET task_data=EXCLUDED.task_data
+                """,
+                (task_id, user_id, json.dumps(task_data)),
+            )
 
-    def __init__(self, pool: ThreadedConnectionPool) -> None:
-        self._pool = pool
-        self._conn = None
+    def get_scheduled_task(self, user_id: str, task_id: str) -> dict | None:
+        with self._conn() as cur:
+            cur.execute(
+                "SELECT task_data FROM orchid_scheduled_tasks "
+                "WHERE task_id=%s AND user_id=%s",
+                (task_id, user_id),
+            )
+            row = cur.fetchone()
+            return dict(row["task_data"]) if row else None
 
-    def __enter__(self):
-        self._conn = self._pool.getconn()
-        self._cur = self._conn.cursor()
-        return self._cur
+    def delete_scheduled_task(self, user_id: str, task_id: str) -> bool:
+        with self._conn() as cur:
+            cur.execute(
+                "DELETE FROM orchid_scheduled_tasks WHERE task_id=%s AND user_id=%s",
+                (task_id, user_id),
+            )
+            return (cur.rowcount or 0) > 0
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if exc_type is None:
-            self._conn.commit()
-        else:
-            self._conn.rollback()
-        self._cur.close()
-        self._pool.putconn(self._conn)
-        return False
+    def get_all_enabled_scheduled_tasks(self) -> list[tuple[str, dict]]:
+        with self._conn() as cur:
+            cur.execute(
+                "SELECT user_id, task_data FROM orchid_scheduled_tasks "
+                "WHERE (task_data->>'enabled')::boolean IS NOT FALSE"
+            )
+            return [
+                (row["user_id"], dict(row["task_data"]))
+                for row in cur.fetchall()
+            ]
+
+    # ── Invite tokens ─────────────────────────────────────────────────────────
+
+    def store_invite(self, invite: InviteToken) -> None:
+        with self._conn() as cur:
+            cur.execute(
+                """
+                INSERT INTO orchid_invites
+                    (token_id, secret_hash, user_id, email, invited_by,
+                     created_at, expires_at, is_used)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (token_id) DO UPDATE SET
+                    secret_hash=EXCLUDED.secret_hash,
+                    is_used=EXCLUDED.is_used
+                """,
+                (invite.token_id, invite.secret_hash, invite.user_id,
+                 invite.email, invite.invited_by,
+                 invite.created_at, invite.expires_at, invite.is_used),
+            )
+
+    def get_invite(self, token_id: str) -> InviteToken | None:
+        with self._conn() as cur:
+            cur.execute(
+                "SELECT * FROM orchid_invites WHERE token_id=%s", (token_id,)
+            )
+            row = cur.fetchone()
+            return _row_to_invite(row) if row else None
+
+    def mark_invite_used(self, token_id: str) -> None:
+        with self._conn() as cur:
+            cur.execute(
+                "UPDATE orchid_invites SET is_used=TRUE WHERE token_id=%s",
+                (token_id,),
+            )

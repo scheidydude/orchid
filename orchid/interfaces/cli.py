@@ -1810,6 +1810,130 @@ def serve(
 
 
 
+# ── migrate-to-postgres ───────────────────────────────────────────────────────
+
+@app.command(name="migrate-to-postgres")
+def migrate_to_postgres(
+    dsn: str = typer.Option(
+        ...,
+        "--dsn",
+        envvar="ORCHID_AUTH_STORE_DSN",
+        help="Postgres DSN: postgresql://user:pass@host/db",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Print what would be migrated without writing to Postgres",
+    ),
+) -> None:
+    """Migrate users, tokens, and keys from FileUserStore → PostgresUserStore.
+
+    Reads the JSON store at ~/.config/orchid/users.json and copies all records
+    to the target Postgres database. Existing rows are skipped (not overwritten).
+
+    Example:
+      orchid migrate-to-postgres --dsn postgresql://orchid:orchid_dev@localhost/orchid
+      ORCHID_AUTH_STORE_DSN=... orchid migrate-to-postgres
+    """
+    from orchid.auth.store import FileUserStore
+
+    try:
+        import psycopg2  # noqa: F401
+    except ImportError:
+        console.print("[red]psycopg2 not installed. Run: uv pip install 'orchid[postgres]'[/red]")
+        raise typer.Exit(1)
+
+    from orchid.auth.store_postgres import PostgresUserStore
+
+    users_json = Path("~/.config/orchid/users.json").expanduser()
+    if not users_json.exists():
+        console.print(f"[yellow]No FileUserStore found at {users_json} — nothing to migrate.[/yellow]")
+        raise typer.Exit(0)
+
+    source = FileUserStore(path=users_json)
+
+    if dry_run:
+        console.print(f"[dim]DRY RUN — reading from {users_json}, no writes to Postgres[/dim]")
+        target = None
+    else:
+        try:
+            target = PostgresUserStore(dsn, minconn=1, maxconn=3)
+        except Exception as exc:
+            console.print(f"[red]Cannot connect to Postgres: {exc}[/red]")
+            raise typer.Exit(1)
+
+    users = source.list_users()
+    console.print(f"Found [bold]{len(users)}[/bold] users in FileUserStore")
+
+    migrated_users = 0
+    skipped_users = 0
+    migrated_keys = 0
+    migrated_tasks = 0
+
+    for u in users:
+        if dry_run:
+            console.print(f"  [cyan]user[/cyan] {u.user_id!r} ({u.username})")
+            # Count their API keys from user.api_keys dict
+            migrated_keys += len(u.api_keys)
+            migrated_tasks += len(u.scheduled_tasks)
+            migrated_users += 1
+            continue
+
+        # Users
+        try:
+            target.add_user(u)
+            migrated_users += 1
+            console.print(f"  ✓ user {u.user_id!r} ({u.username})")
+        except Exception as exc:
+            # AuthError = already exists; skip gracefully
+            skipped_users += 1
+            console.print(f"  [yellow]skip[/yellow] user {u.user_id!r}: {exc}")
+            continue
+
+        # API keys (stored inside user.api_keys dict: {key_id: ApiKey-dict})
+        from orchid.auth.types import ApiKey
+        from datetime import datetime
+        for key_id, ak_data in u.api_keys.items():
+            try:
+                if isinstance(ak_data, dict):
+                    ak = ApiKey(
+                        key_id=ak_data.get("key_id", key_id),
+                        secret_hash=ak_data.get("secret_hash", ""),
+                        user_id=u.user_id,
+                        name=ak_data.get("name", ""),
+                        scopes=ak_data.get("scopes", []),
+                        created_at=datetime.fromisoformat(ak_data["created_at"]) if ak_data.get("created_at") else datetime.now(),
+                        is_active=ak_data.get("is_active", True),
+                    )
+                else:
+                    ak = ak_data
+                    ak.user_id = u.user_id
+                target.store_api_key(ak)
+                migrated_keys += 1
+            except Exception as exc:
+                console.print(f"    [yellow]skip[/yellow] api_key {key_id!r}: {exc}")
+
+        # Scheduled tasks (stored as list of dicts in user.scheduled_tasks)
+        for task_dict in (u.scheduled_tasks or []):
+            try:
+                if isinstance(task_dict, dict) and "task_id" in task_dict:
+                    target.upsert_scheduled_task(u.user_id, task_dict)
+                    migrated_tasks += 1
+            except Exception as exc:
+                console.print(f"    [yellow]skip[/yellow] task {task_dict.get('task_id')!r}: {exc}")
+
+    action = "Would migrate" if dry_run else "Migrated"
+    console.print(
+        f"\n[green]{action}[/green]: "
+        f"{migrated_users} users, {migrated_keys} API keys, {migrated_tasks} scheduled tasks. "
+        f"Skipped: {skipped_users} existing users."
+    )
+    if not dry_run:
+        console.print(
+            f"\n[dim]Set ORCHID_AUTH_STORE_DSN={dsn!r} to use Postgres going forward.[/dim]"
+        )
+
+
 # ── MCP sub-app ───────────────────────────────────────────────────────────────
 
 mcp_app = typer.Typer(

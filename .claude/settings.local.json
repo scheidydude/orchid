@@ -46,7 +46,12 @@
       "mcp__codeindex__lookup_symbol",
       "Bash(codeindex lookup-symbol *)",
       "Bash(codeindex lookup_symbol RemoteDispatcherError)",
-      "Bash(codeindex lookup *)"
+      "Bash(codeindex lookup *)",
+      "Read(//home/dave/.config/orchid/**)",
+      "Skill(caveman:caveman-commit)",
+      "Bash(npm install *)",
+      "Bash(tee /tmp/suite_run.txt)",
+      "Bash(grep -v \"^$\")"
     ]
   },
   "enabledMcpjsonServers": [
