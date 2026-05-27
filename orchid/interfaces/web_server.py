@@ -232,6 +232,11 @@ def _unregister_project(path: str) -> str | None:
         _managers.pop(pid_to_remove, None)
         del _projects[pid_to_remove]
     logger.info("Unregistered project: %s", pid_to_remove)
+    try:
+        from orchid.projects.registry import get_registry as _get_proj_reg
+        _get_proj_reg().unregister(pid_to_remove)
+    except Exception as _exc:
+        logger.warning("Project registry unregister failed: %s", _exc)
     return pid_to_remove
 
 
@@ -1498,11 +1503,25 @@ def create_app(
         return registry.all_status()
 
     @app.get("/api/projects")
-    async def get_projects():
+    async def get_projects(
+        current_user: "User | None" = Depends(get_optional_user),
+    ):
         with _state_lock:
             items = list(_projects.items())
+
+        # D0060: apply per-user project whitelist when set
+        allowed_ids: set[str] | None = None
+        if current_user is not None and current_user.role != "admin":
+            if current_user.projects:
+                allowed_ids = set(current_user.projects)
+
+        from orchid.projects.registry import get_registry as _get_proj_reg
+        proj_reg = _get_proj_reg()
+
         result = []
         for pid, path in items:
+            if allowed_ids is not None and pid not in allowed_ids:
+                continue
             try:
                 s = _load_session(path)
                 from orchid.memory.state import TaskStatus
@@ -1520,7 +1539,8 @@ def create_app(
                     is_active = _yd.get("active", True)
                 except Exception:
                     is_active = True
-                result.append({
+                entry = proj_reg.get(pid)
+                row: dict = {
                     "id": pid,
                     "name": s.project_name,
                     "path": path,
@@ -1535,7 +1555,9 @@ def create_app(
                     "persistent": persistent,
                     "last_session": _last_session_timestamp(path),
                     "active": is_active,
-                })
+                    "owner_id": entry.owner_id if entry else "",
+                }
+                result.append(row)
             except Exception as exc:
                 result.append({"id": pid, "path": path, "error": str(exc)})
         return result
@@ -1891,9 +1913,22 @@ def create_app(
                 raise HTTPException(403, "Project creation is disabled by admin")
         from orchid.machine_profile import MachineProfile
         from orchid.project_creator import ProjectCreator
+        from orchid.projects.registry import get_registry as _get_proj_reg, user_project_base
         profile = MachineProfile.load()
         creator = ProjectCreator(machine_profile=profile)
-        base_dir = Path(body.base_dir).expanduser() if body.base_dir else None
+
+        # Authenticated non-admin users get a per-user namespace by default
+        owner_id = ""
+        if body.base_dir:
+            base_dir: Path | None = Path(body.base_dir).expanduser()
+        elif current_user is not None and current_user.role != "admin":
+            base_dir = user_project_base(current_user.user_id)
+            owner_id = current_user.user_id
+        else:
+            base_dir = None
+            if current_user is not None:
+                owner_id = current_user.user_id
+
         suggested = (
             (base_dir / body.name).resolve() if base_dir
             else creator.confirm_path(body.name, body.project_type).resolve()
@@ -1921,13 +1956,20 @@ def create_app(
                         break
         if not pid:
             raise HTTPException(status_code=500, detail="Created but failed to register project")
+
+        # Record ownership in project registry
+        try:
+            _get_proj_reg().register(pid, str(project_dir), owner_id)
+        except Exception as _exc:
+            logger.warning("Project registry register failed: %s", _exc)
+
         loop_ref = _main_loop
         if loop_ref and not loop_ref.is_closed():
             _broadcast_to_all(
                 {"type": "project_added", "data": {"project_id": pid, "path": str(project_dir)}},
                 loop_ref,
             )
-        return {"project_id": pid, "path": str(project_dir)}
+        return {"project_id": pid, "path": str(project_dir), "owner_id": owner_id}
 
     @app.get("/api/projects/{project_id}/lifecycle")
     async def get_lifecycle(project_id: str):
