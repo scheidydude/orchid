@@ -121,10 +121,17 @@ GET  /api/scheduler/runs            all runs for current user
 `GOOGLE_CLIENT_ID/SECRET`, `AZURE_TENANT_ID/CLIENT_ID/SECRET` — optional OAuth.
 `SMTP_HOST/PORT/USER/PASSWORD/FROM/USE_SSL` — optional email notifications.
 `TELEGRAM_BOT_TOKEN`, `SLACK_BOT_TOKEN` — optional bot interfaces.
+`ORCHID_AUTH_STORE_DSN` — optional; if set, `get_store()` uses `PostgresUserStore` instead of `FileUserStore`. Format: `postgresql://user:pass@host/db`. Requires `psycopg2-binary` (`uv pip install 'orchid[postgres]'`).
 
 ## Current State
-**V3.0 Complete. 158 tests passing at commit `f30567a`.**
-Multi-user OS phases all done. Test breakdown: 87 (Phases 1–2) + 65 (Phase 3 MCP) + 9 (Phase 4 admin API) + 33 (Phase 5 budget + stretch).
+**V3.0 Complete + post-v3 hardening. 286 new-feature tests passing at commit `5541403`.**
+Multi-user OS phases all done + post-v3 items complete. Test breakdown: 87 (Phases 1–2) + 65 (Phase 3 MCP) + 9 (Phase 4 admin API) + 33 (Phase 5 budget + stretch) + 19 (bot DM wiring) + 7 (allow_user_projects) + 21 (project registry) + 39 (PostgresUserStore) + 6 (misc) = 286.
+
+**Post-v3 items (commit `7cb35c0`–`5541403`):**
+*   **Bot DM notifications**: `CentralBotManager.send_telegram_dm()` / `send_slack_dm()`; `dispatch_task_notification()` wired to live bots via `get_bot_manager()` singleton (no circular import). `set_bot_manager()` called in `web_server.py` after bot start.
+*   **`allow_user_projects` flag**: `web.allow_user_projects` config key; `POST /api/projects` returns 403 for non-admin when disabled; admin bypasses; Telegram `_cmd_new` + Slack `_handle_new` both check flag and reply with error.
+*   **Project ownership registry**: `orchid/projects/registry.py` — JSON-backed `ProjectRegistry`; `user_project_base(uid)` → `~/.config/orchid/projects/{uid}/`; `GET /api/projects` filters by `User.projects` whitelist (D0060); `POST /api/projects` records ownership + routes user projects to user namespace; `_unregister_project()` calls `registry.unregister()`.
+*   **PostgresUserStore** (`orchid/auth/store_postgres.py`): full production backend; `ThreadedConnectionPool`; all 6 tables + idempotent `ALTER TABLE … ADD COLUMN IF NOT EXISTS` migrations; `get_store()` auto-selects when `ORCHID_AUTH_STORE_DSN` set. `orchid migrate-to-postgres --dsn DSN [--dry-run]` copies FileUserStore → Postgres. Tested against live DB (postgresql://orchid:orchid_dev@localhost/orchid).
 
 *   **Multi-user P1** User Portal SPA `/app/`: dashboard, settings (vault, notifications, API keys, MCP servers), accept-invite.
 *   **Multi-user P2** Credential vault (Fernet/HKDF), notification config, admin-invite flow, `InviteToken`.
@@ -133,6 +140,10 @@ Multi-user OS phases all done. Test breakdown: 87 (Phases 1–2) + 65 (Phase 3 M
 *   **Multi-user P5** `BudgetGuard` (LLM + CPU), `vault_env_context` (thread-local), budget reset endpoint.
 *   **Stretch** CPU daily cap with auto-reset, Task Monitor page (`GET /api/admin/runs`), System Config page (`GET/PUT /api/admin/config`), `multi_user` section in `orchid.defaults.yaml`.
 *   Earlier: T051 shell allowlist, T053 V2 lifecycle, T054/55 web planning/streaming, T056 prompt cache, T061 CentralBot, T068 systemd, T285–T297 cron engine.
+
+**Known pre-existing test issues (not from post-v3 work):**
+- `test_parallel_runner.py::TestExecuteTaskWithSemaphore::test_semaphore_acquisition_failure_sets_blocked` — hangs forever; `threading.Semaphore(0)` acquire never unblocks.
+- `test_worktree.py::TestWorktreeManager` — ERRORs when run at end of full suite (fd exhaustion from 1700+ accumulated tmp_path dirs); passes when run in isolation.
 
 ## Tooling
 Prefer `codeindex` CLI via Bash over MCP tools for symbol lookup and indexing operations.
@@ -147,4 +158,7 @@ Prefer `codeindex` CLI via Bash over MCP tools for symbol lookup and indexing op
 - `FileUserStore` (not `UserStore`). `update_user()` (not `upsert_user()`).
 - New `User` fields auto-persist — `_parse_user()` uses `dataclasses.fields(User)`.
 - `vault_env_context` uses thread-local, NOT `os.environ`. `get_env()` in execution paths, not `os.environ.get()`.
+- `PostgresUserStore` uses `ThreadedConnectionPool`; `ORCHID_AUTH_STORE_DSN` rotation requires `orchid migrate-to-postgres` to re-import data if schema is fresh. `ORCHID_VAULT_KEY` rotation invalidates all user vaults — document in ops runbook.
+- `orchid/projects/registry.py` singleton: call `reset_registry()` in tests that create `ProjectRegistry` directly.
+- `get_bot_manager()` / `set_bot_manager()` singleton in `central_bot.py` — not `web_server.py` (avoids circular import).
 - `ORCHID_VAULT_KEY` rotation invalidates all user vaults — document in ops runbook.
