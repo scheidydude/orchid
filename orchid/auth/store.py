@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from orchid.auth.base import BaseUserStore
-from orchid.auth.types import ApiKey, AuthError, OAuthAccount, RefreshToken, User
+from orchid.auth.types import ApiKey, AuthError, InviteToken, OAuthAccount, RefreshToken, User
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +15,7 @@ _DATETIME_FIELDS_USER = {"created_at"}
 _DATETIME_FIELDS_RT = {"expires_at", "created_at"}
 _DATETIME_FIELDS_AK = {"created_at", "last_used", "expires_at"}
 _DATETIME_FIELDS_OA = {"expires_at", "created_at"}
+_DATETIME_FIELDS_INVITE = {"created_at", "expires_at"}
 
 
 def _parse_datetime(value: str | None) -> datetime | None:
@@ -50,6 +51,15 @@ def _parse_oauth_account(entry: dict) -> OAuthAccount:
     return OAuthAccount(**filtered)
 
 
+def _parse_invite(entry: dict) -> InviteToken:
+    valid_keys = {f.name for f in dataclasses.fields(InviteToken)}
+    filtered = {k: v for k, v in entry.items() if k in valid_keys}
+    for key in _DATETIME_FIELDS_INVITE:
+        if key in filtered and isinstance(filtered[key], str):
+            filtered[key] = datetime.fromisoformat(filtered[key])
+    return InviteToken(**filtered)
+
+
 def _parse_api_key(entry: dict) -> ApiKey:
     valid_keys = {f.name for f in dataclasses.fields(ApiKey)}
     filtered = {k: v for k, v in entry.items() if k in valid_keys}
@@ -69,6 +79,7 @@ class FileUserStore(BaseUserStore):
         self._refresh_tokens: dict[str, RefreshToken] = {}
         self._api_keys: dict[str, ApiKey] = {}
         self._oauth_accounts: dict[str, OAuthAccount] = {}  # key: "{provider}:{provider_user_id}"
+        self._invites: dict[str, InviteToken] = {}
         self._load()
 
     def _load(self) -> None:
@@ -100,6 +111,12 @@ class FileUserStore(BaseUserStore):
                     self._oauth_accounts[f"{oa.provider}:{oa.provider_user_id}"] = oa
                 except Exception as exc:
                     logger.warning("Skipping malformed OAuth account entry: %s", exc)
+            for entry in data.get("invites", []):
+                try:
+                    inv = _parse_invite(entry)
+                    self._invites[inv.token_id] = inv
+                except Exception as exc:
+                    logger.warning("Skipping malformed invite entry: %s", exc)
         except Exception as exc:
             logger.error("Failed to load store from %s: %s", self._path, exc)
 
@@ -110,6 +127,7 @@ class FileUserStore(BaseUserStore):
             "refresh_tokens": [dataclasses.asdict(rt) for rt in self._refresh_tokens.values()],
             "api_keys": [dataclasses.asdict(ak) for ak in self._api_keys.values()],
             "oauth_accounts": [dataclasses.asdict(oa) for oa in self._oauth_accounts.values()],
+            "invites": [dataclasses.asdict(inv) for inv in self._invites.values()],
         }
         self._path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
 
@@ -294,6 +312,24 @@ class FileUserStore(BaseUserStore):
             if changed:
                 self._save()
             return changed
+
+    # ── invite tokens ─────────────────────────────────────────────────────────
+
+    def store_invite(self, invite: InviteToken) -> None:
+        with self._lock:
+            self._invites[invite.token_id] = invite
+            self._save()
+
+    def get_invite(self, token_id: str) -> InviteToken | None:
+        with self._lock:
+            return self._invites.get(token_id)
+
+    def mark_invite_used(self, token_id: str) -> None:
+        with self._lock:
+            inv = self._invites.get(token_id)
+            if inv:
+                inv.is_used = True
+                self._save()
 
     def get_all_enabled_scheduled_tasks(self) -> list[tuple[str, dict]]:
         """Return all enabled scheduled tasks across all users as ``(user_id, task_dict)`` tuples."""

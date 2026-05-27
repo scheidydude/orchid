@@ -22,6 +22,7 @@ class User:
     password_hash: str | None = None
     token: str = ""  # legacy field — superseded by JWT; kept for backward compat
     scheduled_tasks: list[dict] = field(default_factory=list)
+    notification_config: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -77,6 +78,24 @@ class ApiKey:
     last_used: datetime | None = None
     expires_at: datetime | None = None
     is_active: bool = True
+
+
+@dataclass
+class InviteToken:
+    """One-time invite token for admin-controlled user registration (D0062).
+
+    URL delivered to invitee: /app/?invite_id={token_id}&invite_token={secret}
+    The raw *secret* is never stored — only its argon2 hash.
+    Expires 48 hours after creation.
+    """
+    token_id: str          # "inv_" + UUID hex — used for O(1) store lookup
+    secret_hash: str       # argon2 hash of the random secret portion
+    user_id: str           # the (inactive) User being invited
+    email: str
+    invited_by: str        # admin's user_id
+    created_at: datetime
+    expires_at: datetime   # created_at + 48h
+    is_used: bool = False
 
 
 @dataclass

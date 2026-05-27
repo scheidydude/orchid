@@ -794,6 +794,14 @@ def create_app(
     except Exception as _cron_api_exc:
         logger.warning("Scheduler API routes not registered: %s", _cron_api_exc)
 
+    # Register vault + notification config routes (D0062 / Phase 2)
+    try:
+        from orchid.vault.api import register_routes as _register_vault_routes
+        _register_vault_routes(app)
+        logger.debug("Vault API routes registered")
+    except Exception as _vault_exc:
+        logger.warning("Vault API routes not registered: %s", _vault_exc)
+
     # ── Auth endpoints ────────────────────────────────────────────────────────
 
     if _AUTH_AVAILABLE:
@@ -1144,6 +1152,161 @@ def create_app(
                 provider_slug, code, state, code_verifier=code_verifier)
             return {"access_token": access_token, "refresh_token": refresh_raw,
                     "token_type": "Bearer", "expires_in": 900}
+
+    # ── Admin invite flow (D0062 / Phase 2) ──────────────────────────────────
+
+    if _AUTH_AVAILABLE:
+        @app.post("/api/admin/invite")
+        async def admin_invite(data: dict, request: Request,
+                               current_user=Depends(require_auth(role="admin"))):
+            """Admin invites a new user by email.
+
+            Creates an inactive User and a one-time InviteToken (48h TTL).
+            Sends an email with the accept link if SMTP is configured; always
+            returns ``invite_url`` so the admin can share it manually.
+            """
+            import uuid as _uuid
+            from datetime import UTC, timedelta
+            from orchid.auth.types import AuthError as _AE
+
+            email = (data.get("email") or "").strip().lower()
+            role = data.get("role", "user")
+            if not email:
+                raise HTTPException(400, "email required")
+            if role not in ("user", "admin", "readonly"):
+                raise HTTPException(400, "role must be user, admin, or readonly")
+
+            store = _get_auth_store()
+            if store.get_user_by_email(email):
+                raise HTTPException(409, "A user with that email already exists")
+
+            # Derive a default username from the email local part
+            username_base = email.split("@")[0]
+            # Ensure uniqueness
+            username = username_base
+            suffix = 0
+            while store.get_user_by_username(username):
+                suffix += 1
+                username = f"{username_base}{suffix}"
+
+            user_id = _uuid.uuid4().hex
+            new_user = User(
+                user_id=user_id,
+                username=username,
+                email=email,
+                role=role,
+                is_active=False,  # activated on invite accept
+                password_hash=None,
+            )
+            try:
+                store.add_user(new_user)
+            except _AE:
+                raise HTTPException(409, "User already exists")
+
+            # Generate invite token
+            token_id = f"inv_{_uuid.uuid4().hex}"
+            secret = secrets.token_urlsafe(32)
+            from orchid.auth.types import InviteToken as _InviteToken
+            from orchid.auth.jwt import hash_password as _hp
+            invite = _InviteToken(
+                token_id=token_id,
+                secret_hash=_hp(secret),
+                user_id=user_id,
+                email=email,
+                invited_by=current_user.user_id,
+                created_at=datetime.now(UTC),
+                expires_at=datetime.now(UTC) + timedelta(hours=48),
+            )
+            store.store_invite(invite)
+
+            # Build invite URL — use the request's base URL
+            base = str(request.base_url).rstrip("/")
+            invite_url = f"{base}/app/?invite_id={token_id}&invite_token={secret}"
+
+            # Send email (graceful fallback if SMTP not configured)
+            from orchid.auth.mailer import send_invite as _send_invite
+            email_sent = _send_invite(email, invite_url, current_user.username or current_user.user_id)
+
+            _log_audit(current_user, AuditAction.INVITE_SENT, email, "success", request,
+                       detail=f"role={role}")
+            return {
+                "invite_url": invite_url,
+                "email_sent": email_sent,
+                "token_id": token_id,
+                "expires_in_hours": 48,
+                "user_id": user_id,
+                "username": username,
+            }
+
+        @app.get("/api/auth/invite/{token_id}")
+        async def validate_invite(token_id: str):
+            """Public: validate an invite token and return the invitee's email.
+
+            Used by the portal accept-invite form to show a welcome message before
+            the user sets their password.  Returns 404 if the token is unknown,
+            expired, or already used.
+            """
+            from datetime import UTC
+            store = _get_auth_store()
+            invite = store.get_invite(token_id)
+            if invite is None or invite.is_used:
+                raise HTTPException(404, "Invalid or already-used invite link")
+            if datetime.now(UTC) > invite.expires_at:
+                raise HTTPException(410, "Invite link has expired")
+            return {"email": invite.email, "token_id": token_id}
+
+        @app.post("/api/auth/invite/accept")
+        async def accept_invite(data: dict, request: Request, response: Response):
+            """Public: accept an invite, set password, activate account, issue JWT.
+
+            Body: {token_id, invite_token, password}
+            On success: sets HttpOnly cookies and returns user info (same as /api/auth/me).
+            """
+            from datetime import UTC
+            token_id = (data.get("token_id") or "").strip()
+            raw_secret = (data.get("invite_token") or "").strip()
+            password = (data.get("password") or "").strip()
+
+            if not token_id or not raw_secret or not password:
+                raise HTTPException(400, "token_id, invite_token, and password required")
+            if len(password) < 8:
+                raise HTTPException(400, "Password must be at least 8 characters")
+
+            store = _get_auth_store()
+            invite = store.get_invite(token_id)
+            if invite is None or invite.is_used:
+                raise HTTPException(404, "Invalid or already-used invite link")
+            if datetime.now(UTC) > invite.expires_at:
+                raise HTTPException(410, "Invite link has expired")
+
+            # Constant-time argon2 verification
+            if not verify_password(raw_secret, invite.secret_hash):
+                raise HTTPException(401, "Invalid invite token")
+
+            user = store.get_user(invite.user_id)
+            if user is None:
+                raise HTTPException(404, "Invited user account not found")
+
+            # Activate user and set password
+            user.is_active = True
+            user.password_hash = hash_password(password)
+            store.update_user(user)
+            store.mark_invite_used(token_id)
+
+            # Issue JWT session
+            access_token = issue_access_token(user)
+            refresh_raw, rt = issue_refresh_token(user)
+            store.store_refresh_token(rt)
+            _set_auth_cookies(response, access_token, refresh_raw)
+
+            _log_audit(user, AuditAction.INVITE_ACCEPTED, user.email or user.user_id,
+                       "success", request)
+            return {
+                "user_id": user.user_id,
+                "username": user.username,
+                "email": user.email,
+                "role": user.role,
+            }
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 

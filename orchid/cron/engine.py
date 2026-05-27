@@ -175,6 +175,12 @@ class CronEngine:
             "Run %s for task %s: status=%s",
             run.run_id, task_dict.get("task_id"), run.status,
         )
+        # Dispatch notifications (Phase 2) — fire-and-forget, never raises
+        try:
+            from orchid.auth.notifications import dispatch_task_notification
+            dispatch_task_notification(owner_id, task_dict, run)
+        except Exception:
+            pass
 
 # ------------------------------------------------------------------
 # Singleton accessor

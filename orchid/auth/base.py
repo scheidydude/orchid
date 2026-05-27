@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from orchid.auth.types import ApiKey, OAuthAccount, RefreshToken, User
+from orchid.auth.types import ApiKey, InviteToken, OAuthAccount, RefreshToken, User
 
 
 class BaseUserStore(ABC):
@@ -103,4 +103,21 @@ class BaseUserStore(ABC):
     @abstractmethod
     def get_all_enabled_scheduled_tasks(self) -> list[tuple[str, dict]]:
         """Return all enabled scheduled tasks across all users as ``(user_id, task_dict)`` tuples."""
+        ...
+
+    # ── invite tokens ─────────────────────────────────────────────────────────
+
+    @abstractmethod
+    def store_invite(self, invite: InviteToken) -> None:
+        """Persist an invite token."""
+        ...
+
+    @abstractmethod
+    def get_invite(self, token_id: str) -> InviteToken | None:
+        """Return an invite by token_id, or None if not found."""
+        ...
+
+    @abstractmethod
+    def mark_invite_used(self, token_id: str) -> None:
+        """Mark an invite token as used (idempotent)."""
         ...

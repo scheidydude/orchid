@@ -38,6 +38,11 @@ class AuditAction:
     USER_DEACTIVATED = "user_deactivated"
     SCHEDULED_TASK_RUN = "scheduled_task_run"
     SCHEDULED_TASK_FAILED = "scheduled_task_failed"
+    INVITE_SENT = "invite_sent"
+    INVITE_ACCEPTED = "invite_accepted"
+    CREDENTIAL_UPDATED = "credential_updated"
+    CREDENTIAL_DELETED = "credential_deleted"
+    NOTIFICATION_CONFIG_UPDATED = "notification_config_updated"
 
 
 def make_event(
