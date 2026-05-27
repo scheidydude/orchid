@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 export default function UserSettings({ user }) {
   const [currentPw, setCurrentPw]   = useState('')
@@ -107,27 +107,356 @@ export default function UserSettings({ user }) {
         </div>
       </section>
 
-      {/* API Keys — read-only list placeholder */}
+      {/* API Keys */}
       <section style={{ marginBottom: 32 }}>
         <div className="section-title" style={{ marginBottom: 14 }}>API Keys</div>
         <ApiKeyManager />
       </section>
 
-      {/* Phase 2 placeholders */}
+      {/* Credentials vault */}
       <section style={{ marginBottom: 32 }}>
-        <div className="section-title" style={{ marginBottom: 14 }}>Credentials <span style={{ fontSize: 11, color: 'var(--text-mute)', fontWeight: 400, marginLeft: 6 }}>coming in Phase 2</span></div>
-        <div className="card" style={{ color: 'var(--text-dim)', fontSize: 13 }}>
-          Per-user LLM provider keys and third-party credentials will be stored here (encrypted).
-        </div>
+        <div className="section-title" style={{ marginBottom: 14 }}>Credentials</div>
+        <CredentialVault />
       </section>
 
+      {/* Notifications */}
       <section>
-        <div className="section-title" style={{ marginBottom: 14 }}>Notifications <span style={{ fontSize: 11, color: 'var(--text-mute)', fontWeight: 400, marginLeft: 6 }}>coming in Phase 2</span></div>
-        <div className="card" style={{ color: 'var(--text-dim)', fontSize: 13 }}>
-          Configure email, Telegram, and Slack notifications for scheduled task results.
-        </div>
+        <div className="section-title" style={{ marginBottom: 14 }}>Notifications</div>
+        <NotificationConfig user={user} />
       </section>
     </div>
+  )
+}
+
+// ── Credential Vault ──────────────────────────────────────────────────────────
+
+function CredentialVault() {
+  const [keys, setKeys]         = useState(null)
+  const [loaded, setLoaded]     = useState(false)
+  const [loading, setLoading]   = useState(false)
+  const [adding, setAdding]     = useState(false)
+  const [newKey, setNewKey]     = useState('')
+  const [newVal, setNewVal]     = useState('')
+  const [saving, setSaving]     = useState(false)
+  const [error, setError]       = useState(null)
+  const [noVaultKey, setNoVaultKey] = useState(false)
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const r = await fetch('/api/user/credentials')
+      if (r.status === 503) { setNoVaultKey(true); return }
+      const d = await r.json()
+      setKeys(d.keys || [])
+      setLoaded(true)
+    } catch { setError('Failed to load credentials') }
+    finally { setLoading(false) }
+  }
+
+  const addCredential = async (e) => {
+    e.preventDefault()
+    setError(null)
+    setSaving(true)
+    try {
+      const r = await fetch(`/api/user/credentials/${encodeURIComponent(newKey)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: newVal }),
+      })
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}))
+        setError(d.detail || 'Save failed')
+        return
+      }
+      setNewKey(''); setNewVal(''); setAdding(false)
+      load()
+    } catch { setError('Network error') }
+    finally { setSaving(false) }
+  }
+
+  const deleteCredential = async (key) => {
+    setError(null)
+    try {
+      await fetch(`/api/user/credentials/${encodeURIComponent(key)}`, { method: 'DELETE' })
+      load()
+    } catch { setError('Delete failed') }
+  }
+
+  if (noVaultKey) {
+    return (
+      <div className="card" style={{ color: 'var(--text-dim)', fontSize: 13 }}>
+        ⚠️ Credential vault is not configured on this server.
+        Ask your admin to set <code>ORCHID_VAULT_KEY</code>.
+      </div>
+    )
+  }
+
+  if (!loaded) {
+    return (
+      <div className="card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>
+          Encrypted storage for API keys and tokens used by your scheduled tasks.
+        </span>
+        <button onClick={load} disabled={loading}>{loading ? 'Loading…' : 'View credentials'}</button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <p style={{ fontSize: 12, color: 'var(--text-dim)', margin: 0 }}>
+        Values are encrypted at rest. Names are visible; secrets are write-only.
+      </p>
+
+      {keys?.length === 0 ? (
+        <p style={{ fontSize: 13, color: 'var(--text-dim)' }}>No credentials stored yet.</p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {keys?.map(k => (
+            <div key={k} style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '8px 0', borderBottom: '1px solid var(--border)',
+            }}>
+              <span style={{ fontFamily: 'var(--mono)', fontSize: 13 }}>{k}</span>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <span style={{ fontSize: 11, color: 'var(--text-mute)' }}>••••••••</span>
+                <button
+                  className="danger"
+                  style={{ fontSize: 11, padding: '3px 10px' }}
+                  onClick={() => deleteCredential(k)}
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {adding ? (
+        <form onSubmit={addCredential} style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 4 }}>
+          <div className="field">
+            <label>Credential name</label>
+            <input
+              value={newKey}
+              onChange={e => setNewKey(e.target.value)}
+              placeholder="e.g. ANTHROPIC_API_KEY"
+              pattern="[\w\-\.]+"
+              title="Letters, digits, underscores, hyphens, and dots only"
+              required
+              autoFocus
+            />
+            <span className="hint">Used to reference this credential in task configs</span>
+          </div>
+          <div className="field">
+            <label>Secret value</label>
+            <input
+              type="password"
+              value={newVal}
+              onChange={e => setNewVal(e.target.value)}
+              placeholder="Paste secret here"
+              required
+              autoComplete="off"
+            />
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="submit" className="primary" disabled={saving || !newKey.trim() || !newVal.trim()}>
+              {saving ? 'Saving…' : 'Save credential'}
+            </button>
+            <button type="button" onClick={() => { setAdding(false); setNewKey(''); setNewVal('') }}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : (
+        <button onClick={() => setAdding(true)} style={{ alignSelf: 'flex-start' }}>
+          + Add credential
+        </button>
+      )}
+
+      {error && <p style={{ color: 'var(--error-fg)', fontSize: 12 }}>{error}</p>}
+    </div>
+  )
+}
+
+// ── Notification Config ───────────────────────────────────────────────────────
+
+function NotificationConfig({ user }) {
+  const [cfg, setCfg]         = useState(null)
+  const [loaded, setLoaded]   = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving]   = useState(false)
+  const [saved, setSaved]     = useState(false)
+  const [error, setError]     = useState(null)
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const r = await fetch('/api/user/config/notifications')
+      const d = await r.json()
+      setCfg({
+        email_enabled:     d.email_enabled     ?? false,
+        email_address:     d.email_address     ?? user.email ?? '',
+        telegram_enabled:  d.telegram_enabled  ?? false,
+        telegram_chat_id:  d.telegram_chat_id  ?? '',
+        slack_enabled:     d.slack_enabled     ?? false,
+        slack_user_id:     d.slack_user_id     ?? '',
+        notify_on_success: d.notify_on_success ?? false,
+        notify_on_failure: d.notify_on_failure ?? true,
+      })
+      setLoaded(true)
+    } catch { setError('Failed to load notification settings') }
+    finally { setLoading(false) }
+  }
+
+  const save = async (e) => {
+    e.preventDefault()
+    setSaving(true); setSaved(false); setError(null)
+    try {
+      const r = await fetch('/api/user/config/notifications', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cfg),
+      })
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}))
+        setError(d.detail || 'Save failed')
+        return
+      }
+      setSaved(true)
+      setTimeout(() => setSaved(false), 3000)
+    } catch { setError('Network error') }
+    finally { setSaving(false) }
+  }
+
+  const set = (key, val) => setCfg(c => ({ ...c, [key]: val }))
+
+  if (!loaded) {
+    return (
+      <div className="card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>
+          Configure email, Telegram, and Slack alerts for scheduled task results.
+        </span>
+        <button onClick={load} disabled={loading}>{loading ? 'Loading…' : 'Configure'}</button>
+      </div>
+    )
+  }
+
+  return (
+    <form className="card" onSubmit={save} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+      {/* When to notify */}
+      <div>
+        <div style={{ fontSize: 12, color: 'var(--text-dim)', fontWeight: 600, marginBottom: 10 }}>
+          NOTIFY WHEN
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13 }}>
+            <input
+              type="checkbox"
+              checked={cfg.notify_on_failure}
+              onChange={e => set('notify_on_failure', e.target.checked)}
+            />
+            Task fails or times out
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13 }}>
+            <input
+              type="checkbox"
+              checked={cfg.notify_on_success}
+              onChange={e => set('notify_on_success', e.target.checked)}
+            />
+            Task succeeds
+          </label>
+        </div>
+      </div>
+
+      {/* Email */}
+      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', marginBottom: 10 }}>
+          <input
+            type="checkbox"
+            checked={cfg.email_enabled}
+            onChange={e => set('email_enabled', e.target.checked)}
+          />
+          <span style={{ fontWeight: 600, fontSize: 13 }}>Email</span>
+        </label>
+        {cfg.email_enabled && (
+          <div className="field">
+            <label>Email address</label>
+            <input
+              type="email"
+              value={cfg.email_address}
+              onChange={e => set('email_address', e.target.value)}
+              placeholder={user.email || 'you@example.com'}
+            />
+            <span className="hint">Defaults to your account email if left blank</span>
+          </div>
+        )}
+      </div>
+
+      {/* Telegram */}
+      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', marginBottom: 10 }}>
+          <input
+            type="checkbox"
+            checked={cfg.telegram_enabled}
+            onChange={e => set('telegram_enabled', e.target.checked)}
+          />
+          <span style={{ fontWeight: 600, fontSize: 13 }}>Telegram</span>
+        </label>
+        {cfg.telegram_enabled && (
+          <div className="field">
+            <label>Chat ID</label>
+            <input
+              value={cfg.telegram_chat_id}
+              onChange={e => set('telegram_chat_id', e.target.value)}
+              placeholder="e.g. 123456789"
+            />
+            <span className="hint">
+              Get your chat ID by messaging{' '}
+              <a href="https://t.me/userinfobot" target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>
+                @userinfobot
+              </a>{' '}
+              on Telegram
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Slack */}
+      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', marginBottom: 10 }}>
+          <input
+            type="checkbox"
+            checked={cfg.slack_enabled}
+            onChange={e => set('slack_enabled', e.target.checked)}
+          />
+          <span style={{ fontWeight: 600, fontSize: 13 }}>Slack</span>
+        </label>
+        {cfg.slack_enabled && (
+          <div className="field">
+            <label>Slack user ID</label>
+            <input
+              value={cfg.slack_user_id}
+              onChange={e => set('slack_user_id', e.target.value)}
+              placeholder="e.g. U12345678"
+            />
+            <span className="hint">
+              Find yours in Slack: click your name → View profile → ⋯ → Copy member ID
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Save */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <button type="submit" className="primary" disabled={saving}>
+          {saving ? 'Saving…' : 'Save notifications'}
+        </button>
+        {saved  && <span style={{ fontSize: 13, color: 'var(--success-fg)' }}>✓ Saved</span>}
+        {error  && <span style={{ fontSize: 13, color: 'var(--error-fg)' }}>{error}</span>}
+      </div>
+    </form>
   )
 }
 

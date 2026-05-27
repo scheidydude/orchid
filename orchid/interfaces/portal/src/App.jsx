@@ -7,6 +7,16 @@ import Dashboard from './components/Dashboard.jsx'
 import UserSettings from './components/UserSettings.jsx'
 import { RoleBadge } from './components/StatusBadge.jsx'
 
+// ── Invite token detection ────────────────────────────────────────────────────
+// Check URL for ?invite_id=…&invite_token=… before rendering auth flow
+
+function _parseInviteParams() {
+  const qs = new URLSearchParams(window.location.search)
+  const id = qs.get('invite_id')
+  const token = qs.get('invite_token')
+  return id && token ? { id, token } : null
+}
+
 // ── UserMenu ──────────────────────────────────────────────────────────────────
 
 function UserMenu({ user, onSettings, onLogout }) {
@@ -154,14 +164,19 @@ function Header({ user, view, onView, onLogout }) {
 // ── App ───────────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const { user, checked, setUser, logout } = useAuth()
+  const inviteParams = _parseInviteParams()
 
-  // If admin and not deliberately on portal, redirect to main app
-  useEffect(() => {
-    if (!checked || !user) return
-    // Admins can stay in portal (they may have navigated here deliberately)
-    // No forced redirect — admin sees user view as a feature
-  }, [checked, user])
+  // If invite params are present in URL, show the accept-invite flow
+  // regardless of auth state (user doesn't have an account yet)
+  if (inviteParams) {
+    return <AcceptInvite inviteId={inviteParams.id} inviteToken={inviteParams.token} />
+  }
+
+  return <AuthedApp />
+}
+
+function AuthedApp() {
+  const { user, checked, setUser, logout } = useAuth()
 
   if (!checked) {
     return (
@@ -174,6 +189,153 @@ export default function App() {
   if (!user) return <Login onLogin={setUser} />
 
   return <PortalApp user={user} onLogout={logout} />
+}
+
+// ── AcceptInvite ──────────────────────────────────────────────────────────────
+
+function AcceptInvite({ inviteId, inviteToken }) {
+  const [email, setEmail]       = useState(null)
+  const [validating, setValidating] = useState(true)
+  const [invalid, setInvalid]   = useState(false)
+  const [expired, setExpired]   = useState(false)
+
+  const [password, setPassword]   = useState('')
+  const [confirm, setConfirm]     = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError]         = useState('')
+  const [done, setDone]           = useState(false)
+
+  // Validate token on mount
+  useEffect(() => {
+    fetch(`/api/auth/invite/${encodeURIComponent(inviteId)}`)
+      .then(r => {
+        if (r.status === 410) { setExpired(true); return null }
+        if (!r.ok)            { setInvalid(true); return null }
+        return r.json()
+      })
+      .then(d => { if (d) setEmail(d.email) })
+      .catch(() => setInvalid(true))
+      .finally(() => setValidating(false))
+  }, [inviteId])
+
+  const handleAccept = async (e) => {
+    e.preventDefault()
+    setError('')
+    if (password !== confirm) { setError('Passwords do not match'); return }
+    if (password.length < 8)  { setError('Password must be at least 8 characters'); return }
+    setSubmitting(true)
+    try {
+      const r = await fetch('/api/auth/invite/accept', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token_id: inviteId, invite_token: inviteToken, password }),
+      })
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}))
+        setError(d.detail || 'Activation failed')
+        return
+      }
+      setDone(true)
+      // Remove invite params from URL so a refresh doesn't re-trigger this flow
+      window.history.replaceState({}, '', '/app/')
+      // Reload after short delay so cookie is picked up
+      setTimeout(() => window.location.reload(), 1200)
+    } catch {
+      setError('Network error')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div style={{
+      minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: 'var(--bg)',
+    }}>
+      <div style={{
+        width: '100%', maxWidth: 400,
+        background: 'var(--surface)', border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-lg)', padding: '32px 28px',
+        boxShadow: 'var(--shadow)',
+      }}>
+        <div style={{ fontSize: 22, fontWeight: 700, marginBottom: 6 }}>🌸 Orchid</div>
+
+        {validating && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-dim)', fontSize: 14, marginTop: 20 }}>
+            <span className="spinner" style={{ width: 16, height: 16 }} />
+            Validating invite link…
+          </div>
+        )}
+
+        {!validating && expired && (
+          <div style={{ marginTop: 20 }}>
+            <p style={{ color: 'var(--error-fg)', fontSize: 14 }}>
+              ⏱ This invite link has expired (48-hour limit).
+            </p>
+            <p style={{ color: 'var(--text-dim)', fontSize: 13, marginTop: 8 }}>
+              Ask your admin to send a new invite.
+            </p>
+          </div>
+        )}
+
+        {!validating && invalid && (
+          <div style={{ marginTop: 20 }}>
+            <p style={{ color: 'var(--error-fg)', fontSize: 14 }}>
+              ✗ Invalid or already-used invite link.
+            </p>
+            <p style={{ color: 'var(--text-dim)', fontSize: 13, marginTop: 8 }}>
+              If you've already set your password, <a href="/app/" style={{ color: 'var(--accent)' }}>log in here</a>.
+            </p>
+          </div>
+        )}
+
+        {!validating && email && !done && (
+          <>
+            <p style={{ color: 'var(--text-dim)', fontSize: 13, margin: '16px 0 24px' }}>
+              You've been invited to Orchid. Set a password for <strong>{email}</strong> to activate your account.
+            </p>
+            <form onSubmit={handleAccept} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div className="field">
+                <label>Password</label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  autoComplete="new-password"
+                  required
+                  minLength={8}
+                  autoFocus
+                />
+                <span className="hint">Minimum 8 characters</span>
+              </div>
+              <div className="field">
+                <label>Confirm password</label>
+                <input
+                  type="password"
+                  value={confirm}
+                  onChange={e => setConfirm(e.target.value)}
+                  autoComplete="new-password"
+                  required
+                />
+              </div>
+              {error && <p style={{ color: 'var(--error-fg)', fontSize: 13 }}>{error}</p>}
+              <button type="submit" className="primary" disabled={submitting}>
+                {submitting ? 'Activating…' : 'Activate account'}
+              </button>
+            </form>
+          </>
+        )}
+
+        {done && (
+          <div style={{ marginTop: 20, textAlign: 'center' }}>
+            <p style={{ color: 'var(--success-fg)', fontSize: 14, fontWeight: 600 }}>
+              ✓ Account activated! Logging you in…
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }
 
 // ── PortalApp ─────────────────────────────────────────────────────────────────
