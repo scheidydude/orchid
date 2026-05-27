@@ -1,15 +1,59 @@
 # HANDOFF.md
-_Written: 2026-05-26. Previous HANDOFF archived as `HANDOFF-archive-2026-05-10-0000.md`._
+_Written: 2026-05-27. Previous HANDOFF archived as `HANDOFF-archive-2026-05-10-0000.md`._
 
 ---
 
 ## 1. Mission
 
-Orchid is a standalone AI agent orchestration framework. This session transformed it into a true **multi-user agentic OS**. Phase 1 (user portal SPA) and Phase 2 (credential vault + per-user notification config + admin-invite flow) are complete. Next is Phase 3: MCP catalog + per-user server access.
+Orchid is a standalone AI agent orchestration framework. This session transformed it into a true **multi-user agentic OS**. Phases 1, 2, and 3 are complete. Next is Phase 4: Admin Console SPA (`/admin`).
 
 ---
 
 ## 2. Current State
+
+### What's working and verified at commit `3e76d22`
+
+**Phase 3 — complete at `3e76d22`:**
+
+*MCP catalog (`orchid/mcp/catalog.py`):*
+- `MCPServerEntry` dataclass — `server_id`, `name`, `transport`, `config`, `scope`, `allowed_roles`, `allowed_users`, `requires_credential`
+- `MCPCatalogStore` — thread-safe JSON-backed; `~/.config/orchid/mcp_catalog.json`; CRUD + `grant_access()`/`revoke_access()` + `get_servers_for_user(user_id, role)`
+- Access control: `admin-only` scope → admin only; explicit `allowed_users` beats role; role fallback via `allowed_roles`; `shared`/`private` scopes
+- `get_catalog()` singleton + `reset_catalog()` for tests
+
+*Per-user private MCP servers (`UserMCPStore`):*
+- `~/.config/orchid/users/{user_id}/mcp_servers.json` — JSON array of server configs
+- `add_server()` auto-assigns `server_id` if missing; `delete_server()`; isolated per user
+
+*`MCPManager.connect_for_user()`:*
+- New method in `orchid/mcp/manager.py`; coexists with `connect()` (zero breaking changes)
+- Merges catalog servers (filtered by access) + user's private servers
+- Injects vault credentials: `stdio` → `env[key]`, `http` → `headers["Authorization"]`
+- Catalog server takes precedence on `server_id` clash with private server
+- Vault unavailable → logs warning, server still included (no crash)
+
+*Admin API (`orchid/mcp/catalog_api.py`):*
+- `GET/POST /api/admin/mcp/catalog`
+- `GET/PUT/DELETE /api/admin/mcp/catalog/{server_id}`
+- `PUT /api/admin/mcp/catalog/{server_id}/grant` — role or user_id
+- `PUT /api/admin/mcp/catalog/{server_id}/revoke`
+
+*User API:*
+- `GET /api/user/mcp/servers` — returns `{shared: [...], private: [...]}`
+- `POST /api/user/mcp/servers` — add private server (gated by `web.allow_user_mcp` config, default `True`)
+- `DELETE /api/user/mcp/servers/{server_id}` — remove private server
+
+*Portal:*
+- `UserSettings.jsx`: new `MCPServers` section — admin-granted list + private server list + add-private form (stdio/http)
+
+*Audit:*
+- 7 new `AuditAction` constants: `MCP_SERVER_CREATED/UPDATED/DELETED`, `MCP_ACCESS_GRANTED/REVOKED`, `USER_MCP_SERVER_ADDED/DELETED`
+
+**Test suite:**
+- `tests/test_mcp_catalog.py` — 65 tests: catalog CRUD, access control (7 scenarios), `UserMCPStore`, `connect_for_user` (6 scenarios incl. credential injection + clash), admin API (16 endpoints), user API (8 endpoints), audit constants
+- **152 passed** across all Phase 1–3 test files (87 prev + 65 new)
+
+---
 
 ### What's working and verified at commit `f76db1c`
 
@@ -149,21 +193,30 @@ Same as Phase 1 — see that section. New addition:
 
 ---
 
-## 7. Open Questions for Phase 3
+## 7. Decisions Made in Phase 3
 
-1. **MCP catalog data model.** The proposal defines `MCPServerEntry` with `server_id`, `scope`, `allowed_roles`, `allowed_users`, `requires_credential`. Where does this live — in `users.json` alongside the user store, or in a separate `~/.config/orchid/mcp_catalog.json`? Proposal says separate file.
+**Decision:** MCP catalog in separate `mcp_catalog.json` (not `users.json`)
+**Reason:** System config vs. user identity data should not mix. Independent backup/export. Aligns with proposal spec.
 
-2. **`MCPManager.connect_for_user()`.** The existing `MCPManager` doesn't have a `user_id` concept. Phase 3 adds `connect_for_user(user_id)` that merges shared catalog servers (admin-granted) + user private servers, injecting vault credentials. Does this replace the existing `connect()` or coexist?
+**Decision:** `connect_for_user()` coexists with `connect()`
+**Reason:** Zero breaking changes. CLI/project paths use `connect()`. User-scoped paths (cron executor) use `connect_for_user()`. Two clear entry points.
 
-3. **Telegram/Slack notification wiring.** Stubs are in `orchid/auth/notifications.py`. Phase 3 should wire these through the existing `CentralBotManager`. Design: `dispatch_task_notification` calls `get_central_bot_manager().send_dm(telegram_chat_id, message)` — but `CentralBotManager` is in `orchid/interfaces/central_bot.py`, which is a heavy import. Use a lazy local import.
-
-4. **User-added private MCP servers.** Proposal has `POST /api/user/mcp/servers` guarded by `allow_user_mcp` config flag. Should this be gated in the admin config file or just a hardcoded flag for now?
-
-5. **`readonly` role in portal.** Currently `readonly` users are redirected to `/app/` (same as `user` role). Should they have a stripped-down view without task creation/editing? Or is `readonly` only for admin console purposes?
+**Decision:** `allow_user_mcp` read from `orchid.config.get("web.allow_user_mcp", True)` at request time (not at route registration)
+**Reason:** Allows live config toggle without restart. Default `True` (permissive for dev; operators can disable).
 
 ---
 
-## 8. Do Not Touch
+## 8. Open Questions for Phase 4
+
+1. **Admin Console SPA build setup.** Phase 4 adds a second React root at `/admin`. Options: (a) new Vite project in `orchid/interfaces/admin/`; (b) same Vite project as portal with multiple entry points. Portal uses `base: '/app/'`. Admin would need `base: '/admin/'`. Separate project = clear isolation, easy to gate. **Recommend: separate Vite project.**
+
+2. **Telegram/Slack notification wiring (still deferred).** Stubs in `orchid/auth/notifications.py`. Wire through `CentralBotManager` in `orchid/interfaces/central_bot.py` — use lazy local import. Phase 4 can do this as a side task.
+
+3. **`readonly` role in portal.** Currently same view as `user`. Does Phase 4 add a stripped-down view? Or is `readonly` only for admin console ACL? Decision not required until Admin Console SPA lands.
+
+---
+
+## 9. Do Not Touch
 
 - **`orchid/web/server.py`** — dead-end, never loaded by `orchid serve`.
 - **`orchid/interfaces/web_ui/`** — existing power-user SPA.
@@ -174,6 +227,6 @@ Same as Phase 1 — see that section. New addition:
 
 ---
 
-## 9. Resume Command
+## 10. Resume Command
 
-> Read `HANDOFF.md`. We're building multi-user support for Orchid (internal agentic OS). Phases 1 and 2 are complete at commit `f76db1c` — 87 tests pass. Start Phase 3: MCP catalog + per-user server access. Spec is in `docs/multiuser-proposal.md` under "Phase 3". Before writing code, ask: (1) Should the MCP catalog live in a separate `mcp_catalog.json` file or in `users.json`? (2) Does `MCPManager.connect_for_user()` replace or wrap the existing `connect()`? Do not touch `orchid/web/server.py` (dead-end file). Do not change `vite.config.js` `base: '/app/'`. Commit between major changes.
+> Read `HANDOFF.md`. We're building multi-user support for Orchid (internal agentic OS). Phases 1, 2, and 3 are complete at commit `3e76d22` — 152 tests pass. Start Phase 4: Admin Console SPA at `/admin`. Spec is in `docs/multiuser-proposal.md` under "Phase 4". Before writing code, ask: (1) Separate Vite project for the admin SPA, or multi-entry in the portal project? (2) Which admin pages to build first — Users, MCP Catalog, Audit Log, or all at once? Do not touch `orchid/web/server.py` (dead-end file). Do not change portal `vite.config.js` `base: '/app/'`. Commit between major changes.
