@@ -2,11 +2,16 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import UTC, datetime
 
 from orchid.cron.types import TaskRun, _utcnow
 
 logger = logging.getLogger(__name__)
+
+_AGENT_TOOL_MAX_ITERS = 10
+_AGENT_TOOL_MODEL = "claude-sonnet-4-6"
+_AGENT_TOOL_MAX_TOKENS = 4096
 
 
 class TaskExecutionError(Exception):
@@ -123,6 +128,176 @@ def _run_mcp_tool(config: dict) -> str:
     return str(result.content)
 
 
+def _run_agent_tool(config: dict) -> str:
+    """Execute an agent_tool task: agentic loop with multiple MCP servers.
+
+    Config fields:
+        servers       list[str]  Required. MCP server names from config.
+        prompt        str        Required. Initial user message.
+        system        str        Optional. System prompt override.
+        model         str        Optional. Claude model ID.
+        max_tokens    int        Optional. Max tokens per API call.
+        max_iterations int       Optional. Loop iteration cap (default 10).
+
+    Tool names are prefixed ``server__toolname`` to avoid cross-server
+    collisions.  The prefix is stripped before dispatching to the adapter.
+    """
+    import anthropic as anthropic_sdk
+
+    from orchid.mcp.manager import MCPManager
+
+    servers = config.get("servers", [])
+    if not servers:
+        raise TaskExecutionError(
+            "agent_tool config missing required field: 'servers'"
+        )
+
+    prompt = config.get("prompt", "").strip()
+    if not prompt:
+        raise TaskExecutionError(
+            "agent_tool config missing required field: 'prompt'"
+        )
+
+    max_iters = int(config.get("max_iterations", _AGENT_TOOL_MAX_ITERS))
+    model = config.get("model", _AGENT_TOOL_MODEL)
+    max_tokens = int(config.get("max_tokens", _AGENT_TOOL_MAX_TOKENS))
+    system = config.get("system", "You are a helpful assistant.")
+
+    # --- Connect all requested servers -----------------------------------
+    mgr = MCPManager()
+    mgr.discover_servers()
+
+    adapters: dict[str, object] = {}
+    tool_defs: list[dict] = []
+    # prefixed_name → (adapter, original_tool_name)
+    tool_map: dict[str, tuple] = {}
+
+    try:
+        for server_name in servers:
+            adapter = mgr.get_adapter(server_name)
+            if adapter is None:
+                raise TaskExecutionError(
+                    f"MCP server '{server_name}' not found in config"
+                )
+            adapter.connect()
+            adapters[server_name] = adapter
+            for tool in adapter.list_tools():
+                prefixed = f"{server_name}__{tool.name}"
+                tool_defs.append(
+                    {
+                        "name": prefixed,
+                        "description": tool.description,
+                        "input_schema": tool.parameters
+                        or {"type": "object", "properties": {}},
+                    }
+                )
+                tool_map[prefixed] = (adapter, tool.name)
+
+        # --- Agentic tool-use loop ---------------------------------------
+        client = anthropic_sdk.Anthropic(
+            api_key=os.environ.get("ANTHROPIC_API_KEY")
+        )
+        messages: list[dict] = [{"role": "user", "content": prompt}]
+
+        for iteration in range(max_iters):
+            response = client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                system=system,
+                tools=tool_defs,
+                messages=list(messages),  # snapshot; safe against post-call mutation
+            )
+
+            # Serialise assistant turn
+            assistant_content: list[dict] = []
+            for block in response.content:
+                if block.type == "text":
+                    assistant_content.append(
+                        {"type": "text", "text": block.text}
+                    )
+                elif block.type == "tool_use":
+                    assistant_content.append(
+                        {
+                            "type": "tool_use",
+                            "id": block.id,
+                            "name": block.name,
+                            "input": block.input,
+                        }
+                    )
+            messages.append({"role": "assistant", "content": assistant_content})
+
+            if response.stop_reason == "end_turn":
+                for block in response.content:
+                    if block.type == "text":
+                        return block.text
+                return ""
+
+            if response.stop_reason != "tool_use":
+                break
+
+            # Dispatch tool calls → collect results
+            tool_results: list[dict] = []
+            for block in response.content:
+                if block.type != "tool_use":
+                    continue
+                if block.name not in tool_map:
+                    tool_results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": f"Error: unknown tool '{block.name}'",
+                            "is_error": True,
+                        }
+                    )
+                    continue
+                adapter, original_name = tool_map[block.name]
+                try:
+                    result = adapter.call_tool(original_name, block.input or {})
+                    content = result.content
+                    if isinstance(content, list):
+                        parts: list[str] = []
+                        for item in content:
+                            if isinstance(item, dict):
+                                parts.append(str(item.get("text", str(item))))
+                            else:
+                                parts.append(str(item))
+                        content = "\n".join(parts)
+                    tool_results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": str(content),
+                            "is_error": result.isError,
+                        }
+                    )
+                except Exception as exc:
+                    tool_results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": f"Error: {exc}",
+                            "is_error": True,
+                        }
+                    )
+
+            messages.append({"role": "user", "content": tool_results})
+
+        # Max iterations reached — return last text block found
+        for msg in reversed(messages):
+            if msg.get("role") == "assistant":
+                for block in msg.get("content", []):
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        return block["text"]
+        return f"[agent_tool: reached max_iterations={max_iters} without end_turn]"
+
+    finally:
+        for adapter in adapters.values():
+            try:
+                adapter.disconnect()
+            except Exception:
+                pass
+
+
 def _run_shell(config: dict) -> str:
     """Execute a shell type task."""
     from orchid.tools.shell import bash
@@ -140,6 +315,7 @@ def _run_shell(config: dict) -> str:
 class TaskExecutor:
     _DISPATCH: dict = {
         "agent_prompt": _run_agent_prompt,
+        "agent_tool": _run_agent_tool,
         "mcp_tool": _run_mcp_tool,
         "shell": _run_shell,
     }
