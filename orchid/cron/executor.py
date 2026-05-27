@@ -13,6 +13,10 @@ _AGENT_TOOL_MAX_ITERS = 10
 _AGENT_TOOL_MODEL = "claude-sonnet-4-6"
 _AGENT_TOOL_MAX_TOKENS = 4096
 
+# Phase 5: thread-local cost accumulator — set by execute(), read by _run_agent_tool
+import threading
+_exec_local = threading.local()
+
 
 class TaskExecutionError(Exception):
     """Raised for known, non-retriable config errors."""
@@ -194,8 +198,9 @@ def _run_agent_tool(config: dict) -> str:
                 tool_map[prefixed] = (adapter, tool.name)
 
         # --- Agentic tool-use loop ---------------------------------------
+        from orchid.budget.guard import get_env, _compute_anthropic_cost
         client = anthropic_sdk.Anthropic(
-            api_key=os.environ.get("ANTHROPIC_API_KEY")
+            api_key=get_env("ANTHROPIC_API_KEY")
         )
         messages: list[dict] = [{"role": "user", "content": prompt}]
 
@@ -207,6 +212,17 @@ def _run_agent_tool(config: dict) -> str:
                 tools=tool_defs,
                 messages=list(messages),  # snapshot; safe against post-call mutation
             )
+
+            # Accumulate cost for this API call into thread-local counter
+            try:
+                call_cost = _compute_anthropic_cost(
+                    model,
+                    response.usage.input_tokens,
+                    response.usage.output_tokens,
+                )
+                _exec_local.cost_usd = getattr(_exec_local, "cost_usd", 0.0) + call_cost
+            except Exception:
+                pass  # usage may be None in mocked tests
 
             # Serialise assistant turn
             assistant_content: list[dict] = []
@@ -324,7 +340,18 @@ class TaskExecutor:
         """Dispatch and execute a scheduled task.
 
         Always returns a TaskRun; never raises exceptions.
+
+        Phase 5 additions:
+        - Injects vault credentials as thread-local env overrides.
+        - Checks the user's LLM budget before dispatch.
+        - Records accrued Anthropic cost after execution.
         """
+        from orchid.budget.guard import (
+            BudgetExceededError,
+            BudgetGuard,
+            vault_env_context,
+        )
+
         run = TaskRun(
             task_id=task_dict.get("task_id", ""),
             owner_id=owner_id,
@@ -347,29 +374,51 @@ class TaskExecutor:
             )
             return run
 
-        try:
-            output = dispatch_fn(config)
-            run.finished_at = _utcnow()
-            run.status = "success"
-            run.output = output or ""
-        except TaskExecutionError as exc:
-            run.finished_at = _utcnow()
-            run.status = "failure"
-            run.error = str(exc)
-        except Exception as exc:
-            run.finished_at = _utcnow()
-            run.status = "failure"
-            run.error = f"{type(exc).__name__}: {exc}"
-            logger.exception(
-                "Scheduled task %s raised unexpectedly", task_dict.get("task_id")
-            )
-        except BaseException as exc:
-            # Catch SystemExit, KeyboardInterrupt, GeneratorExit etc.
-            run.finished_at = _utcnow()
-            run.status = "failure"
-            run.error = f"{type(exc).__name__}: {exc}"
-            logger.exception(
-                "Scheduled task %s raised unexpected BaseException", task_dict.get("task_id")
-            )
+        guard = BudgetGuard(owner_id)
+
+        # Reset per-task cost accumulator on this thread
+        _exec_local.cost_usd = 0.0
+
+        with vault_env_context(owner_id):
+            try:
+                guard.check()
+                output = dispatch_fn(config)
+                run.finished_at = _utcnow()
+                run.status = "success"
+                run.output = output or ""
+            except BudgetExceededError as exc:
+                run.finished_at = _utcnow()
+                run.status = "failure"
+                run.error = str(exc)
+            except TaskExecutionError as exc:
+                run.finished_at = _utcnow()
+                run.status = "failure"
+                run.error = str(exc)
+            except Exception as exc:
+                run.finished_at = _utcnow()
+                run.status = "failure"
+                run.error = f"{type(exc).__name__}: {exc}"
+                logger.exception(
+                    "Scheduled task %s raised unexpectedly", task_dict.get("task_id")
+                )
+            except BaseException as exc:
+                # Catch SystemExit, KeyboardInterrupt, GeneratorExit etc.
+                run.finished_at = _utcnow()
+                run.status = "failure"
+                run.error = f"{type(exc).__name__}: {exc}"
+                logger.exception(
+                    "Scheduled task %s raised unexpected BaseException",
+                    task_dict.get("task_id"),
+                )
+            finally:
+                # Record any LLM cost accrued during this task
+                cost = getattr(_exec_local, "cost_usd", 0.0)
+                if cost > 0:
+                    try:
+                        guard.record(cost)
+                    except Exception as exc:
+                        logger.warning(
+                            "BudgetGuard.record failed for %s: %s", owner_id, exc
+                        )
 
         return run

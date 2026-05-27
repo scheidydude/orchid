@@ -978,6 +978,7 @@ def create_app(
                     "is_active": u.is_active,
                     "projects": u.projects,
                     "budget_usd": u.budget_usd,
+                    "budget_used_usd": u.budget_used_usd,
                     "cpu_budget_seconds": u.cpu_budget_seconds,
                     "created_at": u.created_at.isoformat() if u.created_at else None,
                 }
@@ -1034,6 +1035,21 @@ def create_app(
             store.revoke_all_refresh_tokens(target_user_id)
             _log_audit(current_user, AuditAction.USER_DEACTIVATED, target_user_id, "success", request)
             return {"ok": True, "user_id": target_user_id}
+
+        @app.post("/api/admin/users/{target_user_id}/budget/reset")
+        async def admin_reset_budget(target_user_id: str, request: Request,
+                                     current_user: User = Depends(require_auth(role="admin"))):
+            """Reset budget_used_usd to 0.0 for a user."""
+            store = _get_auth_store()
+            user = store.get_user(target_user_id)
+            if user is None:
+                raise HTTPException(404, "User not found")
+            prev = user.budget_used_usd
+            user.budget_used_usd = 0.0
+            store.update_user(user)
+            _log_audit(current_user, AuditAction.BUDGET_RESET, target_user_id, "success",
+                       request, detail=json.dumps({"prev_used_usd": prev}))
+            return {"user_id": user.user_id, "budget_used_usd": 0.0}
 
         @app.get("/api/audit")
         async def get_audit_log(limit: int = 50, offset: int = 0, user_id: str = "",

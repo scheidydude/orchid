@@ -51,6 +51,31 @@ function EditableNumber({ value, onSave, min = 0, placeholder = '0 = unlimited' 
   )
 }
 
+// ── Usage bar ─────────────────────────────────────────────────────────────────
+
+function UsageBar({ used, limit }) {
+  if (!limit || limit <= 0) {
+    return (
+      <span style={{ fontSize: 11, color: 'var(--text-mute)' }}>
+        ${used?.toFixed(4) ?? '0.0000'} used
+      </span>
+    )
+  }
+  const pct = Math.min(100, (used / limit) * 100)
+  const color = pct >= 90 ? 'var(--error-fg)' : pct >= 70 ? 'var(--warn-fg)' : 'var(--info-fg)'
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <div style={{ fontSize: 11, color }}>
+        ${used?.toFixed(4) ?? '0.0000'} / ${limit.toFixed(2)}
+        <span style={{ color: 'var(--text-mute)', marginLeft: 6 }}>{pct.toFixed(0)}%</span>
+      </div>
+      <div style={{ height: 4, borderRadius: 2, background: 'var(--border)', width: 100, overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${pct}%`, background: color, borderRadius: 2 }} />
+      </div>
+    </div>
+  )
+}
+
 // ── Quotas page ───────────────────────────────────────────────────────────────
 
 export default function Quotas() {
@@ -58,6 +83,7 @@ export default function Quotas() {
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState('')
   const [search, setSearch]   = useState('')
+  const [resetting, setResetting] = useState(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -86,6 +112,20 @@ export default function Quotas() {
         ))
       }
     } catch { /* ignore */ }
+  }
+
+  const resetBudget = async (userId) => {
+    if (!confirm('Reset this user\'s budget usage to $0.00?')) return
+    setResetting(userId)
+    try {
+      const r = await fetch(`/api/admin/users/${userId}/budget/reset`, { method: 'POST' })
+      if (r.ok) {
+        setUsers(us => us.map(u =>
+          u.user_id === userId ? { ...u, budget_used_usd: 0 } : u
+        ))
+      }
+    } catch { /* ignore */ }
+    finally { setResetting(null) }
   }
 
   const filtered = users.filter(u =>
@@ -126,13 +166,15 @@ export default function Quotas() {
                   <th>User</th>
                   <th>Role</th>
                   <th>Budget (USD)</th>
+                  <th>Usage</th>
                   <th>CPU budget (seconds/day)</th>
+                  <th style={{ width: 80 }}></th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-mute)', padding: 32 }}>
+                    <td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-mute)', padding: 32 }}>
                       No active users found
                     </td>
                   </tr>
@@ -164,6 +206,9 @@ export default function Quotas() {
                       )}
                     </td>
                     <td>
+                      <UsageBar used={u.budget_used_usd ?? 0} limit={u.budget_usd} />
+                    </td>
+                    <td>
                       <EditableNumber
                         value={u.cpu_budget_seconds}
                         onSave={v => update(u.user_id, 'cpu_budget_seconds', v)}
@@ -173,6 +218,17 @@ export default function Quotas() {
                       {u.cpu_budget_seconds > 0 && (
                         <span style={{ fontSize: 11, color: 'var(--text-mute)', marginLeft: 8 }}>sec/day</span>
                       )}
+                    </td>
+                    <td>
+                      <button
+                        className="ghost"
+                        style={{ fontSize: 11, padding: '3px 8px' }}
+                        disabled={resetting === u.user_id || (u.budget_used_usd ?? 0) === 0}
+                        title="Reset usage counter to $0.00"
+                        onClick={() => resetBudget(u.user_id)}
+                      >
+                        {resetting === u.user_id ? '…' : 'Reset'}
+                      </button>
                     </td>
                   </tr>
                 ))}

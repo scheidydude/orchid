@@ -50,6 +50,8 @@ class AuditAction:
     MCP_ACCESS_REVOKED = "mcp_access_revoked"
     USER_MCP_SERVER_ADDED = "user_mcp_server_added"
     USER_MCP_SERVER_DELETED = "user_mcp_server_deleted"
+    BUDGET_EXCEEDED = "budget_exceeded"
+    BUDGET_RESET = "budget_reset"
 
 
 def make_event(

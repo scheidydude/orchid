@@ -18,6 +18,7 @@ class User:
     projects: list = field(default_factory=list)
     api_keys: dict = field(default_factory=dict)
     budget_usd: float = 0.0
+    budget_used_usd: float = 0.0     # cumulative LLM spend against budget_usd
     cpu_budget_seconds: float = 0.0  # Phase 6: daily CPU-seconds cap (0 = unlimited)
     password_hash: str | None = None
     token: str = ""  # legacy field — superseded by JWT; kept for backward compat
