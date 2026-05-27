@@ -119,6 +119,12 @@ export default function UserSettings({ user }) {
         <CredentialVault />
       </section>
 
+      {/* MCP Servers */}
+      <section style={{ marginBottom: 32 }}>
+        <div className="section-title" style={{ marginBottom: 14 }}>MCP Servers</div>
+        <MCPServers />
+      </section>
+
       {/* Notifications */}
       <section>
         <div className="section-title" style={{ marginBottom: 14 }}>Notifications</div>
@@ -587,6 +593,208 @@ function ApiKeyManager() {
       </form>
 
       {error && <p style={{ color: 'var(--error-fg)', fontSize: 12 }}>{error}</p>}
+    </div>
+  )
+}
+
+// ── MCP Servers ───────────────────────────────────────────────────────────────
+
+function MCPServers() {
+  const [data, setData]         = useState(null)
+  const [loading, setLoading]   = useState(false)
+  const [loaded, setLoaded]     = useState(false)
+  const [adding, setAdding]     = useState(false)
+  const [error, setError]       = useState(null)
+  const [form, setForm]         = useState({ name: '', transport: 'stdio', command: '', url: '' })
+  const [saving, setSaving]     = useState(false)
+
+  const load = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const r = await fetch('/api/user/mcp/servers')
+      if (!r.ok) { setError('Failed to load MCP servers'); return }
+      setData(await r.json())
+      setLoaded(true)
+    } catch { setError('Network error') }
+    finally { setLoading(false) }
+  }
+
+  const addServer = async (e) => {
+    e.preventDefault()
+    setError(null)
+    setSaving(true)
+    try {
+      const body = {
+        name: form.name,
+        transport: form.transport,
+        ...(form.transport === 'stdio' ? { command: form.command } : { url: form.url }),
+      }
+      const r = await fetch('/api/user/mcp/servers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}))
+        setError(d.detail || 'Add failed')
+        return
+      }
+      setAdding(false)
+      setForm({ name: '', transport: 'stdio', command: '', url: '' })
+      load()
+    } catch { setError('Network error') }
+    finally { setSaving(false) }
+  }
+
+  const deleteServer = async (serverId) => {
+    setError(null)
+    try {
+      const r = await fetch(`/api/user/mcp/servers/${encodeURIComponent(serverId)}`, { method: 'DELETE' })
+      if (!r.ok) { setError('Delete failed'); return }
+      load()
+    } catch { setError('Delete failed') }
+  }
+
+  if (!loaded) {
+    return (
+      <div className="card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>
+          MCP servers available to your tasks (shared by admin + your private servers).
+        </span>
+        <button onClick={load} disabled={loading}>{loading ? 'Loading…' : 'View servers'}</button>
+      </div>
+    )
+  }
+
+  const shared   = data?.shared  || []
+  const private_ = data?.private || []
+
+  return (
+    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+      {/* Shared servers */}
+      <div>
+        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dim)', marginBottom: 8 }}>
+          Admin-granted
+        </div>
+        {shared.length === 0 ? (
+          <p style={{ fontSize: 13, color: 'var(--text-mute)' }}>No shared servers available.</p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {shared.map(s => (
+              <div key={s.server_id} style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '6px 0', borderBottom: '1px solid var(--border)',
+              }}>
+                <div>
+                  <span style={{ fontWeight: 600, fontSize: 13 }}>{s.name}</span>
+                  <span style={{ fontSize: 11, color: 'var(--text-mute)', marginLeft: 8 }}>
+                    {s.transport}
+                  </span>
+                  {s.requires_credential && (
+                    <span style={{ fontSize: 11, color: 'var(--warn-fg)', marginLeft: 6 }}>
+                      ⚠ requires <code>{s.requires_credential}</code> in vault
+                    </span>
+                  )}
+                </div>
+                <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text-mute)' }}>
+                  {s.server_id}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Private servers */}
+      <div>
+        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dim)', marginBottom: 8 }}>
+          My private servers
+        </div>
+        {private_.length === 0 ? (
+          <p style={{ fontSize: 13, color: 'var(--text-mute)' }}>No private servers added yet.</p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {private_.map(s => (
+              <div key={s.server_id} style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '6px 0', borderBottom: '1px solid var(--border)',
+              }}>
+                <div>
+                  <span style={{ fontWeight: 600, fontSize: 13 }}>{s.name || s.server_id}</span>
+                  <span style={{ fontSize: 11, color: 'var(--text-mute)', marginLeft: 8 }}>{s.transport}</span>
+                  <span style={{ fontSize: 11, color: 'var(--text-mute)', marginLeft: 8 }}>
+                    {s.command || s.url || ''}
+                  </span>
+                </div>
+                <button
+                  className="danger"
+                  style={{ fontSize: 11, padding: '3px 10px' }}
+                  onClick={() => deleteServer(s.server_id)}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Add private server */}
+      {adding ? (
+        <form onSubmit={addServer} style={{ display: 'flex', flexDirection: 'column', gap: 10, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+          <div className="field">
+            <label>Name</label>
+            <input
+              value={form.name}
+              onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+              placeholder="e.g. My local filesystem"
+              required
+              autoFocus
+            />
+          </div>
+          <div className="field">
+            <label>Transport</label>
+            <select value={form.transport} onChange={e => setForm(f => ({ ...f, transport: e.target.value }))}>
+              <option value="stdio">stdio</option>
+              <option value="http">http</option>
+            </select>
+          </div>
+          {form.transport === 'stdio' ? (
+            <div className="field">
+              <label>Command</label>
+              <input
+                value={form.command}
+                onChange={e => setForm(f => ({ ...f, command: e.target.value }))}
+                placeholder="e.g. uvx orchid-mcp-filesystem /path"
+                required
+              />
+            </div>
+          ) : (
+            <div className="field">
+              <label>URL</label>
+              <input
+                type="url"
+                value={form.url}
+                onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
+                placeholder="https://my-mcp-server.example.com/mcp"
+                required
+              />
+            </div>
+          )}
+          {error && <p style={{ color: 'var(--error-fg)', fontSize: 13 }}>{error}</p>}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="submit" className="primary" disabled={saving}>{saving ? 'Adding…' : 'Add server'}</button>
+            <button type="button" onClick={() => { setAdding(false); setError(null) }}>Cancel</button>
+          </div>
+        </form>
+      ) : (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+          {error && <p style={{ color: 'var(--error-fg)', fontSize: 12, margin: 0 }}>{error}</p>}
+          <button onClick={() => setAdding(true)} style={{ marginLeft: 'auto' }}>+ Add private server</button>
+        </div>
+      )}
     </div>
   )
 }

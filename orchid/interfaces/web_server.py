@@ -802,6 +802,18 @@ def create_app(
     except Exception as _vault_exc:
         logger.warning("Vault API routes not registered: %s", _vault_exc)
 
+    # Register MCP catalog routes (Phase 3)
+    try:
+        from orchid.mcp.catalog_api import (
+            register_admin_routes as _register_mcp_admin,
+            register_user_routes as _register_mcp_user,
+        )
+        _register_mcp_admin(app)
+        _register_mcp_user(app)
+        logger.debug("MCP catalog routes registered")
+    except Exception as _mcp_exc:
+        logger.warning("MCP catalog routes not registered: %s", _mcp_exc)
+
     # ── Auth endpoints ────────────────────────────────────────────────────────
 
     if _AUTH_AVAILABLE:

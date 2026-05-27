@@ -43,6 +43,13 @@ class AuditAction:
     CREDENTIAL_UPDATED = "credential_updated"
     CREDENTIAL_DELETED = "credential_deleted"
     NOTIFICATION_CONFIG_UPDATED = "notification_config_updated"
+    MCP_SERVER_CREATED = "mcp_server_created"
+    MCP_SERVER_UPDATED = "mcp_server_updated"
+    MCP_SERVER_DELETED = "mcp_server_deleted"
+    MCP_ACCESS_GRANTED = "mcp_access_granted"
+    MCP_ACCESS_REVOKED = "mcp_access_revoked"
+    USER_MCP_SERVER_ADDED = "user_mcp_server_added"
+    USER_MCP_SERVER_DELETED = "user_mcp_server_deleted"
 
 
 def make_event(

@@ -234,3 +234,115 @@ class MCPManager:
             The ``MCPAdapter`` instance, or ``None`` if not found.
         """
         return self._adapters.get(server_name)
+
+    # ------------------------------------------------------------------
+    # User-scoped connection (Phase 3)
+    # ------------------------------------------------------------------
+
+    def connect_for_user(
+        self,
+        user_id: str,
+        user_role: str = "user",
+        catalog_store: Any | None = None,
+        vault_store: Any | None = None,
+        users_dir: Any | None = None,
+    ) -> None:
+        """Connect to MCP servers accessible to the given user.
+
+        Coexists with ``connect()`` — the existing no-auth path is unchanged.
+        Callers in the cron executor use this method; CLI/project paths still
+        use ``connect()``.
+
+        Merges in order:
+          1. Catalog servers the user can access (role + allowed_users check)
+          2. User's private servers from
+             ``~/.config/orchid/users/{user_id}/mcp_servers.json``
+
+        For servers whose ``requires_credential`` is set, the credential value
+        is fetched from the vault and injected into the server config:
+          - stdio → ``env[credential_key] = value``
+          - http  → ``headers["Authorization"] = "Bearer {value}"``
+
+        If the vault is unavailable (ORCHID_VAULT_KEY not set) the server is
+        still included — just without the credential injection.  A warning is
+        logged so operators can diagnose misconfigured servers.
+
+        Args:
+            user_id:       The authenticated user's ID.
+            user_role:     The user's role string (``"user"``, ``"admin"``, …).
+            catalog_store: Optional ``MCPCatalogStore`` override (for tests).
+            vault_store:   Optional ``VaultStore`` override (for tests).
+            users_dir:     Optional override for private-server storage root.
+
+        Raises:
+            MCPManagerError: If any server fails to connect.
+        """
+        from orchid.mcp.catalog import get_catalog, UserMCPStore
+
+        cat = catalog_store or get_catalog()
+        user_store = UserMCPStore(users_dir=users_dir)
+
+        server_config: dict[str, Any] = {}
+
+        # 1. Catalog servers this user is allowed to access
+        for entry in cat.get_servers_for_user(user_id, user_role):
+            cfg: dict[str, Any] = dict(entry.config)
+            cfg["transport"] = entry.transport
+
+            if entry.requires_credential and vault_store is not None:
+                try:
+                    cred = vault_store.get(user_id, entry.requires_credential)
+                    if cred:
+                        if entry.transport == "stdio":
+                            env = dict(cfg.get("env") or {})
+                            env[entry.requires_credential] = cred
+                            cfg["env"] = env
+                        elif entry.transport == "http":
+                            headers = dict(cfg.get("headers") or {})
+                            headers["Authorization"] = f"Bearer {cred}"
+                            cfg["headers"] = headers
+                except Exception as exc:
+                    logger.warning(
+                        "Vault credential injection failed for server '%s': %s",
+                        entry.server_id,
+                        exc,
+                    )
+
+            server_config[entry.server_id] = cfg
+
+        # 2. User's private servers (catalog entries take precedence on name clash)
+        for priv in user_store.list_servers(user_id):
+            sid = priv.get("server_id") or priv.get("name", "")
+            if sid and sid not in server_config:
+                server_config[sid] = priv
+
+        # Build adapters and connect (mirrors connect() internals)
+        self._server_config = server_config
+        self._adapters = {}
+        for name, cfg in server_config.items():
+            if not isinstance(cfg, dict):
+                continue
+            try:
+                client = self._create_client(name, cfg)
+            except MCPManagerError as exc:
+                logger.warning("Skipping MCP server '%s': %s", name, exc)
+                continue
+            self._adapters[name] = MCPAdapter(client)
+
+        errors: list[tuple[str, Exception]] = []
+        connected: list[str] = []
+        for name, adapter in self._adapters.items():
+            try:
+                adapter.connect()
+                connected.append(name)
+            except Exception as exc:
+                errors.append((name, exc))
+
+        if errors:
+            for name in connected:
+                self._adapters[name].disconnect()
+            msg_parts = [f"{n}: {e}" for n, e in errors]
+            raise MCPManagerError(
+                f"Failed to connect to {len(errors)} server(s): {'; '.join(msg_parts)}",
+                -1,
+            )
