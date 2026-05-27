@@ -1,101 +1,102 @@
 # HANDOFF.md
-_Written: 2026-05-10. Previous HANDOFF archived as `HANDOFF-archive-2026-05-09-1200.md`._
+_Written: 2026-05-26. Previous HANDOFF archived as `HANDOFF-archive-2026-05-10-0000.md`._
 
 ---
 
 ## 1. Mission
 
-Orchid is a standalone AI agent orchestration framework: install once, point at any git repo, run agents against it. This session completed two distinct bodies of work: (1) the full V2.3 auth stack (JWT, argon2id, API keys, OAuth/OIDC, audit log, pluggable Postgres backend, React login page) wired into the actual running server, and (2) a 6-phase OS-grade reliability sprint (graceful shutdown, crash recovery, subprocess worker pool, preemption/pause-resume, WebSocket backpressure, CPU/latency budgets). Both are committed, pushed, and verified against the live service. The next work is the 6 forward-looking features documented in `docs/next-features-plan.md`.
+Orchid is a standalone AI agent orchestration framework. This session began work on transforming it into a true **multi-user agentic OS** — multiple people on one deployment, each with their own dashboard, scheduled tasks, and (eventually) credentials. Phase 1 of that roadmap is done: users get a separate React portal at `/app`, admins keep the existing power-user UI at `/`. The next chunk is Phase 2: credential vault + per-user notification config.
 
 ---
 
 ## 2. Current State
 
-### Live service verified at commit `f4dbf58`
+### What's working and verified at commit `14b775a`
 
-```
-curl http://localhost:7842/api/auth/me  →  {"authenticated":false}  ✓
-14 auth routes registered in OpenAPI spec  ✓
-/api/projects/{id}/tasks/{task_id}/suspend + /resume routes live  ✓
-```
+**Portal SPA (`/app`):**
+- `orchid/interfaces/portal/` — Vite + React app, built and tested
+- `dist/` exists locally (gitignored) — run `cd orchid/interfaces/portal && npm install && npm run build` to rebuild
+- Served at `/app` and `/app/*` by `web_server.py`
+- Pages: Dashboard (scheduled tasks + projects), Settings (profile, password change, API key manager)
+- Role-based redirect at `/`: non-admin authed users → 302 `/app/`; admins stay at `/`
+- Admin sees "Admin Console →" link in portal user menu pointing back to `/`
 
-Service running via `sudo systemctl restart orchid-serve` (user must run this — Claude can't sudo).
-The installed binary (`/home/dave/.local/bin/orchid`) is the `uv tool install` copy, rebuilt this session.
+**Password change endpoint:**
+- `PUT /api/auth/me/password` — wired in `web_server.py`, tested, working
+- Verifies current password (argon2), enforces 8-char minimum, calls `store.update_user()`
 
-### What's working and verified
+**Test suite:**
+- `tests/test_portal_api.py` — 8 tests: password change (success, wrong current, too short, missing fields, unauthenticated), portal routing smoke tests
+- `44 passed` across `test_web.py`, `test_web_v2.py`, `test_portal_api.py`
 
-**Auth (V2.3):**
-- `POST /api/auth/register`, `login`, `refresh`, `logout`, `me`, `token` — all wired into `interfaces/web_server.py` (was previously in dead-end `web/server.py` that `orchid serve` never loaded — fixed this session)
-- JWT HS256 access tokens (15 min) + opaque argon2-hashed refresh tokens (30 days), HttpOnly cookies
-- API keys (`ok_{id}.{secret}` format), scoped, argon2-hashed secret
-- Google/Entra/generic OIDC, PKCE mobile flow
-- Audit log (`~/.config/orchid/audit/audit-YYYY-MM-DD.jsonl`), admin user management, per-user project scoping
-- Pluggable store: `FileUserStore` (default, JSON) or `PostgresUserStore` (set `ORCHID_AUTH_STORE_DSN`)
-- React login page: checks `/api/auth/me` on load, shows sign-in form if unauthenticated, logout button in header
-- `JWT_SECRET` required in `~/.config/orchid/.env` — service raises `RuntimeError` without it
+**Docs:**
+- `docs/multiuser-review.md` — gap analysis of current multi-user support
+- `docs/multiuser-proposal.md` — full 5-phase roadmap with resolved decisions
 
-**OS-grade reliability (Phases 1–6):**
-- **Phase 1 — Graceful shutdown:** `orchid/shutdown.py` global event; SIGTERM → cancel all agents at next ReAct iteration; final ReAct checkpoint saved before exit; `BackgroundRunner.graceful_shutdown(timeout_s=30)`; systemd `KillMode=mixed`, `TimeoutStopSec=35`
-- **Phase 2 — Orphan recovery:** `.orchid/running` marker (survives crashes only); startup scans all projects; tasks with ReAct checkpoint ≤ 24 h old resume from saved iteration; stale → reset to TODO
-- **Phase 3 — Worker pool:** `isolation.subprocess_enabled: true` (default); 4 pre-forked workers; RLIMIT_AS/CPU/NOFILE via `preexec_fn`; SIGTERM → 5 s → SIGKILL on timeout
-- **Phase 4 — Preemption:** `BaseAgent.suspend()`/`resume()` via `threading.Event`; saves checkpoint on suspend; `agent_registry.py` maps `task_id → agent`; `_priority_score()` in scheduler (p1=30, p2=20, p3=10 + age bonus); `/suspend` `/resume` API; ⏸/▶ buttons in Task Board
-- **Phase 5 — Backpressure:** `asyncio.wait_for(timeout=5s)` around every `ws.send_json()`; 30 s heartbeat ping; dead clients evicted
-- **Phase 6 — CPU/latency budgets:** per-iteration latency tracking (3-strike cancel); `RUSAGE_CHILDREN` cpu_seconds in WorkerResult → TokenRecord → task_metrics.jsonl → PM Dashboard CPU column; `User.cpu_budget_seconds`; `CostScheduler.check_cpu_budget()`
+### What's half-built / gaps in Phase 1
 
-### Half-built / known gaps
+- **Portal `dist/` not committed** (gitignored). Before deploying, run the build command in `orchid/interfaces/portal/`.
+- **UserSettings Phase 2 stubs** — "Credentials" and "Notifications" sections in `UserSettings.jsx` are placeholder cards with "coming in Phase 2" labels. No backend yet.
+- **`POST /api/auth/me/password` not in `orchid/web/server.py`** — the OLD server file (never used by `orchid serve`) doesn't have it. Fine, `web_server.py` is the real one.
+- **Portal not linked from `orchid serve` build docs** — README not yet updated for Phase 1.
 
-- `orchid/isolation/` directory does **not exist** yet — network namespace isolation (Observation 6) is documented in `docs/next-features-plan.md` but not implemented
-- `agents.max_iteration_seconds: 0` (disabled by default) — latency budget feature exists but needs the user to set a value to activate
-- `runner.preemption_enabled: false` — priority preemption is opt-in; pause/resume works but automatic preemption of lower-priority tasks is not wired
-- No OpenTelemetry, no Redis queue, no async agent execution, no capability versioning — all planned in `docs/next-features-plan.md`
+### Exact next action
 
-### Next action for a fresh session
-
-The 6 next features are planned and prioritized in `docs/next-features-plan.md`. Recommended first: **LLM provider fallback chain** (effort S, no new dependencies, files: `providers/base.py`, `providers/registry.py`, `orchestrator.py`, `cost/scheduler.py`).
+Start Phase 2: Credential Vault + Per-User Config + Notifications. See proposal doc for full spec. First step: backend credential store at `~/.config/orchid/users/{user_id}/credentials.json.enc`.
 
 ---
 
 ## 3. Decisions Made (and Why)
 
-**Decision:** Auth endpoints live in `interfaces/web_server.py`, not `web/server.py`
-**Alternatives considered:** Keep two separate server files, redirect one to the other
-**Reason:** `orchid serve` imports `orchid.interfaces.web_server` via CLI → `serve()` → `create_app()`. `orchid/web/server.py` is a dead-end standalone file never loaded by the real server. All auth routes had to be added inside `create_app()` in `interfaces/web_server.py`.
-**Reversibility:** Load-bearing — do not move auth back to `web/server.py`.
+**Decision:** One FastAPI app, two React SPAs (`/` and `/app/`), not separate servers
+**Alternatives considered:** Separate server processes on different ports, single SPA with role-based tabs
+**Reason:** One deploy, one auth session, one TLS cert. Admin can visit `/app/` to see the user view. No CORS, no second JWT secret, no second systemd unit.
+**Reversibility:** Easy to split later if needed. The portal is already a separate Vite app.
 
-**Decision:** Auth endpoints gated by `if _AUTH_AVAILABLE:` inside `create_app()`
-**Alternatives considered:** Hard import (fail fast if missing), separate router
-**Reason:** Allows the server to start without auth deps if they're not installed. `try/except ImportError` at module level sets `_AUTH_AVAILABLE`.
-**Reversibility:** Easy to change to hard-fail if desired.
+**Decision:** Non-admin users redirected from `/` to `/app/` at the server layer (Python), not client-side
+**Alternatives considered:** Client-side redirect in the existing React app after auth check
+**Reason:** Server-side avoids a flash of the wrong UI. `_get_user_from_request()` reads the HttpOnly JWT cookie and does a 302 before any HTML is returned.
+**Reversibility:** Easy. The helper is 10 lines in `web_server.py`.
 
-**Decision:** `get_store()` singleton factory in `store.py`; both `web_server._get_auth_store()` and `middleware._get_store()` delegate to it
-**Alternatives considered:** Each module holds its own store instance (was the original code)
-**Reason:** Two separate `UserStore()` instances writing the same JSON file created a race. Singleton ensures one FileUserStore per process.
-**Reversibility:** Easy to change. The singleton is in `store.py` behind `_store_lock`.
+**Decision:** Portal is a completely separate Vite project (`orchid/interfaces/portal/`), not a new route in `web_ui/`
+**Alternatives considered:** Add portal pages as routes inside the existing `web_ui` app
+**Reason:** Clean separation. Different target persona (end user vs power user/admin). Different nav, different component set. Shared API but no shared component code — copy-paste the few shared pieces (Login, CSS vars).
+**Reversibility:** Could be merged later but no reason to.
 
-**Decision:** `isolation.subprocess_enabled: true` by default (Phase 3)
-**Alternatives considered:** Keep opt-in (`false`)
-**Reason:** Gap-closure plan called for always-on isolation. Worker pool eliminates startup cost that made the previous opt-in stance reasonable.
-**Reversibility:** Easy — set `isolation.subprocess_enabled: false` in `.orchid.yaml` to revert per-project.
+**Decision:** `vite.config.js` uses `base: '/app/'` so all asset paths in the portal build are relative to `/app/`
+**Alternatives considered:** Default base (`/`), letting the server rewrite paths
+**Reason:** Required for the SPA to work when served at a sub-path. Without it, `index.html` loads assets at `/assets/...` which conflicts with the main app's `/assets/`.
+**Reversibility:** Must keep this. Removing it breaks the portal build.
 
-**Decision:** `agent_registry.py` as a separate module for the global `task_id → agent` map (Phase 4)
-**Alternatives considered:** Store on `_ProjectState` in runner, store on orchestrator
-**Reason:** Avoids coupling orchestrator → runner or runner → orchestrator. Both can independently import `agent_registry` without circular imports.
-**Reversibility:** Easy to change. It's 30 lines.
+**Decision:** Admin users are NOT force-redirected away from the portal — they can visit `/app/` deliberately
+**Alternatives considered:** Redirect admin users from `/app/` back to `/`
+**Reason:** Admin being able to see exactly what users see is a feature (for debugging/support). Admin console link is in the portal user menu.
+**Reversibility:** Easy to add a redirect if desired.
 
-**Decision:** Priority score = `{p1:30, p2:20, p3:10} + age_bonus` using task ID number as age proxy (Phase 4)
-**Alternatives considered:** Raw `task.priority` int (what existed before), actual timestamp
-**Reason:** Task has no `created_at` field. ID number is monotonic within a project — lower ID = queued earlier = small bonus. Weighted scoring (30/20/10) gives p1 a decisive lead over p2 regardless of age.
-**Reversibility:** Easy — just the `_priority_score()` function in `scheduler.py`.
+**Decision:** Postgres migration = Phase 5, not earlier
+**Alternatives considered:** Phase 2 (alongside credential vault)
+**Reason:** `FileUserStore` is fine for small teams. Adding Postgres dependency earlier blocks Phase 2–4 on infra setup. Phase 5 is the right time.
+**Reversibility:** Decision stands unless user changes it.
 
-**Decision:** `RUSAGE_CHILDREN` delta for CPU accounting (Phase 6)
-**Alternatives considered:** Parse `/proc/pid/stat`, `psutil`
-**Reason:** `resource.getrusage(RUSAGE_CHILDREN)` is stdlib, cross-distro, zero deps. Delta (before/after child.wait()) gives per-task CPU with reasonable accuracy for sequential children.
-**Reversibility:** Easy to swap for psutil later.
+**Decision:** No team/group model — project access is admin-controlled via `User.projects` list
+**Alternatives considered:** Team entities with shared project pools
+**Reason:** User explicitly chose this. Simpler, no new data model needed.
+**Reversibility:** Could add team model in Phase 4+ but user has decided against it.
 
-**Decision:** WebSocket suspend/resume buttons only shown for the current running task (Phase 4)
-**Alternatives considered:** Show for all IN_PROGRESS tasks
-**Reason:** `runStatus.currentTask` from the run/status endpoint identifies which specific task is running. `isThisRunning = task.status === 'IN_PROGRESS' && currentTask.startsWith(task.id)`. Only one task can be in the `suspended` state at a time per project.
-**Reversibility:** UI-only, easy to change.
+**Decision:** MCP credentials are per-user only, never shared
+**Alternatives considered:** Shared credential pool for a "team inbox" style use case
+**Reason:** User explicitly chose this. Simpler security model.
+**Reversibility:** User decision — don't reopen.
+
+**Decision:** User registration is admin-invite only
+**Alternatives considered:** Open registration with admin approval
+**Reason:** User explicitly chose this. Internal tool, not public SaaS.
+**Reversibility:** User decision — don't reopen.
+
+**Decision:** Phase 2 notifications = email + Telegram + Slack (per-user config)
+**Alternatives considered:** Email only for Phase 2
+**Reason:** User explicitly requested all three channels.
+**Reversibility:** Easy to add/remove channels.
 
 ---
 
@@ -105,118 +106,102 @@ The 6 next features are planned and prioritized in `docs/next-features-plan.md`.
 
 | File | What it does |
 |------|-------------|
-| `orchid/shutdown.py` | Process-wide `threading.Event`; `request_shutdown()`, `is_shutting_down()`. Zero circular imports — everything imports this. |
-| `orchid/agent_registry.py` | Global `{task_id: agent}` map. Lets endpoints reach live agents for suspend/resume without coupling orchestrator ↔ runner. |
-| `orchid/auth/base.py` | `BaseUserStore` ABC — 23 abstract methods. Both `FileUserStore` and `PostgresUserStore` implement it. |
-| `orchid/auth/store_postgres.py` | PostgreSQL backend. `ThreadedConnectionPool`, auto-creates `orchid_*` tables, UPSERT-safe. Requires `psycopg2-binary`. |
-| `orchid/interfaces/web_ui/src/components/Login.jsx` | React login form. Calls `POST /api/auth/login`, shows error, calls `onLogin(user)` on success. |
-| `docs/gap-closure-plan.md` | Phased plan for OS-grade reliability (Phases 1–6, this session's work). |
-| `docs/auth-store-backends.md` | How to switch between file and Postgres storage. |
-| `docs/next-features-plan.md` | Implementation plans for 6 forward-looking features (the actual next work). |
+| `orchid/interfaces/portal/` | New Vite+React user portal app. Entry: `src/main.jsx`. Build: `npm run build`. Served at `/app/*`. |
+| `orchid/interfaces/portal/src/App.jsx` | Auth gate + top-level routing (view state: `dashboard` \| `settings`). `useAuth` hook, `UserMenu` with Admin Console link. |
+| `orchid/interfaces/portal/src/components/Dashboard.jsx` | Landing page: scheduled task rows (run now, history, edit, delete, create) + project cards with progress bars. |
+| `orchid/interfaces/portal/src/components/TaskFormModal.jsx` | Create/edit scheduled task: name, type, schedule presets + cron input, JSON config editor, enable/notify toggles. |
+| `orchid/interfaces/portal/src/components/TaskRunHistory.jsx` | Modal: table of runs with expand-to-show-output. Fetches `GET /api/scheduler/tasks/{id}/runs`. |
+| `orchid/interfaces/portal/src/components/UserSettings.jsx` | Profile display, password change form, API key manager (lazy-loaded), Phase 2 stubs. |
+| `orchid/interfaces/portal/src/components/Login.jsx` | Standalone login form for portal (identical UX to `web_ui` login). |
+| `orchid/interfaces/portal/src/components/StatusBadge.jsx` | `StatusBadge`, `TypeBadge`, `RoleBadge` — shared badge components. |
+| `orchid/interfaces/portal/src/hooks/useAuth.js` | `useAuth()` — GET `/api/auth/me`, returns `{user, checked, setUser, logout}`. |
+| `orchid/interfaces/portal/src/hooks/useScheduledTasks.js` | `useScheduledTasks()` — wraps all scheduler API calls: list, run, delete, create, update, getRuns. |
+| `orchid/interfaces/portal/src/hooks/useProjects.js` | `useProjects()` — GET `/api/projects`, returns `{projects, loading, error, refresh}`. |
+| `orchid/interfaces/portal/src/index.css` | Full dark theme CSS matching `web_ui` design tokens. CSS custom properties, component classes (`.card`, `.badge`, `.modal`, etc.). |
+| `orchid/interfaces/portal/package.json` | Portal deps: React 18, Vite 5. No chart libs, no router — state-based nav only. |
+| `orchid/interfaces/portal/vite.config.js` | `base: '/app/'`, proxy to `localhost:7842`, builds to `dist/`. Dev port 5174. |
+| `tests/test_portal_api.py` | 8 tests for `PUT /api/auth/me/password` and portal routing. |
+| `docs/multiuser-review.md` | Gap analysis: what multi-user support exists vs what's needed. |
+| `docs/multiuser-proposal.md` | 5-phase roadmap with resolved decisions table. |
 
 ### Modified significantly this session
 
 | File | What changed |
 |------|-------------|
-| `orchid/interfaces/web_server.py` | **Critical change:** all auth endpoints added inside `create_app()` — this is where `orchid serve` actually routes. Also: graceful shutdown in lifespan, orphan recovery on startup, WS send timeout, WS heartbeat, suspend/resume endpoints, `cpu_budget_seconds` in user update. |
-| `orchid/auth/store.py` | `UserStore` renamed to `FileUserStore` (alias kept); `get_store()` singleton factory added; imports `BaseUserStore`. |
-| `orchid/auth/middleware.py` | `_get_store()` delegates to `get_store()` — all callers share one store instance. |
-| `orchid/auth/types.py` | Added `User.cpu_budget_seconds: float = 0.0`. |
-| `orchid/agents/base.py` | Added `_resume_checkpoint`, `_suspend_event`, `_resume_event`, `_suspended`; `suspend()`/`resume()` methods; shutdown check in run loop; suspend parking (checkpoint + `threading.Event.wait()`); per-iteration latency tracking with 3-strike cancel; final checkpoint on cancel. |
-| `orchid/runner.py` | `graceful_shutdown()`, `.orchid/running` marker write/remove, `recover_orphans()`, `suspend_task()`/`resume_task()`. |
-| `orchid/orchestrator.py` | Loads ReAct checkpoint and wires to `agent._resume_checkpoint`; registers/deregisters in `agent_registry`; `_last_subprocess_cpu_s` tracking; `cpu_seconds` passed to `_write_task_metrics()`. |
-| `orchid/subprocess_runner.py` | Rewritten: `WorkerPool` class (pre-forked workers), `_run_oneshot()` (fallback), `_resource_preexec()` (RLIMIT), `_child_cpu()` (RUSAGE delta), SIGTERM before SIGKILL. |
-| `orchid/worker_subprocess.py` | Added `pool_main()` (loop accepting tasks via stdin until `{"type":"exit"}`); `--pool` CLI flag. |
-| `orchid/worker_protocol.py` | `WorkerResult.cpu_seconds: float = 0.0` added. |
-| `orchid/checkpoint/restore.py` | `resume_orphaned_tasks()` added — scans IN_PROGRESS tasks, checks checkpoint age, resets stale ones to TODO. |
-| `orchid/cost/ledger.py` | `TokenRecord.cpu_seconds` field; `record()` accepts `cpu_seconds`; `daily_cpu_for_user()` method. |
-| `orchid/cost/scheduler.py` | `check_cpu_budget(user_id, cpu_budget_seconds)` added. |
-| `orchid/scheduler.py` | `_priority_score()` function; topological sort and parallel group sort use score (descending). |
-| `orchid/orchid.defaults.yaml` | `runner.shutdown_timeout`, `runner.preemption_enabled`, `isolation.subprocess_enabled: true`, `isolation.subprocess_workers: 4`, `isolation.resource_limits`, `web.ws_send_timeout`, `web.ws_heartbeat_s`, `agents.max_iteration_seconds`. |
-| `orchid/interfaces/web_ui/src/App.jsx` | Auth gate: checks `/api/auth/me` on load; renders `<Login>` if unauthenticated; `AuthenticatedApp` component for the rest; logout button. |
-| `orchid/interfaces/web_ui/src/components/TaskBoard.jsx` | `onSuspend`/`onResume` handlers; passes `currentTask`/`suspended` to `TaskRow`. |
-| `orchid/interfaces/web_ui/src/components/TaskRow.jsx` | ⏸ button (suspend) and ▶ Resume button based on `isThisRunning`/`isThisSuspended`. |
-| `orchid/interfaces/web_ui/src/components/pm/TaskTiming.jsx` | CPU column added. |
-| `scripts/orchid-serve.service` | `KillMode=mixed`, `KillSignal=SIGTERM`, `TimeoutStopSec=35`. |
-| `README.md` + `docs/Orchid vs Agentic OS.md` | Both fully updated for this session's work. |
+| `orchid/interfaces/web_server.py` | Added `_PORTAL_DIST_DIR`, portal static file mounts (`/app/assets`, `/app`, `/app/*`), `_get_user_from_request()` helper, role-based 302 at `/`, `PUT /api/auth/me/password` endpoint. |
+| `.gitignore` | Added `node_modules/`, `orchid/interfaces/web_ui/node_modules/`, `orchid/interfaces/portal/node_modules/`, `orchid/interfaces/web_ui/dist/`, `orchid/interfaces/portal/dist/`. |
 
 ### Do not touch without reason
 
-- `orchid/web/server.py` — dead-end file, never loaded by `orchid serve`. Auth code was incorrectly added here first (the bug we fixed). Do not add new routes here.
-- `orchid/auth/jwt.py` — crypto is stable. argon2id params (time=3, mem=64MB, par=4) are OWASP-recommended, do not change without security review.
+- `orchid/web/server.py` — dead-end file, never loaded by `orchid serve`. Don't add routes here. See prior HANDOFF for the full history of why this file is a trap.
+- `orchid/interfaces/web_ui/` — the existing power-user/admin SPA. Phase 1 deliberately left it untouched. Do not merge portal code into it.
+- `orchid/auth/jwt.py` — crypto is settled. Don't touch argon2id params.
 
 ---
 
 ## 5. Gotchas & Hard-Won Knowledge
 
-**The biggest bug this session:** Auth endpoints were in `orchid/web/server.py`. `orchid serve` loads `orchid/interfaces/web_server.py`. These are different files. The running service had zero auth routes. The symptom: `POST /api/auth/register` returned 405 with `allow: GET` because `/{full_path:path}` catch-all GET matched it first. Confirmed by hitting `/openapi.json` and seeing no auth paths. Fix: add auth inside `create_app()` in `interfaces/web_server.py`.
+**PyJWT and argon2-cffi were missing from the venv.** The `_AUTH_AVAILABLE` flag in `web_server.py` silently stays `False` if these aren't installed, and auth routes simply don't register (all auth endpoints 404). If auth endpoints 404 unexpectedly, check: `python -c "from orchid.interfaces.web_server import _AUTH_AVAILABLE; print(_AUTH_AVAILABLE)"`. Fix: `uv pip install "PyJWT>=2.8.0" argon2-cffi`. Both are in `pyproject.toml` but weren't in the dev venv at session start.
 
-**`uv tool install` vs `uv pip install -e`:** Migration guide step 3 says `uv pip install -e ".[dev]"` which installs into `.venv`. But `orchid serve` runs via `/home/dave/.local/bin/orchid` which is the `uv tool install` copy in a separate venv. After any code change: `npm run build` (if UI changed) then `uv tool install --reinstall --from . orchid` from repo root. Then `sudo systemctl restart orchid-serve`.
+**`store.update_user()` not `store.upsert_user()`.** `FileUserStore` has `update_user()`. `upsert_user()` doesn't exist. Calling the wrong one raises `AttributeError` at runtime. The method names are not intuitive — `update_user` replaces the full user record.
 
-**Subprocess pool startup order:** `_PoolWorker.__init__()` blocks waiting for `{"type":"ready"}` from the worker stdout (up to 10 s). If the pool fails to start (bad import, missing dep), `WorkerPool._spawn_workers()` catches the exception and logs a warning — it doesn't crash the service. Check logs if tasks silently fail with subprocess mode on.
+**Portal build base path.** The portal `vite.config.js` has `base: '/app/'`. This means the built `index.html` has `src="/app/assets/index-HASH.js"`. If you change this, all asset loads break. The server mounts assets at `/app/assets` — these must match.
 
-**`get_store()` singleton:** `_store_instance` is set once at process start. If `ORCHID_AUTH_STORE_DSN` is not in env when the process starts, it will use `FileUserStore` for the entire lifetime — even if you set the env var later. Must be in env before process starts.
+**Cookie-based auth for the portal.** The portal uses the same HttpOnly cookies (`orchid_access`, `orchid_refresh`) as the main app. No token is passed in headers. Fetch calls to `/api/*` from the portal work automatically because they're same-origin. The `credentials: 'include'` flag is NOT needed — same origin.
 
-**`WorkerResult` deserialization in pool mode:** Workers return JSON with all fields including `cpu_seconds`. `_run_oneshot()` uses `WorkerResult(**{k: v for k, v in data.items() if k in WorkerResult.__dataclass_fields__})` to safely ignore unknown keys from old workers. Pool mode (`_PoolWorker.run_task()`) uses the same pattern.
+**`user.role` is `"user"` not `"regular"`.** Role values are `"user"`, `"admin"`, `"readonly"`. The portal user menu shows "Admin Console" link when `user.role === 'admin'`. The redirect check in `web_server.py` excludes `("admin",)`. Don't use `"regular"` anywhere.
 
-**Suspend/resume requires agent to be registered:** The `agent_registry` is populated by `orchestrator._execute_task()` just before `agent.run()`. Tasks running in subprocess mode (`isolation.subprocess_enabled: true`) run in a child process — the parent's agent_registry has no entry. Suspend/resume only works for in-process agents. Subprocess mode makes suspend endpoints return 404. This is a known limitation.
+**Test fixture shares `_store_instance`.** The `auth_client` fixture in `test_portal_api.py` sets `store_mod._store_instance = new_store` directly. If tests run in the same process without fixture teardown, a leaked singleton can cause cross-test bleed. Each test function gets a fresh `tmp_path` and new store, so it's fine — but be aware of this pattern when adding more auth tests.
 
-**`asyncio.wait_for` in sync broadcast:** `ConnectionManager.broadcast()` is an `async def`. The `asyncio.wait_for(ws.send_json(...), timeout=5.0)` works correctly because `broadcast` is always called from an async context (FastAPI event loop). `broadcast_sync()` uses `asyncio.run_coroutine_threadsafe()` from background threads — this is correct and unchanged.
-
-**`RUSAGE_CHILDREN` accumulates:** `getrusage(RUSAGE_CHILDREN)` returns cumulative CPU for all waited children, not just the last one. `_child_cpu()` must be called before and after `proc.wait()` to get the delta. If tasks run in parallel (same parent process), the delta is approximate. For the worker pool, each task's CPU is slightly over-counted if workers finish concurrently. Acceptable for budget enforcement.
-
-**`resume_orphaned_tasks()` vs running marker:** The marker file at `.orchid/running` is written when `BackgroundRunner.start()` is called and removed in `_run()` finally block. Graceful stop removes it. Only a crash or SIGKILL leaves it. On startup, the orphan scan runs before traffic is served (in `_lifespan` startup). If a project is not yet registered when the scan runs, it won't be checked — new projects discovered by `ProjectDiscovery` after startup need manual `--recover`.
+**TestClient `cookies=` deprecation warning.** Starlette's `TestClient` warns that passing `cookies=` per-request is deprecated. It still works. To silence: set cookies on the client instance directly (`client.cookies.update(...)`). Non-blocking for now.
 
 ---
 
 ## 6. Conventions In Play
 
-**Caveman mode active** — this Claude Code session ran with compressed communication (caveman harness). The next session may or may not have it. Doesn't affect code, just assistant responses.
+**Caveman mode active** — harness compresses assistant responses. Doesn't affect code output.
 
-**Commit style:** Conventional Commits. `feat:`, `fix:`, `docs:`, `chore:`. Body explains the "why". Co-authored line required (harness adds it). See recent commits for examples.
+**Commit style:** Conventional Commits. `feat(portal):`, `fix(portal):`, etc. Co-authored line required (harness adds it). Subject ≤ 72 chars.
 
-**No test suite updates this session** — the auth and OS-grade phases were not accompanied by new tests. `tests/` has 134 auth tests from the original auth implementation but none for: worker pool, suspend/resume, orphan recovery, CPU accounting. Next session should be aware tests may not cover Phase 1–6 additions.
+**Portal component style:** Inline styles everywhere (no CSS modules, no Tailwind). CSS custom properties for tokens (`var(--accent)`, `var(--surface)`, etc.). All defined in `src/index.css`. Match `web_ui`'s design tokens exactly — same hex values, same variable names.
 
-**`uv tool install` is the deployment mechanism** — not `pip install`, not running from source. The installed binary is what systemd runs. Always rebuild after changes:
-```bash
-cd orchid/interfaces/web_ui && npm run build  # if UI changed
-cd ~/LocalAI/orchid && uv tool install --reinstall --from . orchid
-sudo systemctl restart orchid-serve
-```
+**No React Router in the portal.** Navigation is `useState` view switching. Two views currently: `dashboard` and `settings`. If it grows to 5+ views, consider adding a router, but not yet.
 
-**Config layering:** 3 layers: `orchid.defaults.yaml` (packaged) → `.orchid.yaml` (per-project) → CLI flags. Never edit `orchid.defaults.yaml` for project-specific settings.
+**Portal API calls go to `/api/*` with no auth header** — cookie auth is automatic (same origin). All fetch calls in hooks use plain `fetch('/api/...')`.
 
-**Auth module:** `orchid/auth/` is self-contained. `orchid/interfaces/web_server.py` imports from it (inside `if _AUTH_AVAILABLE:` guards). Do not import web_server from auth — that's the circular import direction.
+**Tests for `orchid.interfaces.web_server` use the `app_client` fixture from `test_web_v2.py` as the pattern.** It creates a fresh `create_app([])`, resets module state, does NOT mock the auth layer (real store). See `test_portal_api.py` for the auth-enabled variant.
 
-**No migration needed for new fields:** `User.cpu_budget_seconds`, `TokenRecord.cpu_seconds`, `WorkerResult.cpu_seconds` all have `default=0.0`. Old `users.json` files load without error.
+**`dist/` is gitignored** — portal must be built before deployment. There is no CI build step yet. Manual: `cd orchid/interfaces/portal && npm install && npm run build`.
+
+**Phase proposal doc is ground truth.** `docs/multiuser-proposal.md` has the resolved decisions table, phase breakdown, and spec for upcoming phases. Don't re-debate what's in there.
 
 ---
 
 ## 7. Open Questions
 
-1. **Does the worker pool actually work for real tasks?** Pre-forked workers import orchid at startup. If any import fails (e.g., missing ANTHROPIC_API_KEY at import time), all pool workers die silently. Has not been tested end-to-end with a real agent run since subprocess mode was flipped to default-on. The user should run a test task with `orchid --project PATH --run-task T001` and check logs.
+1. **Phase 2 scope: what notification channels to implement first?** User said email + Telegram + Slack in Phase 2. All three, or just email first with the others in Phase 3? The existing Telegram and Slack bots (`orchid serve --telegram/--slack`) are already wired — per-user notification routing is a new concern.
 
-2. **Suspend/resume with subprocess mode:** suspend/resume only works for in-process agents (subprocess disabled). With `isolation.subprocess_enabled: true` (the new default), suspend calls return 404 because the child process has no entry in the parent's agent_registry. Should subprocess mode be disabled by default after all, or should suspend/resume be forwarded to the child via a signal/pipe?
+2. **Credential encryption key derivation.** Proposal says `Fernet key = HMAC(JWT_SECRET, user_id)`. Rotating `JWT_SECRET` would invalidate all credential vaults. Should the vault use a separate `ORCHID_VAULT_KEY` env var instead? Need user decision before implementing.
 
-3. **Login page with existing users before V2.3:** Users registered before V2.3 have `password_hash: null`. They cannot log in until a password is set via the migration script (Step 5 of `docs/migration-v2.2-to-v2.3.md`). Has the user run this for their `admin` account?
+3. **Portal build step in deployment.** Currently manual. Should `orchid serve` auto-build the portal if `node` is available and `dist/` is stale? Or add a Makefile target? Or document it in the README?
 
-4. **`JWT_SECRET` in the service environment:** The service unit reads from `EnvironmentFile=/home/dave/LocalAI/orchid/.env` (not the XDG `~/.config/orchid/.env`). If `JWT_SECRET` is only in `~/.config/orchid/.env`, the service won't see it. Verify: `sudo systemctl show orchid-serve | grep EnvironmentFile`.
+4. **Phase 2 admin-invite flow spec.** User chose admin-invite only registration. The UX is: admin creates user account → user gets a link/token → user sets password on first login. The "set password on first login" flow isn't specced yet. Need to know: email invite link (requires SMTP), or admin-generated one-time token the user enters manually?
 
-5. **Next feature to implement:** Per `docs/next-features-plan.md` the recommended order is: LLM fallback chain → capability versioning → OpenTelemetry → distributed queue → async agent → network namespace. Confirm with user before starting.
+5. **Should readonly-role users be redirected to `/app/` too?** Currently the redirect is for `user.role not in ("admin",)`, which includes `readonly`. Is that the right behavior, or should readonly users go somewhere else?
 
 ---
 
 ## 8. Do Not Touch
 
-- **`orchid/web/server.py`** — dead-end file. Never loaded by `orchid serve`. Do not add routes here. Do not delete it yet (may be used by `orchid web` single-project command), but do not confuse it with the real server.
-- **`orchid/auth/jwt.py`** — crypto parameters settled. argon2id time=3/mem=64MB/par=4 is OWASP standard. HS256 with `JWT_SECRET` is correct. Do not change without a security reason.
-- **`orchid/auth/store.py` `UserStore` alias** — `UserStore = FileUserStore` is kept for backward compat. Third-party code or tests may call `UserStore()`. Do not remove the alias.
-- **`.claude/settings.local.json`** — local harness config. Modified every session. Do not commit.
-- **`orchid/orchid.defaults.yaml` isolation section** — `subprocess_enabled: true` is now the default. Do not revert to `false` without reason; the worker pool exists specifically to make this affordable.
-- **`pyproject.toml` version `2.3.0`** — current released version. Bump to `2.4.0` only when the next major feature set (any of the 6 in `next-features-plan.md`) ships.
+- **`orchid/web/server.py`** — dead-end file, never loaded by `orchid serve`. See §5 above for full history. Do not add features here.
+- **`orchid/interfaces/web_ui/`** — existing power-user SPA. Phase 1 left it untouched deliberately. Don't merge portal components into it.
+- **`orchid/auth/jwt.py`** — crypto params settled. No changes without security review.
+- **`docs/multiuser-proposal.md` decisions section** — all open questions were resolved with the user this session. Don't re-debate Postgres timeline, team model, MCP credential sharing, notification channels, or registration model.
+- **`.claude/settings.local.json`** — local harness config, always modified, never commit.
+- **`orchid/interfaces/portal/vite.config.js` `base: '/app/'`** — load-bearing. Changing this breaks the portal build.
 
 ---
 
 ## 9. Resume Command
 
-> Read `HANDOFF.md` and `docs/next-features-plan.md`. The codebase is at commit `f4dbf58` on `main`, clean working tree. All Phase 1–6 reliability features and V2.3 auth are complete and live. The next work is the LLM provider fallback chain (Observation 6 in the plan, effort S, no new deps). Before starting, confirm: (1) does the user want to start with the fallback chain, or a different feature from the plan? (2) has the user verified a real agent task runs correctly with the new subprocess worker pool (`isolation.subprocess_enabled: true`)? Do not modify `orchid/web/server.py` (dead-end file). Do not revert `isolation.subprocess_enabled` to false. Rebuild + reinstall after any Python change (`uv tool install --reinstall --from . orchid`); rebuild frontend before reinstall if JSX changed.
+> Read `HANDOFF.md`. We're building multi-user support for Orchid (internal agentic OS). Phase 1 (user portal SPA at `/app`) is complete at commit `14b775a` — 44 tests pass. Start Phase 2: credential vault + per-user notification config. Spec is in `docs/multiuser-proposal.md` under "Phase 2". Before writing code, ask: (1) Should credential encryption use a separate `ORCHID_VAULT_KEY` env var, or derive from `JWT_SECRET + user_id`? (2) For admin-invite flow, is the first-login token delivered via email link or manually? Do not touch `orchid/web/server.py` (dead-end file). Do not change `vite.config.js` `base: '/app/'`. Commit between major changes.
