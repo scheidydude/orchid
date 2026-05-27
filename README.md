@@ -5,7 +5,7 @@
 
 ## Description
 
-AI agent orchestration framework with a lifecycle-driven planning engine. Install once, run against any project. V2 adds a full idea-to-execution pipeline: discuss requirements with an AI product manager, generate architecture docs, break work into milestones, then execute tasks with specialized agents. V2.2 adds parallel task dispatch, native git tools, worktree isolation, dynamic task spawning, a cross-project agent pool, and cost-aware scheduling. V2.3 adds full multi-user auth: JWT sessions, argon2id passwords, API keys with scope enforcement, Google/Entra/OIDC SSO, PKCE mobile flow, append-only audit log, per-user project scoping, a React login page, and pluggable auth storage (file or PostgreSQL). V2.4 adds OS-grade reliability: graceful shutdown, orphan recovery, subprocess worker pool, task preemption/pause-resume, WebSocket backpressure, CPU/latency budgets, and an ordered provider fallback chain that retries on 429/502/503 before marking a task BLOCKED. V2.5 adds a cron-based scheduled task manager: per-user schedules stored as dicts on User, APScheduler-backed engine, `agent_prompt`/`mcp_tool`/`shell` task types, append-only JSONL run history with 30-day pruning, and a full `/api/scheduler/*` REST API.
+AI agent orchestration framework with a lifecycle-driven planning engine. Install once, run against any project. V2 adds a full idea-to-execution pipeline: discuss requirements with an AI product manager, generate architecture docs, break work into milestones, then execute tasks with specialized agents. V2.2 adds parallel task dispatch, native git tools, worktree isolation, dynamic task spawning, a cross-project agent pool, and cost-aware scheduling. V2.3 adds full multi-user auth: JWT sessions, argon2id passwords, API keys with scope enforcement, Google/Entra/OIDC SSO, PKCE mobile flow, append-only audit log, per-user project scoping, a React login page, and pluggable auth storage (file or PostgreSQL). V2.4 adds OS-grade reliability: graceful shutdown, orphan recovery, subprocess worker pool, task preemption/pause-resume, WebSocket backpressure, CPU/latency budgets, and an ordered provider fallback chain that retries on 429/502/503 before marking a task BLOCKED. V2.5 adds a cron-based scheduled task manager: per-user schedules stored as dicts on User, APScheduler-backed engine, `agent_prompt`/`mcp_tool`/`shell` task types, append-only JSONL run history with 30-day pruning, and a full `/api/scheduler/*` REST API. **V3.0** transforms Orchid into a full multi-user agentic OS: per-user credential vault (Fernet/HKDF), admin-managed MCP server catalog with role/user-based access control, per-user LLM spend and CPU-time budgets enforced at execution time, two React SPAs (User Portal `/app/` and Admin Console `/admin/`), admin-invite flow, and a System Config page for live runtime settings.
 
 ```
 ~/orchid/              ← install here
@@ -55,6 +55,121 @@ orchid --project ~/projects/webtron --mode interactive
 # Persistent tmux session
 ./scripts/start_session.sh ~/projects/webtron
 ```
+
+## V3 Multi-User OS
+
+Orchid V3 turns a single-user orchestrator into a **multi-tenant agentic OS** where each user gets isolated credentials, project access, MCP servers, and LLM spend limits — all managed through two React SPAs served by the same `orchid serve` process.
+
+### Architecture
+
+```
+orchid serve --port 7842
+│
+├── /api/auth/*          JWT, OIDC, API keys, audit log
+├── /api/user/*          vault, MCP servers, notifications
+├── /api/admin/*         MCP catalog, budget reset, runs monitor, config
+├── /api/scheduler/*     cron task manager (per-user)
+├── /app/*               User Portal SPA   (React, build: orchid/interfaces/portal/)
+└── /admin/*             Admin Console SPA (React, build: orchid/interfaces/admin/)
+```
+
+### User Portal (`/app/`)
+
+After login, users land on the User Portal. Pages:
+
+| Page | What you can do |
+|------|----------------|
+| Dashboard | Scheduled tasks (status, next/last run) + projects |
+| Settings → Profile | Change username / email / password |
+| Settings → API Keys | Create and revoke API keys |
+| Settings → Credentials | Per-user encrypted vault — store `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc. |
+| Settings → Notifications | Email / Telegram / Slack toggles + channel IDs |
+| Settings → MCP Servers | View admin-granted servers; add private servers (if enabled) |
+
+Credential vault keys matching known provider env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …) are automatically injected into scheduled task execution — users supply their own API keys without admin involvement.
+
+### Admin Console (`/admin/`)
+
+Admin-role users see the Admin Console at `/admin/`. Tabs:
+
+| Tab | What you can do |
+|-----|----------------|
+| Users | List, invite (email link), edit role/email/projects, deactivate |
+| MCP Catalog | Define shared MCP servers; set scope (shared/private/admin-only); grant/revoke per role or user ID |
+| Audit Log | Paginated, filterable by user/action; expandable detail JSON |
+| Quotas | Set per-user `budget_usd` (LLM spend cap) and `cpu_budget_seconds` (daily wall-clock cap); usage bars; reset spend counter |
+| Task Monitor | Live view of all users' scheduled task runs; filter by user/status; expandable output/error |
+| System Config | Toggle `allow_user_mcp`, `allow_user_projects`; set default quota values for new users |
+
+### Credential Vault
+
+Each user gets a Fernet-encrypted vault derived from `ORCHID_VAULT_KEY`:
+
+```bash
+# Required env var — set in ~/.config/orchid/.env
+ORCHID_VAULT_KEY=<random-32-char-secret>
+```
+
+Key derivation: `HKDF-SHA256(ORCHID_VAULT_KEY, salt=b"orchid-vault-v1", info=user_id.encode())`. Each user has a distinct Fernet key. Compromising one user's key does not expose others. **Rotating `ORCHID_VAULT_KEY` invalidates all vaults** — document this in your ops runbook.
+
+### MCP Catalog
+
+Admin defines shared MCP servers once. Users see only the servers they're authorised for:
+
+- `scope: shared` — all users with matching role
+- `scope: admin-only` — admins only
+- `scope: private` — explicit grants only
+- `requires_credential: GMAIL_TOKEN` — user must have that vault key to connect
+
+Users can also add private MCP server definitions (admin can disable this with `web.allow_user_mcp: false`).
+
+### Budget Enforcement
+
+Set `budget_usd` per user. Every Anthropic API call in `agent_tool` tasks accrues cost. If `budget_used_usd >= budget_usd`, the task run fails with `BudgetExceededError`. `0.0 = unlimited`.
+
+CPU budget (`cpu_budget_seconds`) caps total wall-clock seconds of task execution per day (UTC midnight reset).
+
+Reset a user's spend counter via the Quotas tab or:
+
+```
+POST /api/admin/users/{user_id}/budget/reset
+```
+
+### Building the SPAs
+
+```bash
+# User Portal
+cd orchid/interfaces/portal && npm install && npm run build
+
+# Admin Console
+cd orchid/interfaces/admin && npm install && npm run build
+```
+
+Dev servers (hot reload):
+
+```bash
+# Portal: http://localhost:5174
+cd orchid/interfaces/portal && npm run dev
+
+# Admin: http://localhost:5175
+cd orchid/interfaces/admin && npm run dev
+```
+
+### Admin Invite Flow
+
+Admins create users via invite — no open registration:
+
+1. Admin: `POST /api/admin/invite` → returns `invite_url`
+2. Admin sends URL to user (email auto-sent if SMTP configured)
+3. User visits URL → sets password → account activated
+
+### Role Model
+
+| Role | Permissions |
+|------|-------------|
+| `admin` | All endpoints; admin console; see all users/tasks/runs |
+| `user` | Own tasks/vault/credentials/MCP servers; portal only |
+| `readonly` | Read-only; no task execution |
 
 ## V2 Planning Workflow
 
@@ -327,19 +442,28 @@ by default. Edit `scripts/orchid-serve.service` to change watch directories.
 
 ### Building the frontend
 
-The compiled frontend (`web_ui/dist/`) is included in installed packages.
-If you are running from source or need to rebuild after UI changes:
+Orchid ships three separate React SPAs. Build all three for a complete deployment:
 
 ```bash
+# Power-user project SPA (existing web UI)
 cd orchid/interfaces/web_ui
-npm install       # first time only
-npm run build     # outputs to web_ui/dist/
+npm install && npm run build   # outputs to web_ui/dist/
+
+# User Portal (/app/)
+cd orchid/interfaces/portal
+npm install && npm run build   # outputs to portal/dist/
+
+# Admin Console (/admin/)
+cd orchid/interfaces/admin
+npm install && npm run build   # outputs to admin/dist/
 ```
 
-**When installing via uv tool install, always build first:**
+**When installing via uv tool install, build first:**
 
 ```bash
 cd orchid/interfaces/web_ui && npm run build
+cd orchid/interfaces/portal && npm run build
+cd orchid/interfaces/admin  && npm run build
 cd ~/LocalAI/orchid && uv tool install . --force
 ```
 
