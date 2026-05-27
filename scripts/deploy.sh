@@ -122,31 +122,50 @@ echo ""
 sed -i "s/^version = \"$CURRENT\"/version = \"$NEW_VERSION\"/" "$PYPROJECT"
 echo "  Updated pyproject.toml: $CURRENT → $NEW_VERSION"
 
-# ── 7. Git commit + tag ───────────────────────────────────────────────────────
-if ! git diff --quiet "$PYPROJECT"; then
-    git add "$PYPROJECT"
-    git commit -m "chore: bump version $CURRENT → $NEW_VERSION"
-    echo "  Committed version bump."
+# ── 7. Git commit (optional) ─────────────────────────────────────────────────
+echo ""
+read -rp "  Commit version bump to git? [y/N]: " COMMIT_CONFIRM
+if [[ "${COMMIT_CONFIRM,,}" == "y" ]]; then
+    if ! git diff --quiet "$PYPROJECT"; then
+        git add "$PYPROJECT"
+        git commit -m "chore: bump version $CURRENT → $NEW_VERSION"
+        echo "  Committed version bump."
+    else
+        echo "  Warning: pyproject.toml unchanged after sed — nothing to commit." >&2
+    fi
 else
-    echo "Warning: pyproject.toml unchanged after sed — version may already match." >&2
+    echo "  Skipped commit. pyproject.toml updated on disk only."
+    echo "  To commit manually:  git add pyproject.toml && git commit -m 'chore: bump version $CURRENT → $NEW_VERSION'"
 fi
 
-git tag "v$NEW_VERSION"
-echo "  Tagged v$NEW_VERSION."
+# ── 8. Git tag (optional) ─────────────────────────────────────────────────────
+echo ""
+read -rp "  Create git tag v$NEW_VERSION? [y/N]: " TAG_CONFIRM
+if [[ "${TAG_CONFIRM,,}" == "y" ]]; then
+    git tag "v$NEW_VERSION"
+    echo "  Tagged v$NEW_VERSION."
+else
+    echo "  Skipped tag. To tag manually:  git tag v$NEW_VERSION"
+fi
 
-# ── 8. Push ───────────────────────────────────────────────────────────────────
+# ── 9. Push ───────────────────────────────────────────────────────────────────
 echo ""
 read -rp "  Push to origin (main + tag)? [y/N]: " PUSH_CONFIRM
 if [[ "${PUSH_CONFIRM,,}" == "y" ]]; then
     git push origin main
-    git push origin "v$NEW_VERSION"
-    echo "  Pushed main and tag v$NEW_VERSION."
+    if [[ "${TAG_CONFIRM,,}" == "y" ]]; then
+        git push origin "v$NEW_VERSION"
+        echo "  Pushed main and tag v$NEW_VERSION."
+    else
+        echo "  Pushed main (no tag to push)."
+    fi
 else
-    echo "  Skipped push. Run manually:"
-    echo "    git push origin main && git push origin v$NEW_VERSION"
+    echo "  Skipped push. To push manually:"
+    echo "    git push origin main"
+    [[ "${TAG_CONFIRM,,}" == "y" ]] && echo "    git push origin v$NEW_VERSION"
 fi
 
-# ── 9. Post-deploy reminder ───────────────────────────────────────────────────
+# ── 10. Post-deploy reminder ──────────────────────────────────────────────────
 echo ""
 echo "  Done. orchid is now version $NEW_VERSION."
 echo ""
