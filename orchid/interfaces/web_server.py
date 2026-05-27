@@ -899,6 +899,32 @@ def create_app(
                 "role": current_user.role,
             }
 
+        @app.put("/api/auth/me/password")
+        async def auth_change_password(
+            request: Request,
+            current_user: User = Depends(get_current_user),
+        ):
+            """Allow an authenticated user to change their own password."""
+            body = await request.json()
+            current_pw = body.get("current_password", "")
+            new_pw     = body.get("new_password", "")
+            if not current_pw or not new_pw:
+                raise HTTPException(400, "current_password and new_password required")
+            if len(new_pw) < 8:
+                raise HTTPException(400, "new_password must be at least 8 characters")
+            store = _get_auth_store()
+            user = store.get_user(current_user.user_id)
+            if not user or not user.password_hash:
+                raise HTTPException(400, "Password authentication not set up for this account")
+            if not verify_password(current_pw, user.password_hash):
+                _log_audit(current_user, AuditAction.LOGIN, current_user.user_id, "failure", request)
+                raise HTTPException(401, "Current password is incorrect")
+            user.password_hash = hash_password(new_pw)
+            store.update_user(user)
+            _log_audit(current_user, AuditAction.USER_UPDATED,
+                       current_user.user_id, "success", request, detail='{"field":"password"}')
+            return {"ok": True}
+
         @app.post("/api/auth/logout")
         async def auth_logout(request: Request, response: Response,
                               current_user: User | None = Depends(get_optional_user)):
