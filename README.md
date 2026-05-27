@@ -5,7 +5,7 @@
 
 ## Description
 
-AI agent orchestration framework with a lifecycle-driven planning engine. Install once, run against any project. V2 adds a full idea-to-execution pipeline: discuss requirements with an AI product manager, generate architecture docs, break work into milestones, then execute tasks with specialized agents. V2.2 adds parallel task dispatch, native git tools, worktree isolation, dynamic task spawning, a cross-project agent pool, and cost-aware scheduling. V2.3 adds full multi-user auth: JWT sessions, argon2id passwords, API keys with scope enforcement, Google/Entra/OIDC SSO, PKCE mobile flow, append-only audit log, per-user project scoping, a React login page, and pluggable auth storage (file or PostgreSQL). V2.4 adds OS-grade reliability: graceful shutdown, orphan recovery, subprocess worker pool, task preemption/pause-resume, WebSocket backpressure, CPU/latency budgets, and an ordered provider fallback chain that retries on 429/502/503 before marking a task BLOCKED. V2.5 adds a cron-based scheduled task manager: per-user schedules stored as dicts on User, APScheduler-backed engine, `agent_prompt`/`mcp_tool`/`shell` task types, append-only JSONL run history with 30-day pruning, and a full `/api/scheduler/*` REST API. **V3.0** transforms Orchid into a full multi-user agentic OS: per-user credential vault (Fernet/HKDF), admin-managed MCP server catalog with role/user-based access control, per-user LLM spend and CPU-time budgets enforced at execution time, two React SPAs (User Portal `/app/` and Admin Console `/admin/`), admin-invite flow, and a System Config page for live runtime settings.
+AI agent orchestration framework with a lifecycle-driven planning engine. Install once, run against any project. V2 adds a full idea-to-execution pipeline: discuss requirements with an AI product manager, generate architecture docs, break work into milestones, then execute tasks with specialized agents. V2.2 adds parallel task dispatch, native git tools, worktree isolation, dynamic task spawning, a cross-project agent pool, and cost-aware scheduling. V2.3 adds full multi-user auth: JWT sessions, argon2id passwords, API keys with scope enforcement, Google/Entra/OIDC SSO, PKCE mobile flow, append-only audit log, per-user project scoping, a React login page, and pluggable auth storage (file or PostgreSQL). V2.4 adds OS-grade reliability: graceful shutdown, orphan recovery, subprocess worker pool, task preemption/pause-resume, WebSocket backpressure, CPU/latency budgets, and an ordered provider fallback chain that retries on 429/502/503 before marking a task BLOCKED. V2.5 adds a cron-based scheduled task manager: per-user schedules stored as dicts on User, APScheduler-backed engine, `agent_prompt`/`mcp_tool`/`shell` task types, append-only JSONL run history with 30-day pruning, and a full `/api/scheduler/*` REST API. **V3.0** transforms Orchid into a full multi-user agentic OS: per-user credential vault (Fernet/HKDF), admin-managed MCP server catalog with role/user-based access control, per-user LLM spend and CPU-time budgets enforced at execution time, two React SPAs (User Portal `/app/` and Admin Console `/admin/`), admin-invite flow, and a System Config page for live runtime settings. **V3.1** completes the hardening pass: live Telegram/Slack DM notifications from scheduled task runs, `allow_user_projects` flag enforcement across web/Telegram/Slack, per-user project ownership registry with user-namespaced paths, and a production-ready PostgreSQL auth backend with one-command migration from the JSON store.
 
 ```
 ~/orchid/              ← install here
@@ -153,6 +153,50 @@ cd orchid/interfaces/portal && npm run dev
 
 # Admin: http://localhost:5175
 cd orchid/interfaces/admin && npm run dev
+```
+
+### PostgreSQL Backend
+
+By default Orchid stores users in `~/.config/orchid/users.json`. For production multi-node deployments, switch to PostgreSQL:
+
+```bash
+# Install the extra
+uv pip install 'orchid[postgres]'
+
+# Point Orchid at Postgres (add to ~/.config/orchid/.env)
+ORCHID_AUTH_STORE_DSN=postgresql://orchid:password@localhost/orchid
+
+# Migrate existing users from JSON → Postgres (idempotent, skips existing rows)
+orchid migrate-to-postgres --dsn postgresql://orchid:password@localhost/orchid
+
+# Dry-run first to preview what will be migrated
+orchid migrate-to-postgres --dsn ... --dry-run
+```
+
+`get_store()` automatically uses `PostgresUserStore` when `ORCHID_AUTH_STORE_DSN` is set. Tables are created on first connect; schema migrations are idempotent (`ALTER TABLE … ADD COLUMN IF NOT EXISTS`).
+
+### Project Ownership
+
+When `web.allow_user_projects` is enabled (default: true), non-admin users can create projects. Projects are stored under a user-scoped path:
+
+```
+~/.config/orchid/projects/{user_id}/{project_name}/
+```
+
+Ownership is tracked in `~/.config/orchid/projects/registry.json`. Admins see all projects; users see only projects in their `User.projects` allowlist (empty = unrestricted).
+
+Toggle project creation for non-admins:
+```
+PUT /api/admin/config   {"web.allow_user_projects": false}
+```
+
+### Bot Notifications
+
+Scheduled task completions (success or failure) send DMs if the user has configured a Telegram chat ID or Slack user ID in their notification settings (Settings → Notifications in the portal).
+
+Requires `--telegram` / `--slack` flags on `orchid serve`:
+```bash
+orchid serve --watch-dir ~/LocalAI --telegram --slack
 ```
 
 ### Admin Invite Flow
