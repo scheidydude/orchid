@@ -34,6 +34,13 @@ env/
 .DS_Store
 Thumbs.db
 
+# Node / frontend
+node_modules/
+orchid/interfaces/web_ui/node_modules/
+orchid/interfaces/portal/node_modules/
+orchid/interfaces/web_ui/dist/
+orchid/interfaces/portal/dist/
+
 # Test artifacts
 .pytest_cache/
 .coverage

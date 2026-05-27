@@ -64,6 +64,7 @@ except ImportError:
     _AUTH_AVAILABLE = False
 
 _DIST_DIR = Path(__file__).parent / "web_ui" / "dist"
+_PORTAL_DIST_DIR = Path(__file__).parent / "portal" / "dist"
 
 # ── Module-level state ─────────────────────────────────────────────────────────
 
@@ -1933,7 +1934,42 @@ def create_app(
             pass
 
     # ── Frontend static files ─────────────────────────────────────────────────
+    #
+    # Two SPAs:
+    #   /          → main admin/power-user app  (web_ui/dist)
+    #   /app/*     → user portal                (portal/dist)
+    #
+    # Role-based redirect at /:
+    #   - authed non-admin  → 302 /app/
+    #   - authed admin      → serve main SPA (they see everything)
+    #   - not authed        → serve main SPA (login page handles it)
 
+    # ── Portal SPA (/app/*) ────────────────────────────────────────────────
+    if _PORTAL_DIST_DIR.exists():
+        portal_assets = _PORTAL_DIST_DIR / "assets"
+        if portal_assets.exists():
+            app.mount("/app/assets", StaticFiles(directory=portal_assets), name="portal_assets")
+
+        def _portal_index_response() -> FileResponse:
+            r = FileResponse(_PORTAL_DIST_DIR / "index.html", media_type="text/html")
+            r.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            r.headers["Pragma"] = "no-cache"
+            r.headers["Expires"] = "0"
+            return r
+
+        @app.get("/app", include_in_schema=False)
+        @app.get("/app/", include_in_schema=False)
+        async def serve_portal_index():
+            return _portal_index_response()
+
+        @app.get("/app/{full_path:path}", include_in_schema=False)
+        async def serve_portal_spa(full_path: str):
+            file_path = _PORTAL_DIST_DIR / full_path
+            if file_path.exists() and file_path.is_file():
+                return FileResponse(file_path)
+            return _portal_index_response()
+
+    # ── Main SPA (/) ───────────────────────────────────────────────────────
     if _DIST_DIR.exists():
         assets_dir = _DIST_DIR / "assets"
         if assets_dir.exists():
@@ -1946,8 +1982,28 @@ def create_app(
             r.headers["Expires"] = "0"
             return r
 
+        def _get_user_from_request(request: "Request") -> "Any | None":
+            """Extract and verify the JWT from cookies, return User or None."""
+            if not _AUTH_AVAILABLE:
+                return None
+            try:
+                from orchid.auth.jwt import verify_access_token
+                from orchid.auth.store import get_store
+                token = request.cookies.get("orchid_access")
+                if not token:
+                    return None
+                payload = verify_access_token(token)
+                store = get_store()
+                return store.get_user(payload.get("sub", ""))
+            except Exception:
+                return None
+
         @app.get("/", include_in_schema=False)
-        async def serve_index():
+        async def serve_index(request: Request):
+            # Redirect non-admin authed users to the portal
+            user = _get_user_from_request(request)
+            if user and user.role not in ("admin",) and _PORTAL_DIST_DIR.exists():
+                return RedirectResponse("/app/", status_code=302)
             return _index_response()
 
         @app.get("/{full_path:path}", include_in_schema=False)
@@ -1967,6 +2023,7 @@ def create_app(
             return JSONResponse({
                 "message": "Orchid API running. Frontend not built.",
                 "build": "cd orchid/interfaces/web_ui && npm run build",
+                "portal_build": "cd orchid/interfaces/portal && npm run build",
             })
 
     return app
