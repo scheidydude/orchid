@@ -206,3 +206,63 @@ class BudgetGuard:
         if user is None or user.budget_usd <= 0:
             return None
         return max(0.0, user.budget_usd - user.budget_used_usd)
+
+    # ── CPU budget ────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _today() -> str:
+        """Return today's date as 'YYYY-MM-DD' (UTC)."""
+        from datetime import UTC, datetime
+        return datetime.now(UTC).strftime("%Y-%m-%d")
+
+    def _reset_cpu_if_new_day(self, user) -> bool:
+        """Reset cpu_used_seconds if the stored date != today. Returns True if reset."""
+        today = self._today()
+        if user.cpu_last_reset_date != today:
+            user.cpu_used_seconds = 0.0
+            user.cpu_last_reset_date = today
+            return True
+        return False
+
+    def check_cpu(self) -> None:
+        """Raise ``BudgetExceededError`` if the user is over their daily CPU cap.
+
+        ``cpu_budget_seconds <= 0`` means unlimited.
+        Auto-resets counter at UTC midnight.
+        """
+        store = self._get_store()
+        user = store.get_user(self._owner_id)
+        if user is None or user.cpu_budget_seconds <= 0:
+            return  # unlimited
+        reset = self._reset_cpu_if_new_day(user)
+        if reset:
+            store.update_user(user)
+            return  # just reset — clearly under budget
+        if user.cpu_used_seconds >= user.cpu_budget_seconds:
+            raise BudgetExceededError(
+                limit=user.cpu_budget_seconds, used=user.cpu_used_seconds
+            )
+
+    def record_cpu(self, seconds: float) -> None:
+        """Add *seconds* of wall-clock time to the user's daily CPU usage.
+
+        Auto-resets the counter if it's a new UTC day.
+        """
+        if seconds <= 0:
+            return
+        store = self._get_store()
+        user = store.get_user(self._owner_id)
+        if user is None:
+            return
+        self._reset_cpu_if_new_day(user)
+        user.cpu_used_seconds = round(user.cpu_used_seconds + seconds, 4)
+        store.update_user(user)
+
+    def remaining_cpu(self) -> float | None:
+        """Return remaining CPU seconds today, or ``None`` if unlimited."""
+        store = self._get_store()
+        user = store.get_user(self._owner_id)
+        if user is None or user.cpu_budget_seconds <= 0:
+            return None
+        self._reset_cpu_if_new_day(user)
+        return max(0.0, user.cpu_budget_seconds - user.cpu_used_seconds)

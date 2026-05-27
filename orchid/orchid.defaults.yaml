@@ -655,3 +655,12 @@ remote:
   enabled: false            # true = dispatch task groups to remote worker nodes
   nodes: []                 # list of {node_id: str, url: str, capacity: int} dicts
   merge_ledger_after_group: true  # pull and merge cost ledger from nodes after each group
+
+# ── Multi-user OS settings (D0060+) ─────────────────────────────────────────
+multi_user:
+  credential_encryption: fernet      # fernet | none (dev only)
+  default_budget_usd: 0.0            # 0 = unlimited; applied on user creation
+  default_cpu_seconds: 0.0           # 0 = unlimited; daily wall-clock cap per user
+  mcp_catalog_path: ""               # override default ~/.config/orchid/mcp_catalog.json
+  allow_user_mcp: true               # users may add private MCP servers
+  allow_user_projects: true          # users may create/access their own projects

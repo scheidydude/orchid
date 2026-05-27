@@ -351,3 +351,171 @@ class TestBudgetResetEndpoint:
         alice = next(u for u in r.json()["users"] if u["username"] == "alice")
         assert "budget_used_usd" in alice
         assert alice["budget_used_usd"] == pytest.approx(7.5)
+
+
+# ── CPU budget ────────────────────────────────────────────────────────────────
+
+class TestCPUBudget:
+    def test_unlimited_never_raises(self, user_store):
+        from orchid.budget.guard import BudgetGuard
+        u = user_store.get_user("alice")
+        u.cpu_budget_seconds = 0.0
+        user_store.update_user(u)
+        BudgetGuard("alice", store=user_store).check_cpu()  # must not raise
+
+    def test_under_cpu_budget_no_raise(self, user_store):
+        from orchid.budget.guard import BudgetGuard
+        u = user_store.get_user("alice")
+        u.cpu_budget_seconds = 3600.0
+        u.cpu_used_seconds = 100.0
+        u.cpu_last_reset_date = BudgetGuard._today()
+        user_store.update_user(u)
+        BudgetGuard("alice", store=user_store).check_cpu()
+
+    def test_over_cpu_budget_raises(self, user_store):
+        from orchid.budget.guard import BudgetGuard, BudgetExceededError
+        u = user_store.get_user("alice")
+        u.cpu_budget_seconds = 100.0
+        u.cpu_used_seconds = 100.0
+        u.cpu_last_reset_date = BudgetGuard._today()
+        user_store.update_user(u)
+        with pytest.raises(BudgetExceededError):
+            BudgetGuard("alice", store=user_store).check_cpu()
+
+    def test_daily_reset_clears_counter(self, user_store):
+        from orchid.budget.guard import BudgetGuard
+        u = user_store.get_user("alice")
+        u.cpu_budget_seconds = 10.0
+        u.cpu_used_seconds = 10.0   # fully used
+        u.cpu_last_reset_date = "2000-01-01"  # yesterday (stale)
+        user_store.update_user(u)
+        # should reset and NOT raise
+        BudgetGuard("alice", store=user_store).check_cpu()
+        u = user_store.get_user("alice")
+        assert u.cpu_used_seconds == 0.0
+
+    def test_record_cpu_accumulates(self, user_store):
+        from orchid.budget.guard import BudgetGuard
+        guard = BudgetGuard("alice", store=user_store)
+        guard.record_cpu(10.0)
+        guard.record_cpu(5.5)
+        u = user_store.get_user("alice")
+        assert u.cpu_used_seconds == pytest.approx(15.5, rel=1e-4)
+
+    def test_remaining_cpu(self, user_store):
+        from orchid.budget.guard import BudgetGuard
+        u = user_store.get_user("alice")
+        u.cpu_budget_seconds = 3600.0
+        u.cpu_used_seconds = 600.0
+        u.cpu_last_reset_date = BudgetGuard._today()
+        user_store.update_user(u)
+        assert BudgetGuard("alice", store=user_store).remaining_cpu() == pytest.approx(3000.0)
+
+    def test_remaining_cpu_unlimited_returns_none(self, user_store):
+        from orchid.budget.guard import BudgetGuard
+        u = user_store.get_user("alice")
+        u.cpu_budget_seconds = 0.0
+        user_store.update_user(u)
+        assert BudgetGuard("alice", store=user_store).remaining_cpu() is None
+
+
+# ── Task monitor + system config endpoints ────────────────────────────────────
+
+@pytest.fixture()
+def admin_client2(tmp_path):
+    """Lightweight admin client for stretch endpoint tests."""
+    pytest.importorskip("fastapi")
+    os.environ.setdefault("JWT_SECRET", "test-stretch-endpoints")
+    from fastapi.testclient import TestClient
+    import orchid.interfaces.web_server as ws
+    from orchid.auth.store import FileUserStore
+    from orchid.auth.audit import AuditStore
+    from orchid.auth.jwt import hash_password
+    from orchid.auth.types import User
+    import orchid.auth.store as store_mod
+
+    ws._projects.clear(); ws._managers.clear(); ws._runners.clear()
+    ws._main_loop = None; ws._auth_store = None; ws._audit_store = None
+
+    new_store = FileUserStore(path=tmp_path / "users.json")
+    ws._auth_store = new_store
+    ws._audit_store = AuditStore(audit_dir=tmp_path / "audit")
+    store_mod._store_instance = new_store
+
+    new_store.add_user(User(
+        user_id="adm1", username="admin", role="admin",
+        is_active=True, password_hash=hash_password("adminpass"),
+    ))
+    app = ws.create_app([])
+    client = TestClient(app, raise_server_exceptions=True)
+    r = client.post("/api/auth/login", json={"username": "admin", "password": "adminpass"})
+    assert r.status_code == 200
+    yield client
+
+
+class TestAdminRunsEndpoint:
+    def test_returns_expected_shape(self, admin_client2, tmp_path, monkeypatch):
+        """Endpoint returns {runs, total, limit, offset} — mock store to isolate."""
+        from orchid.cron.store import TaskRunStore as _TRS
+        empty_store = _TRS(runs_file=tmp_path / "runs.jsonl")
+        monkeypatch.setattr("orchid.cron.store.TaskRunStore", lambda: empty_store)
+        r = admin_client2.get("/api/admin/runs")
+        assert r.status_code == 200
+        d = r.json()
+        assert "runs" in d and "total" in d and "limit" in d and "offset" in d
+
+    def test_requires_admin(self, tmp_path):
+        pytest.importorskip("fastapi")
+        os.environ.setdefault("JWT_SECRET", "test-stretch-nonadmin")
+        from fastapi.testclient import TestClient
+        import orchid.interfaces.web_server as ws
+        from orchid.auth.store import FileUserStore
+        from orchid.auth.audit import AuditStore
+        from orchid.auth.jwt import hash_password
+        from orchid.auth.types import User
+        import orchid.auth.store as store_mod
+
+        ws._projects.clear(); ws._managers.clear(); ws._runners.clear()
+        ws._main_loop = None; ws._auth_store = None; ws._audit_store = None
+
+        store = FileUserStore(path=tmp_path / "u.json")
+        ws._auth_store = store
+        ws._audit_store = AuditStore(audit_dir=tmp_path / "audit")
+        store_mod._store_instance = store
+        store.add_user(User(
+            user_id="u1", username="alice", role="user",
+            is_active=True, password_hash=hash_password("pw"),
+        ))
+        app = ws.create_app([])
+        client = TestClient(app, raise_server_exceptions=True)
+        r = client.post("/api/auth/login", json={"username": "alice", "password": "pw"})
+        assert r.status_code == 200
+        r2 = client.get("/api/admin/runs")
+        assert r2.status_code == 403
+
+
+class TestAdminConfigEndpoint:
+    def test_get_config_returns_structure(self, admin_client2):
+        r = admin_client2.get("/api/admin/config")
+        assert r.status_code == 200
+        d = r.json()
+        assert "multi_user" in d
+        assert "web" in d
+
+    def test_put_config_allowed_keys_accepted(self, admin_client2):
+        """PUT /api/admin/config succeeds for known multi_user keys."""
+        r = admin_client2.put("/api/admin/config",
+                              json={"multi_user.default_budget_usd": 0.0,
+                                    "web.allow_user_mcp": True})
+        assert r.status_code == 200
+        d = r.json()
+        assert d["ok"] is True
+        assert "multi_user.default_budget_usd" in d["updated"]
+
+    def test_put_config_unknown_keys_ignored(self, admin_client2):
+        """Unknown keys are silently dropped — no 400."""
+        r = admin_client2.put("/api/admin/config",
+                              json={"evil.key": "bad", "multi_user.default_budget_usd": 0.0})
+        assert r.status_code == 200
+        d = r.json()
+        assert "evil.key" not in d["updated"]

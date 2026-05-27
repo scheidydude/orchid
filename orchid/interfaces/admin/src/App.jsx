@@ -1,15 +1,19 @@
 import { useState } from 'react'
 import { useAuth } from './hooks/useAuth.js'
-import Users    from './pages/Users.jsx'
-import MCPCatalog from './pages/MCPCatalog.jsx'
-import AuditLog from './pages/AuditLog.jsx'
-import Quotas   from './pages/Quotas.jsx'
+import Users        from './pages/Users.jsx'
+import MCPCatalog   from './pages/MCPCatalog.jsx'
+import AuditLog     from './pages/AuditLog.jsx'
+import Quotas       from './pages/Quotas.jsx'
+import TaskMonitor  from './pages/TaskMonitor.jsx'
+import SystemConfig from './pages/SystemConfig.jsx'
 
 const PAGES = [
   { id: 'users',    label: 'Users' },
   { id: 'mcp',      label: 'MCP Catalog' },
   { id: 'audit',    label: 'Audit Log' },
   { id: 'quotas',   label: 'Quotas' },
+  { id: 'tasks',    label: 'Task Monitor' },
+  { id: 'config',   label: 'System Config' },
 ]
 
 // ── Login ─────────────────────────────────────────────────────────────────────
@@ -147,6 +151,8 @@ export default function App() {
     mcp:    <MCPCatalog />,
     audit:  <AuditLog />,
     quotas: <Quotas />,
+    tasks:  <TaskMonitor />,
+    config: <SystemConfig />,
   }
 
   return (

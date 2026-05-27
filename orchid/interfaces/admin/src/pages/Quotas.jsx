@@ -165,16 +165,17 @@ export default function Quotas() {
                 <tr>
                   <th>User</th>
                   <th>Role</th>
-                  <th>Budget (USD)</th>
-                  <th>Usage</th>
-                  <th>CPU budget (seconds/day)</th>
+                  <th>LLM Budget (USD)</th>
+                  <th>LLM Usage</th>
+                  <th>CPU budget (s/day)</th>
+                  <th>CPU today</th>
                   <th style={{ width: 80 }}></th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-mute)', padding: 32 }}>
+                    <td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-mute)', padding: 32 }}>
                       No active users found
                     </td>
                   </tr>
@@ -218,6 +219,9 @@ export default function Quotas() {
                       {u.cpu_budget_seconds > 0 && (
                         <span style={{ fontSize: 11, color: 'var(--text-mute)', marginLeft: 8 }}>sec/day</span>
                       )}
+                    </td>
+                    <td>
+                      <UsageBar used={u.cpu_used_seconds ?? 0} limit={u.cpu_budget_seconds} />
                     </td>
                     <td>
                       <button

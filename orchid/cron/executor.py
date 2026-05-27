@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from datetime import UTC, datetime
 
 from orchid.cron.types import TaskRun, _utcnow
@@ -380,8 +381,10 @@ class TaskExecutor:
         _exec_local.cost_usd = 0.0
 
         with vault_env_context(owner_id):
+            wall_start = time.monotonic()
             try:
-                guard.check()
+                guard.check()       # LLM budget
+                guard.check_cpu()   # daily CPU budget (auto-resets at midnight)
                 output = dispatch_fn(config)
                 run.finished_at = _utcnow()
                 run.status = "success"
@@ -411,7 +414,8 @@ class TaskExecutor:
                     task_dict.get("task_id"),
                 )
             finally:
-                # Record any LLM cost accrued during this task
+                wall_elapsed = time.monotonic() - wall_start
+                # Record LLM cost accrued during this task
                 cost = getattr(_exec_local, "cost_usd", 0.0)
                 if cost > 0:
                     try:
@@ -419,6 +423,14 @@ class TaskExecutor:
                     except Exception as exc:
                         logger.warning(
                             "BudgetGuard.record failed for %s: %s", owner_id, exc
+                        )
+                # Record wall-clock time against CPU budget
+                if wall_elapsed > 0:
+                    try:
+                        guard.record_cpu(wall_elapsed)
+                    except Exception as exc:
+                        logger.warning(
+                            "BudgetGuard.record_cpu failed for %s: %s", owner_id, exc
                         )
 
         return run

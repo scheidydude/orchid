@@ -19,7 +19,9 @@ class User:
     api_keys: dict = field(default_factory=dict)
     budget_usd: float = 0.0
     budget_used_usd: float = 0.0     # cumulative LLM spend against budget_usd
-    cpu_budget_seconds: float = 0.0  # Phase 6: daily CPU-seconds cap (0 = unlimited)
+    cpu_budget_seconds: float = 0.0  # daily wall-clock cap for tasks (0 = unlimited)
+    cpu_used_seconds: float = 0.0    # seconds used today (resets daily)
+    cpu_last_reset_date: str = ""    # "YYYY-MM-DD" — date of last cpu_used_seconds reset
     password_hash: str | None = None
     token: str = ""  # legacy field — superseded by JWT; kept for backward compat
     scheduled_tasks: list[dict] = field(default_factory=list)

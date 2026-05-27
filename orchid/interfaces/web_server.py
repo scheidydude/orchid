@@ -980,6 +980,7 @@ def create_app(
                     "budget_usd": u.budget_usd,
                     "budget_used_usd": u.budget_used_usd,
                     "cpu_budget_seconds": u.cpu_budget_seconds,
+                    "cpu_used_seconds": u.cpu_used_seconds,
                     "created_at": u.created_at.isoformat() if u.created_at else None,
                 }
                 for u in users
@@ -1050,6 +1051,85 @@ def create_app(
             _log_audit(current_user, AuditAction.BUDGET_RESET, target_user_id, "success",
                        request, detail=json.dumps({"prev_used_usd": prev}))
             return {"user_id": user.user_id, "budget_used_usd": 0.0}
+
+        # ── Admin: task run monitor ───────────────────────────────────────────
+
+        @app.get("/api/admin/runs")
+        async def admin_list_runs(limit: int = 50, offset: int = 0,
+                                  owner_id: str = "", status: str = "",
+                                  current_user: User = Depends(require_auth(role="admin"))):
+            """Return paginated task runs across all users."""
+            from orchid.cron.store import TaskRunStore
+            limit = min(limit, 200)
+            store = TaskRunStore()
+            runs = store.get_runs(owner_id=owner_id, limit=1000)  # fetch more, filter + paginate
+            if status:
+                runs = [r for r in runs if r.status == status]
+            total = len(runs)
+            page = runs[offset: offset + limit]
+            return {
+                "runs": [dataclasses.asdict(r) for r in page],
+                "total": total, "limit": limit, "offset": offset,
+            }
+
+        # ── Admin: system config ──────────────────────────────────────────────
+
+        @app.get("/api/admin/config")
+        async def admin_get_config(current_user: User = Depends(require_auth(role="admin"))):
+            """Return editable multi-user config values."""
+            from orchid import config as _cfg
+            return {
+                "multi_user": _cfg.get("multi_user", {}),
+                "web": {
+                    "allow_user_mcp":      _cfg.get("web.allow_user_mcp",      True),
+                    "allow_user_projects": _cfg.get("web.allow_user_projects",  True),
+                    "user_portal":         _cfg.get("web.user_portal",          True),
+                    "admin_console":       _cfg.get("web.admin_console",        True),
+                },
+            }
+
+        @app.put("/api/admin/config")
+        async def admin_update_config(data: dict, request: Request,
+                                      current_user: User = Depends(require_auth(role="admin"))):
+            """Persist admin-editable config keys to ~/.config/orchid/config.yaml."""
+            import yaml as _yaml
+            _user_cfg_path = Path.home() / ".config" / "orchid" / "config.yaml"
+            try:
+                existing: dict = {}
+                if _user_cfg_path.exists():
+                    with open(_user_cfg_path, "r", encoding="utf-8") as fh:
+                        existing = _yaml.safe_load(fh) or {}
+
+                # Only allow writing multi_user.* and web.allow_user_* keys
+                _ALLOWED_MU_KEYS = {
+                    "default_budget_usd", "default_cpu_seconds",
+                    "allow_user_mcp", "allow_user_projects", "credential_encryption",
+                }
+                _ALLOWED_WEB_KEYS = {"allow_user_mcp", "allow_user_projects"}
+
+                updated: dict = {}
+                for full_key, value in data.items():
+                    section, _, key = full_key.partition(".")
+                    if section == "multi_user" and key in _ALLOWED_MU_KEYS:
+                        existing.setdefault("multi_user", {})[key] = value
+                        updated[full_key] = value
+                    elif section == "web" and key in _ALLOWED_WEB_KEYS:
+                        existing.setdefault("web", {})[key] = value
+                        updated[full_key] = value
+
+                _user_cfg_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(_user_cfg_path, "w", encoding="utf-8") as fh:
+                    _yaml.dump(existing, fh, default_flow_style=False)
+
+                # Invalidate in-memory config so next get() reflects changes
+                from orchid import config as _cfg
+                _cfg._config = None
+
+                _log_audit(current_user, AuditAction.USER_UPDATED, "system_config", "success",
+                           request, detail=json.dumps(updated))
+                return {"ok": True, "updated": updated}
+            except Exception as exc:
+                raise HTTPException(500, f"Config write failed: {exc}") from exc
 
         @app.get("/api/audit")
         async def get_audit_log(limit: int = 50, offset: int = 0, user_id: str = "",
