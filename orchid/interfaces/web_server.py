@@ -65,6 +65,7 @@ except ImportError:
 
 _DIST_DIR = Path(__file__).parent / "web_ui" / "dist"
 _PORTAL_DIST_DIR = Path(__file__).parent / "portal" / "dist"
+_ADMIN_DIST_DIR = Path(__file__).parent / "admin" / "dist"
 
 # ── Module-level state ─────────────────────────────────────────────────────────
 
@@ -968,9 +969,20 @@ def create_app(
                 raise HTTPException(403, "Admin role required")
             store = _get_auth_store()
             users = store.list_users()
-            return {"users": [{"user_id": u.user_id, "username": u.username,
-                                "email": u.email, "role": u.role, "is_active": u.is_active}
-                               for u in users]}
+            return {"users": [
+                {
+                    "user_id": u.user_id,
+                    "username": u.username,
+                    "email": u.email,
+                    "role": u.role,
+                    "is_active": u.is_active,
+                    "projects": u.projects,
+                    "budget_usd": u.budget_usd,
+                    "cpu_budget_seconds": u.cpu_budget_seconds,
+                    "created_at": u.created_at.isoformat() if u.created_at else None,
+                }
+                for u in users
+            ]}
 
         @app.put("/api/auth/users/{target_user_id}")
         async def admin_update_user(target_user_id: str, data: dict, request: Request,
@@ -996,6 +1008,9 @@ def create_app(
             if "email" in data:
                 user.email = data["email"] or None
                 changes["email"] = user.email
+            if "budget_usd" in data:
+                user.budget_usd = float(data["budget_usd"])
+                changes["budget_usd"] = user.budget_usd
             if "cpu_budget_seconds" in data:
                 user.cpu_budget_seconds = float(data["cpu_budget_seconds"])
                 changes["cpu_budget_seconds"] = user.cpu_budget_seconds
@@ -2170,6 +2185,31 @@ def create_app(
                 return FileResponse(file_path)
             return _portal_index_response()
 
+    # ── Admin Console SPA (/admin/*) ──────────────────────────────────────
+    if _ADMIN_DIST_DIR.exists():
+        admin_assets = _ADMIN_DIST_DIR / "assets"
+        if admin_assets.exists():
+            app.mount("/admin/assets", StaticFiles(directory=admin_assets), name="admin_assets")
+
+        def _admin_index_response() -> FileResponse:
+            r = FileResponse(_ADMIN_DIST_DIR / "index.html", media_type="text/html")
+            r.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            r.headers["Pragma"] = "no-cache"
+            r.headers["Expires"] = "0"
+            return r
+
+        @app.get("/admin", include_in_schema=False)
+        @app.get("/admin/", include_in_schema=False)
+        async def serve_admin_index():
+            return _admin_index_response()
+
+        @app.get("/admin/{full_path:path}", include_in_schema=False)
+        async def serve_admin_spa(full_path: str):
+            file_path = _ADMIN_DIST_DIR / full_path
+            if file_path.exists() and file_path.is_file():
+                return FileResponse(file_path)
+            return _admin_index_response()
+
     # ── Main SPA (/) ───────────────────────────────────────────────────────
     if _DIST_DIR.exists():
         assets_dir = _DIST_DIR / "assets"
@@ -2201,10 +2241,12 @@ def create_app(
 
         @app.get("/", include_in_schema=False)
         async def serve_index(request: Request):
-            # Redirect non-admin authed users to the portal
             user = _get_user_from_request(request)
-            if user and user.role not in ("admin",) and _PORTAL_DIST_DIR.exists():
-                return RedirectResponse("/app/", status_code=302)
+            if user:
+                if user.role == "admin" and _ADMIN_DIST_DIR.exists():
+                    return RedirectResponse("/admin/", status_code=302)
+                if user.role != "admin" and _PORTAL_DIST_DIR.exists():
+                    return RedirectResponse("/app/", status_code=302)
             return _index_response()
 
         @app.get("/{full_path:path}", include_in_schema=False)
