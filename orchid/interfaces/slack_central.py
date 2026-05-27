@@ -410,6 +410,10 @@ class CentralSlackBot:
     def _handle_new(self, ack, respond, say, command) -> None:
         ack()
         logger.info("CMD %s channel_id=%r", command.get("command", ""), command.get("channel_id", ""))
+        from orchid import config as _cfg
+        if not _cfg.get("web.allow_user_projects", True):
+            respond("❌ Project creation is disabled by admin.")
+            return
         text = (command.get("text") or "").strip()
         if not text:
             respond("Usage: /orchid-new <project description>")

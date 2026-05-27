@@ -1880,7 +1880,15 @@ def create_app(
         return {"saved": True}
 
     @app.post("/api/projects", status_code=201)
-    async def create_project(body: CreateProjectBody):
+    async def create_project(
+        body: CreateProjectBody,
+        current_user: "User | None" = Depends(get_optional_user),
+    ):
+        from orchid import config as _pcfg
+        if not _pcfg.get("web.allow_user_projects", True):
+            is_admin = current_user is not None and getattr(current_user, "role", "") == "admin"
+            if not is_admin:
+                raise HTTPException(403, "Project creation is disabled by admin")
         from orchid.machine_profile import MachineProfile
         from orchid.project_creator import ProjectCreator
         profile = MachineProfile.load()

@@ -674,6 +674,14 @@ class CentralTelegramBot:
         await self._reply(update, "\n".join(lines))
 
     async def _cmd_new(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        from orchid import config as _cfg
+        if not _cfg.get("web.allow_user_projects", True):
+            await self._reply(
+                update,
+                "❌ Project creation is disabled by admin.",
+                with_footer=False,
+            )
+            return
         args = ctx.args or []
         if not args:
             await self._reply(update, "Usage: /orchid_new <project description>", with_footer=False)
