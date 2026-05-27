@@ -5,283 +5,254 @@ _Written: 2026-05-27. Previous HANDOFF archived as `HANDOFF-archive-2026-05-10-0
 
 ## 1. Mission
 
-Orchid is a standalone AI agent orchestration framework. This session transformed it into a true **multi-user agentic OS**. Phases 1–4 are complete. Next is Phase 5: Budget enforcement + per-user provider resolution.
+Orchid is a standalone AI agent orchestration framework. This session transformed it into a true **multi-user agentic OS**. All five phases from `docs/multiuser-proposal.md` are complete, plus stretch items (CPU budget, Task Monitor, System Config page).
+
+**All 158 tests pass at commit `f30567a`.**
 
 ---
 
-## 2. Current State
+## 2. Phase Map
 
-### What's working and verified at commit `6f4490a`
+| Phase | Feature | Commit | Tests |
+|-------|---------|--------|-------|
+| 1 | User Portal SPA (`/app/`) | `14b775a` | 87 |
+| 2 | Credential Vault + Notifications + Admin Invite | `f76db1c` | +43 |
+| 3 | MCP Catalog + per-user server access | `3e76d22` | +65 |
+| 4 | Admin Console SPA (`/admin/`) | `6f4490a` | +9 |
+| 5 | Budget enforcement + vault provider injection | `ae8dcc0` | +21 |
+| Stretch | CPU budget, Task Monitor, System Config | `f30567a` | +12 |
 
-**Phase 4 — complete at `6f4490a`:**
+---
 
-*Admin Console SPA (`orchid/interfaces/admin/`):*
-- Separate Vite project, `base: '/admin/'`, dev proxy port 5175
-- `App.jsx` — login form, admin-role guard (non-admin redirected to `/app/`), 4-tab nav + User Portal link
-- `pages/Users.jsx` — table of all users; search; Invite modal (`POST /api/admin/invite`, shows URL); Edit modal (role, email, projects, is_active); Deactivate button
-- `pages/MCPCatalog.jsx` — table of all catalog entries; Add/Edit server modal (all fields); Access modal (grant/revoke by role or user_id); Delete
-- `pages/AuditLog.jsx` — paginated table (50/page); filter by user_id + action; expandable detail rows; prev/next pagination
-- `pages/Quotas.jsx` — list active users; inline-editable `budget_usd` + `cpu_budget_seconds` cells (click → input → Enter to save, Esc to cancel)
+## 3. Current State
 
-*Backend additions to `web_server.py`:*
-- `_ADMIN_DIST_DIR` — `orchid/interfaces/admin/dist/`; mounted at `/admin/assets`; SPA fallback at `/admin/*`
-- Root redirect updated: admin → `/admin/` (when admin dist exists); non-admin → `/app/`
-- `GET /api/auth/users` — response now includes `budget_usd`, `cpu_budget_seconds`, `projects`, `created_at`
-- `PUT /api/auth/users/{id}` — now accepts `budget_usd` field (was missing; `cpu_budget_seconds` already worked)
+### Complete at `f30567a`
 
-**Test suite:**
-- `tests/test_admin_api.py` — 9 tests: expanded user list fields, budget_usd update, edge cases
-- **304 passed** across all Phase 1–4 test files (295 prev + 9 new)
+#### Budget module (`orchid/budget/guard.py`)
 
-**Build admin console:**
-```bash
-cd orchid/interfaces/admin && npm install && npm run build
+- **`BudgetGuard(owner_id, store=None)`** — check/record/remaining for LLM spend:
+  - `check()` raises `BudgetExceededError` when `budget_used_usd >= budget_usd` (0 = unlimited)
+  - `record(cost_usd)` — increments `User.budget_used_usd`, persists via `store.update_user()`
+  - `remaining()` → float or None (unlimited)
+- **CPU budget methods** (same class):
+  - `check_cpu()` — compares `cpu_used_seconds` vs `cpu_budget_seconds`; auto-resets counter at UTC midnight via `cpu_last_reset_date` field
+  - `record_cpu(seconds)` — increments `User.cpu_used_seconds`, auto-resets if new day
+  - `remaining_cpu()` → float or None (unlimited)
+- **`vault_env_context(owner_id, vault_store=None)`** — thread-local env override; injects vault keys that match `_PROVIDER_ENV_VARS` (ANTHROPIC_API_KEY etc.); concurrent cron jobs don't bleed keys
+- **`get_env(key, default=None)`** — drop-in for `os.environ.get()` that checks thread-local overrides first; used in `_run_agent_tool` for Anthropic client
+- **`_compute_anthropic_cost(model, input_tokens, output_tokens)`** — USD estimate from `_ANTHROPIC_PRICING` prefix table
+- **`BudgetExceededError(limit, used)`** — carries `.limit` and `.used` attributes
+
+#### `orchid/auth/types.py` — `User` new fields
+```python
+budget_used_usd: float = 0.0       # cumulative LLM spend; auto-persisted
+cpu_used_seconds: float = 0.0      # wall-clock seconds used today
+cpu_last_reset_date: str = ""      # "YYYY-MM-DD" UTC — reset sentinel
+```
+(All auto-serialised via `dataclasses.fields(User)` in `_parse_user()`.)
+
+#### `orchid/cron/executor.py` — execution flow (Phase 5+)
+```
+execute(task_dict, owner_id):
+  with vault_env_context(owner_id):          # inject provider keys
+    guard.check()                            # LLM budget
+    guard.check_cpu()                        # CPU budget (daily reset)
+    wall_start = time.monotonic()
+    dispatch_fn(config)                      # run the task
+    finally:
+      guard.record(cost_usd)                 # LLM cost from _exec_local.cost_usd
+      guard.record_cpu(elapsed)              # wall time
+```
+`BudgetExceededError` → `run.status = "failure"`, run returned normally (never raises).
+
+#### New admin endpoints (`web_server.py`)
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/admin/users/{id}/budget/reset` | Reset `budget_used_usd` to 0; audit-logged |
+| `GET /api/admin/runs` | Paginated task runs all users; filter `owner_id`, `status` |
+| `GET /api/admin/config` | Current `multi_user.*` + `web.allow_*` config values |
+| `PUT /api/admin/config` | Write allowlisted keys to `~/.config/orchid/config.yaml`; invalidates in-memory config |
+
+`GET /api/auth/users` now includes `budget_used_usd`, `cpu_used_seconds`.
+
+#### `orchid/orchid.defaults.yaml` — new `multi_user` section
+```yaml
+multi_user:
+  credential_encryption: fernet
+  default_budget_usd: 0.0
+  default_cpu_seconds: 0.0
+  allow_user_mcp: true
+  allow_user_projects: true
+  mcp_catalog_path: ""
+```
+
+#### Admin Console SPA — now 6 tabs
+
+| Tab | Page | Key features |
+|-----|------|-------------|
+| Users | `Users.jsx` | Table + invite + edit + deactivate |
+| MCP Catalog | `MCPCatalog.jsx` | CRUD + grant/revoke access |
+| Audit Log | `AuditLog.jsx` | Paginated, filterable, expand detail |
+| Quotas | `Quotas.jsx` | Inline-edit LLM+CPU budget; usage bars; reset button; CPU today column |
+| Task Monitor | `TaskMonitor.jsx` | All users' runs; status badge; duration; expandable output/error |
+| System Config | `SystemConfig.jsx` | Toggle allow_user_mcp, allow_user_projects; edit default quotas |
+
+#### `orchid/auth/audit.py` — new constants
+```python
+BUDGET_EXCEEDED = "budget_exceeded"
+BUDGET_RESET    = "budget_reset"
+# Phase 3 (already in codebase):
+MCP_SERVER_CREATED / UPDATED / DELETED
+MCP_ACCESS_GRANTED / REVOKED
+USER_MCP_SERVER_ADDED / DELETED
 ```
 
 ---
 
-### What's working and verified at commit `3e76d22`
+### What's working since earlier phases
 
-**Phase 3 — complete at `3e76d22`:**
+**Phase 3 — MCP Catalog (`orchid/mcp/catalog.py`, `catalog_api.py`):**
+- `MCPServerEntry` + `MCPCatalogStore` at `~/.config/orchid/mcp_catalog.json`
+- `UserMCPStore` per-user at `~/.config/orchid/users/{uid}/mcp_servers.json`
+- `MCPManager.connect_for_user()` — merges catalog + private servers, injects vault creds
+- Access control: `admin-only` > explicit `allowed_users` > `allowed_roles`
+- Admin routes: `GET/POST /api/admin/mcp/catalog`, `PUT/DELETE`, grant/revoke
+- User routes: `GET /api/user/mcp/servers`, `POST/DELETE`
+- Portal `UserSettings.jsx`: MCPServers section
 
-*MCP catalog (`orchid/mcp/catalog.py`):*
-- `MCPServerEntry` dataclass — `server_id`, `name`, `transport`, `config`, `scope`, `allowed_roles`, `allowed_users`, `requires_credential`
-- `MCPCatalogStore` — thread-safe JSON-backed; `~/.config/orchid/mcp_catalog.json`; CRUD + `grant_access()`/`revoke_access()` + `get_servers_for_user(user_id, role)`
-- Access control: `admin-only` scope → admin only; explicit `allowed_users` beats role; role fallback via `allowed_roles`; `shared`/`private` scopes
-- `get_catalog()` singleton + `reset_catalog()` for tests
+**Phase 2 — Credential Vault + Invite:**
+- `VaultStore` — Fernet, HKDF per-user key (`ORCHID_VAULT_KEY`)
+- `GET/PUT/DELETE /api/user/credentials/{key}` + notifications config API
+- Admin-invite flow: create inactive user → token → `POST /api/auth/invite/accept`
+- Portal `AcceptInvite` component (detects `?invite_id=&invite_token=` in URL)
+- `orchid/auth/notifications.py` — email (live) + Telegram/Slack (logged stubs)
 
-*Per-user private MCP servers (`UserMCPStore`):*
-- `~/.config/orchid/users/{user_id}/mcp_servers.json` — JSON array of server configs
-- `add_server()` auto-assigns `server_id` if missing; `delete_server()`; isolated per user
-
-*`MCPManager.connect_for_user()`:*
-- New method in `orchid/mcp/manager.py`; coexists with `connect()` (zero breaking changes)
-- Merges catalog servers (filtered by access) + user's private servers
-- Injects vault credentials: `stdio` → `env[key]`, `http` → `headers["Authorization"]`
-- Catalog server takes precedence on `server_id` clash with private server
-- Vault unavailable → logs warning, server still included (no crash)
-
-*Admin API (`orchid/mcp/catalog_api.py`):*
-- `GET/POST /api/admin/mcp/catalog`
-- `GET/PUT/DELETE /api/admin/mcp/catalog/{server_id}`
-- `PUT /api/admin/mcp/catalog/{server_id}/grant` — role or user_id
-- `PUT /api/admin/mcp/catalog/{server_id}/revoke`
-
-*User API:*
-- `GET /api/user/mcp/servers` — returns `{shared: [...], private: [...]}`
-- `POST /api/user/mcp/servers` — add private server (gated by `web.allow_user_mcp` config, default `True`)
-- `DELETE /api/user/mcp/servers/{server_id}` — remove private server
-
-*Portal:*
-- `UserSettings.jsx`: new `MCPServers` section — admin-granted list + private server list + add-private form (stdio/http)
-
-*Audit:*
-- 7 new `AuditAction` constants: `MCP_SERVER_CREATED/UPDATED/DELETED`, `MCP_ACCESS_GRANTED/REVOKED`, `USER_MCP_SERVER_ADDED/DELETED`
-
-**Test suite:**
-- `tests/test_mcp_catalog.py` — 65 tests: catalog CRUD, access control (7 scenarios), `UserMCPStore`, `connect_for_user` (6 scenarios incl. credential injection + clash), admin API (16 endpoints), user API (8 endpoints), audit constants
-- **152 passed** across all Phase 1–3 test files (87 prev + 65 new)
+**Phase 1 — User Portal:**
+- `/app/` SPA: Dashboard, Settings (profile, vault, notifications, API keys, MCP servers)
+- `PUT /api/auth/me/password` — verify current pw, 8-char min
+- Root redirect: admin → `/admin/`, user → `/app/`
 
 ---
 
-### What's working and verified at commit `f76db1c`
+## 4. Architecture Decisions
 
-**Phase 1 (portal SPA) — complete since `14b775a`:**
-- User portal at `/app` — Dashboard (tasks + projects), Settings (profile, password, API keys)
-- Role-based 302: non-admin authed users redirected from `/` to `/app/`
-- `PUT /api/auth/me/password` — verified current pw, 8-char min
+**D0054–D0060** — JWT, argon2, API keys, OIDC, PKCE, audit log, project scoping. See `CLAUDE.md`.
 
-**Phase 2 — complete at `f76db1c`:**
+**Phase 5 decisions:**
 
-*Credential vault (`orchid/vault/`):*
-- `VaultStore` — Fernet-encrypted JSON at `~/.config/orchid/users/{uid}/credentials.json.enc`
-- Key derivation: `HKDF-SHA256(ORCHID_VAULT_KEY, salt=b"orchid-vault-v1", info=user_id.encode())` → 32-byte Fernet key per user
-- `GET /api/user/credentials` — list key names (no values)
-- `PUT /api/user/credentials/{key}` — store/update secret
-- `DELETE /api/user/credentials/{key}` — remove
-- 503 with human-readable error if `ORCHID_VAULT_KEY` not set
-- Portal `UserSettings.jsx`: `CredentialVault` section — lazy-load, list, add, delete, graceful 503 banner
+**`budget_used_usd` in `users.json` (not separate ledger JSONL)**
+— Simpler; `_parse_user()` auto-handles via `dataclasses.fields(User)`. No new store abstraction needed.
 
-*Per-user notification config:*
-- `User.notification_config: dict` field — stored in `users.json` alongside other user data
-- Keys: `email_enabled`, `email_address`, `telegram_enabled`, `telegram_chat_id`, `slack_enabled`, `slack_user_id`, `notify_on_success`, `notify_on_failure`
-- `GET/PUT /api/user/config/notifications` — merge-on-PUT (doesn't wipe unspecified keys)
-- `orchid/auth/notifications.py` — `dispatch_task_notification()` called by `CronEngine._run_task` after every run; email channel live, Telegram/Slack are logged stubs (Phase 3)
-- `orchid/auth/mailer.py` — SMTP email via `SMTP_HOST/PORT/USER/PASSWORD/FROM/USE_SSL` env vars (same as `orchid-mcp-smtp`); graceful no-op if unconfigured
-- Portal: `NotificationConfig` section — email/Telegram/Slack toggles with channel-specific inputs
+**Thread-local env overrides (not `os.environ`) for vault injection**
+— APScheduler thread pool runs concurrent jobs. `os.environ` is process-global; patching it races. `threading.local()` is per-thread, zero-contention.
 
-*Admin-invite flow:*
-- `InviteToken` dataclass — `token_id` (`inv_` + UUID hex), argon2-hashed secret, 48h TTL, `is_used` flag
-- Stored in `users.json` under `"invites"` key; `FileUserStore` CRUD: `store_invite`, `get_invite`, `mark_invite_used`
-- `POST /api/admin/invite` (admin-only) — creates inactive `User` + `InviteToken`, sends email (falls back gracefully if SMTP unconfigured), returns `{invite_url, email_sent, token_id, ...}`
-- `GET /api/auth/invite/{token_id}` (public) — validates token, returns email; 404 if unknown/used, 410 if expired
-- `POST /api/auth/invite/accept` (public) — verifies argon2 secret, activates user, sets password, issues JWT+refresh cookies; 401 wrong secret, 410 expired, 400 pw < 8 chars
-- Portal `App.jsx`: `AcceptInvite` component — detects `?invite_id=&invite_token=` in URL before auth check; validates, shows email, password form, activates, cleans URL, reloads
+**CPU budget = wall-clock time of task execution**
+— Easy to measure (`time.monotonic()`). Doesn't require OS-level CPU accounting. Good enough for rate-limiting runaway tasks.
 
-**Test suite:**
-- `tests/test_vault.py` — 23 tests: VaultStore unit (HKDF isolation, encryption at rest, wrong-key raises, delete_all) + vault API (list/set/delete, 503 on missing key, auth required) + notification config API (get/set/partial merge/unknown key)
-- `tests/test_invite.py` — 20 tests: admin invite creation (duplicate email, invalid role, SMTP mock), token validation (expired, invalid), accept flow (activates user, issues cookie, marks used, reuse rejected, wrong secret, pw too short)
-- **87 passed** across `test_web.py`, `test_web_v2.py`, `test_portal_api.py`, `test_vault.py`, `test_invite.py`
+**`cpu_last_reset_date` on User (not a cron job)**
+— Daily reset is lazy: checked at `check_cpu()` / `record_cpu()` call time, not at midnight. Zero infrastructure. If a user runs no tasks, nothing happens.
+
+**System Config writes to `~/.config/orchid/config.yaml`**
+— Orchid's user-level override file (D0036). Only allowlisted keys can be written (`_ALLOWED_MU_KEYS`, `_ALLOWED_WEB_KEYS`). Invalidates in-memory `_config` singleton after write so next `get()` reflects change without restart.
 
 ---
 
-## 3. Decisions Made (and Why)
+## 5. Key Files Reference
 
-*(Decisions from Phase 1 unchanged — see `docs/multiuser-proposal.md` for the full resolved decisions table.)*
-
-**Decision:** Vault key = separate `ORCHID_VAULT_KEY` env var, not derived from `JWT_SECRET`
-**Reason:** JWT_SECRET rotation (e.g., after a breach) must not nuke all credential vaults. Independent env var = independent rotation. Both are required for a secure deployment.
-**Reversibility:** Don't reopen. Architecture decision is in `vault/store.py` docstring.
-
-**Decision:** Per-user vault key = `HKDF(ORCHID_VAULT_KEY, info=user_id)`, not `ORCHID_VAULT_KEY` directly
-**Reason:** Each user gets a distinct Fernet key. Compromise of one user's derived key does not expose others. All keys still invalidated if `ORCHID_VAULT_KEY` rotates — this is documented, acceptable.
-**Reversibility:** Could change derivation in a future version, but would require re-encrypting all vaults.
-
-**Decision:** Admin-invite = email link (SMTP), graceful fallback to returning URL in API response
-**Reason:** Internal tool — SMTP is often available. But if not configured, admin can copy the URL from the API response and paste it in Slack/email manually. Zero-config path works.
-**Reversibility:** Easy to add other delivery methods later.
-
-**Decision:** `notification_config` stored in `User` object (not a separate `config.yaml` file)
-**Reason:** Simpler. `FileUserStore` already serializes all user fields to JSON. One fewer file per user. Notification config is small (8 keys). Proposal mentioned `config.yaml` but that's Phase 3+ scope for larger configs.
-**Reversibility:** Could migrate to per-user `config.yaml` in Phase 3 without breaking existing data.
-
-**Decision:** Telegram/Slack notification channels are stubs in Phase 2 (logged, not dispatched)
-**Reason:** The existing Telegram/Slack bots use `orchid serve --telegram/--slack` which manages bot sessions centrally. Per-user DM routing requires wiring through those bots — that's Phase 3 scope (MCP catalog also lands there). The data model is complete; only the dispatch is stubbed.
-**Reversibility:** Replace the TODO stubs in `orchid/auth/notifications.py`.
-
----
-
-## 4. Architecture & Key Files
-
-### Created in Phase 2
-
-| File | What it does |
-|------|-------------|
-| `orchid/vault/__init__.py` | Module marker |
-| `orchid/vault/store.py` | `VaultStore` — Fernet-encrypted per-user credential store. `get_vault()` singleton. `reset_vault()` for tests. |
-| `orchid/vault/api.py` | `register_routes(app)` — installs `/api/user/credentials/*` and `/api/user/config/notifications` endpoints. Local imports only (no `from __future__ import annotations`). |
-| `orchid/auth/mailer.py` | `send_invite()`, `send_task_notification()` — SMTP via env vars. `is_configured()` guard. Never raises. |
-| `orchid/auth/notifications.py` | `dispatch_task_notification()` — reads `User.notification_config`, dispatches email (live) + Telegram/Slack (stubs). Called by `CronEngine._run_task`. |
-| `tests/test_vault.py` | 23 tests for VaultStore + vault API + notification config API |
-| `tests/test_invite.py` | 20 tests for admin invite creation + token validation + accept flow |
-
-### Modified in Phase 2
-
-| File | What changed |
-|------|-------------|
-| `orchid/auth/types.py` | Added `User.notification_config: dict`, `InviteToken` dataclass |
-| `orchid/auth/base.py` | 3 new abstract methods: `store_invite`, `get_invite`, `mark_invite_used` |
-| `orchid/auth/store.py` | `_invites: dict[str, InviteToken]` in `FileUserStore`; load/save; CRUD methods; `_parse_invite()` |
-| `orchid/auth/audit.py` | 5 new `AuditAction` constants: `INVITE_SENT`, `INVITE_ACCEPTED`, `CREDENTIAL_UPDATED`, `CREDENTIAL_DELETED`, `NOTIFICATION_CONFIG_UPDATED` |
-| `orchid/cron/engine.py` | `_run_task` calls `dispatch_task_notification()` after recording run (local import, never raises) |
-| `orchid/interfaces/web_server.py` | Registers vault routes; adds `POST /api/admin/invite`, `GET /api/auth/invite/{id}`, `POST /api/auth/invite/accept` |
-| `orchid/interfaces/portal/src/components/UserSettings.jsx` | Replaced Phase 2 stubs with `CredentialVault` + `NotificationConfig` components |
-| `orchid/interfaces/portal/src/App.jsx` | `_parseInviteParams()` + `AcceptInvite` component; `AuthedApp` wrapper |
-| `pyproject.toml` | `cryptography>=42.0.0` added as explicit dep (was transitive via authlib) |
-
-### Do not touch without reason
-
-- `orchid/web/server.py` — dead-end file, never loaded by `orchid serve`. Do not add routes here.
-- `orchid/interfaces/web_ui/` — existing power-user SPA. Untouched since Phase 1.
-- `orchid/auth/jwt.py` — crypto params settled.
-- `orchid/interfaces/portal/vite.config.js` `base: '/app/'` — load-bearing, do not change.
+```
+orchid/
+  auth/
+    types.py           User dataclass (budget_usd, budget_used_usd, cpu_*)
+    audit.py           AuditAction constants
+    store.py           FileUserStore, get_store() singleton, _parse_user()
+    jwt.py             hash_password, issue_access_token, …
+    middleware.py      get_current_user, require_auth(role=), require_scope(scope=)
+    notifications.py   dispatch_task_notification() — email live, TG/Slack stubs
+    mailer.py          SMTP email via env vars; graceful no-op if unconfigured
+  budget/
+    guard.py           BudgetGuard, vault_env_context, get_env, _compute_anthropic_cost
+  vault/
+    store.py           VaultStore, get_vault() singleton; HKDF per-user Fernet key
+    api.py             /api/user/credentials/* + /api/user/config/notifications
+  mcp/
+    catalog.py         MCPServerEntry, MCPCatalogStore, UserMCPStore
+    catalog_api.py     register_admin_routes() + register_user_routes()
+    manager.py         MCPManager + connect_for_user()
+  cron/
+    executor.py        TaskExecutor.execute() — vault inject → budget → dispatch → record
+    store.py           TaskRunStore (append-only JSONL, 30-day prune)
+    engine.py          CronEngine, APScheduler, get_engine() singleton
+    api.py             /api/scheduler/* routes
+  interfaces/
+    web_server.py      FastAPI create_app(); ALL web routes; do not confuse with…
+    web/server.py      DEAD FILE — never loaded, never touch
+    portal/            User Portal SPA (base: /app/, port 5174)
+    admin/             Admin Console SPA (base: /admin/, port 5175)
+      src/pages/
+        Users.jsx
+        MCPCatalog.jsx
+        AuditLog.jsx
+        Quotas.jsx
+        TaskMonitor.jsx
+        SystemConfig.jsx
+```
 
 ---
 
-## 5. Gotchas & Hard-Won Knowledge
+## 6. Gotchas & Hard-Won Knowledge
 
-*(All Phase 1 gotchas still apply — see below for new ones.)*
+**`orchid/web/server.py` is a dead file.** Never loaded by `orchid serve`. All routes are in `orchid/interfaces/web_server.py`. Do not add routes to the dead file.
 
-**`ORCHID_VAULT_KEY` must be set before any credential read/write.** `VaultStore._get_fernet()` raises `RuntimeError` if missing. `list_keys()` on an empty vault returns `[]` without needing the key (no file to decrypt). The API returns 503 with a human-readable error. Test: unset the var and `store.set()` raises.
+**Portal `vite.config.js` `base: '/app/'` is load-bearing.** Do not change it. Admin has its own `vite.config.js` with `base: '/admin/'`.
 
-**`issue_access_token` and `issue_refresh_token` both take a `User` object, not `user_id`.** Passing a string or dict raises `AttributeError`. See `orchid/auth/jwt.py` lines 53 and 77.
+**`store.update_user()` not `store.upsert_user()`.** Class is `FileUserStore`, not `UserStore`. Import path: `from orchid.auth.store import FileUserStore`.
 
-**`store.update_user()` not `store.upsert_user()`.** Already documented in Phase 1 — still true. `notification_config` updates use `update_user()`.
+**`_parse_user()` uses `dataclasses.fields(User)`.** Adding a field to `User` with a default is sufficient for it to be persisted and loaded automatically. No store code changes needed.
 
-**Vault key derivation is HKDF, not HMAC.** `HKDF` from `cryptography.hazmat.primitives.kdf.hkdf`. Import path: `from cryptography.hazmat.primitives.kdf.hkdf import HKDF`. Do not use `hmac.new()` — HKDF has the right length expansion properties.
+**`vault_env_context` must wrap the entire task dispatch**, not just the Anthropic client init. The thread-local overrides are read by `get_env()` at API call time inside `_run_agent_tool`.
 
-**`notification_config` keys use underscores, not hyphens.** `email_enabled`, `telegram_chat_id`, `slack_user_id` — all snake_case. The portal and backend agree on this; don't introduce camelCase.
+**`cpu_last_reset_date` comparisons use `datetime.now(UTC).strftime("%Y-%m-%d")`.** The `_today()` staticmethod is on `BudgetGuard`. The date stored in users.json is a plain string — no timezone parsing needed.
 
-**Invite token URL parameters are `invite_id` and `invite_token`**, not `token_id`/`secret`. `_parseInviteParams()` in `App.jsx` reads `invite_id` and `invite_token` from `window.location.search`. Backend endpoint at `GET /api/auth/invite/{token_id}` uses `token_id` in the path. Keep these straight.
+**`PUT /api/admin/config` allowlists keys.** Unknown keys in the request body are silently dropped — no 400. Check `updated` in the response to see what actually changed.
 
-**`CronEngine._run_task` notification dispatch is wrapped in bare `try/except`.** Notification failure must never crash the engine. The try/except in `notifications.py::dispatch_task_notification` also eats exceptions. This is intentional — logs are the signal.
+**`GET /api/admin/runs` reads real `~/.config/orchid/cron/runs.jsonl`** — in tests, patch `orchid.cron.store.TaskRunStore` with a store pointing at `tmp_path`.
 
-**PyJWT and argon2-cffi still required in venv.** If auth endpoints 404: `python -c "from orchid.interfaces.web_server import _AUTH_AVAILABLE; print(_AUTH_AVAILABLE)"`. Fix: `uv pip install "PyJWT>=2.8.0" argon2-cffi cryptography`.
-
-**Portal `dist/` not committed (gitignored).** Build before deployment: `cd orchid/interfaces/portal && npm install && npm run build`.
-
----
-
-## 6. Conventions In Play
-
-Same as Phase 1 — see that section. New addition:
-
-**Vault API tests use `ORCHID_VAULT_KEY` in `os.environ`.** The `vault_client` fixture sets it and resets `orchid.vault.store._vault_instance` to a `VaultStore` pointing at `tmp_path/vaults`. Clean up via `reset_vault()` in teardown.
-
-**`vault/api.py` uses `app.add_api_route(...)` pattern**, not `@app.get(...)` decorators. Same pattern as `cron/api.py`. Required because routes are defined inside `register_routes(app)`, not at module level.
-
----
-
-## 7. Decisions Made in Phase 3
-
-**Decision:** MCP catalog in separate `mcp_catalog.json` (not `users.json`)
-**Reason:** System config vs. user identity data should not mix. Independent backup/export. Aligns with proposal spec.
-
-**Decision:** `connect_for_user()` coexists with `connect()`
-**Reason:** Zero breaking changes. CLI/project paths use `connect()`. User-scoped paths (cron executor) use `connect_for_user()`. Two clear entry points.
-
-**Decision:** `allow_user_mcp` read from `orchid.config.get("web.allow_user_mcp", True)` at request time (not at route registration)
-**Reason:** Allows live config toggle without restart. Default `True` (permissive for dev; operators can disable).
-
----
-
-## 8. Decisions Made in Phase 4
-
-**Decision:** Separate Vite project (`orchid/interfaces/admin/`, `base: '/admin/'`)
-**Reason:** Clean isolation, independent build, no risk to portal `vite.config.js`. Same pattern as portal.
-
-**Decision:** Root redirect sends admins to `/admin/` only when `_ADMIN_DIST_DIR.exists()`
-**Reason:** Graceful degradation — if dist not built, admins fall through to old power-user SPA. No breakage for deployments that haven't built admin yet.
-
----
-
-## 9. Open Questions for Phase 5
-
-1. **`BudgetGuard` implementation.** `User.budget_usd` is now editable from the admin console. Phase 5 needs `BudgetGuard` middleware that intercepts LLM calls, checks remaining budget, and increments cost counter. Where does cost tracking live? Options: (a) new `User.budget_used_usd` field in users.json; (b) separate `~/.config/orchid/budget_ledger.jsonl`. Proposal says UserStore — keep it simple.
-
-2. **Per-user provider resolution.** `TaskExecutor.execute(task_dict, owner_id)` already takes `owner_id`. Phase 5 extends D0030 resolution order: `CLI > user vault > project providers > global providers > env > defaults`. Vault credential lookup for providers needs `VaultStore.get(owner_id, key)`.
-
-3. **Telegram/Slack notification wiring (still deferred from Phase 2).** Stubs in `orchid/auth/notifications.py`. Wire through `CentralBotManager`. Can land in Phase 5 as a side task.
-
----
-
-## 9. Do Not Touch
-
-- **`orchid/web/server.py`** — dead-end, never loaded by `orchid serve`.
-- **`orchid/interfaces/web_ui/`** — existing power-user SPA.
-- **`orchid/auth/jwt.py`** — crypto params settled.
-- **`orchid/interfaces/portal/vite.config.js` `base: '/app/'`** — load-bearing.
-- **`.claude/settings.local.json`** — local harness config, never commit.
-- **`docs/multiuser-proposal.md` decisions section** — resolved. Don't re-debate.
-
----
-
-## 10. Gotchas Added in Phase 4
-
-**`GET /api/auth/users` now includes `budget_usd`, `cpu_budget_seconds`, `projects`, `created_at`.** If any code was relying on the old minimal shape `{user_id, username, email, role, is_active}`, it still works — fields are additive.
-
-**Admin SPA `dist/` not committed (gitignored).** Build before deployment:
+**Admin SPA `dist/` not committed.** Build before deployment:
 ```bash
 cd orchid/interfaces/admin && npm install && npm run build
 ```
-Dev server: `npm run dev` on port 5175.
+Dev server: port 5175.
 
-**Root redirect is conditional on dist existence.** `_ADMIN_DIST_DIR.exists()` check means admins land on `/admin/` only after building. Before building, they land on the old power-user SPA at `/`. This is intentional — no breaking change for existing deployments.
+**Root redirect is conditional on `_ADMIN_DIST_DIR.exists()`** — admin → `/admin/` only after building. Otherwise falls through to old power-user SPA.
 
-**`AuditLog.jsx` uses React fragment shorthand `<>` in a `.map()`.** This is valid but requires keys on the fragment: `<React.Fragment key={ev.event_id}>`. Currently uses `<>` — if React warns about missing keys, switch to explicit `React.Fragment key=`.
+**`AuditLog.jsx` and `TaskMonitor.jsx` use `<>` (React fragment shorthand) inside `.map()`.** If React warns about missing keys, switch to `<React.Fragment key={...}>`.
 
 ---
 
-## 11. Resume Command
+## 7. Do Not Touch
 
-> Read `HANDOFF.md`. We're building multi-user support for Orchid (internal agentic OS). Phases 1–4 are complete at commit `6f4490a` — 304 tests pass. Start Phase 5: Budget enforcement + per-user provider resolution. Spec is in `docs/multiuser-proposal.md` under "Phase 5". Do not touch `orchid/web/server.py` (dead-end file). Do not change portal `vite.config.js` `base: '/app/'`. Commit between major changes.
+- `orchid/web/server.py` — dead-end, never loaded by `orchid serve`
+- `orchid/interfaces/web_ui/` — existing power-user SPA, untouched
+- `orchid/auth/jwt.py` — crypto params settled
+- `orchid/interfaces/portal/vite.config.js` `base: '/app/'` — load-bearing
+- `.claude/settings.local.json` — local harness config, never commit
+- `docs/multiuser-proposal.md` decisions section — resolved
+
+---
+
+## 8. What's Left (not started)
+
+| Item | Notes |
+|------|-------|
+| **Project namespace** | `registry.list_projects(user_id=...)`, user-owned project paths `~/.config/orchid/projects/{uid}/`. Separate initiative — touches project runner, CLI. |
+| **Telegram/Slack notification wiring** | Stubs in `orchid/auth/notifications.py`. Wire through `CentralBotManager`. |
+| **Postgres migration** | Replace `FileUserStore` with `PostgresUserStore`. Groundwork exists (ABC). |
+| **`allow_user_projects` enforcement** | Flag written to config but not yet checked in project creation paths. |
+| **Admin "view as user" mode** | Proposal mentioned it; not implemented. Admin can visit `/app/` as themselves. |
+
+---
+
+## 9. Resume Command
+
+> Read `HANDOFF.md`. Orchid multi-user OS is complete (all 5 phases + stretch items) at commit `f30567a` — 158 tests pass. Remaining work is in "What's Left" section. Do not touch `orchid/web/server.py` (dead-end). Do not change portal `vite.config.js` `base: '/app/'`. Commit between major changes. Push after each phase.
