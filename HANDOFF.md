@@ -5,11 +5,40 @@ _Written: 2026-05-27. Previous HANDOFF archived as `HANDOFF-archive-2026-05-10-0
 
 ## 1. Mission
 
-Orchid is a standalone AI agent orchestration framework. This session transformed it into a true **multi-user agentic OS**. Phases 1, 2, and 3 are complete. Next is Phase 4: Admin Console SPA (`/admin`).
+Orchid is a standalone AI agent orchestration framework. This session transformed it into a true **multi-user agentic OS**. Phases 1–4 are complete. Next is Phase 5: Budget enforcement + per-user provider resolution.
 
 ---
 
 ## 2. Current State
+
+### What's working and verified at commit `6f4490a`
+
+**Phase 4 — complete at `6f4490a`:**
+
+*Admin Console SPA (`orchid/interfaces/admin/`):*
+- Separate Vite project, `base: '/admin/'`, dev proxy port 5175
+- `App.jsx` — login form, admin-role guard (non-admin redirected to `/app/`), 4-tab nav + User Portal link
+- `pages/Users.jsx` — table of all users; search; Invite modal (`POST /api/admin/invite`, shows URL); Edit modal (role, email, projects, is_active); Deactivate button
+- `pages/MCPCatalog.jsx` — table of all catalog entries; Add/Edit server modal (all fields); Access modal (grant/revoke by role or user_id); Delete
+- `pages/AuditLog.jsx` — paginated table (50/page); filter by user_id + action; expandable detail rows; prev/next pagination
+- `pages/Quotas.jsx` — list active users; inline-editable `budget_usd` + `cpu_budget_seconds` cells (click → input → Enter to save, Esc to cancel)
+
+*Backend additions to `web_server.py`:*
+- `_ADMIN_DIST_DIR` — `orchid/interfaces/admin/dist/`; mounted at `/admin/assets`; SPA fallback at `/admin/*`
+- Root redirect updated: admin → `/admin/` (when admin dist exists); non-admin → `/app/`
+- `GET /api/auth/users` — response now includes `budget_usd`, `cpu_budget_seconds`, `projects`, `created_at`
+- `PUT /api/auth/users/{id}` — now accepts `budget_usd` field (was missing; `cpu_budget_seconds` already worked)
+
+**Test suite:**
+- `tests/test_admin_api.py` — 9 tests: expanded user list fields, budget_usd update, edge cases
+- **304 passed** across all Phase 1–4 test files (295 prev + 9 new)
+
+**Build admin console:**
+```bash
+cd orchid/interfaces/admin && npm install && npm run build
+```
+
+---
 
 ### What's working and verified at commit `3e76d22`
 
@@ -206,13 +235,23 @@ Same as Phase 1 — see that section. New addition:
 
 ---
 
-## 8. Open Questions for Phase 4
+## 8. Decisions Made in Phase 4
 
-1. **Admin Console SPA build setup.** Phase 4 adds a second React root at `/admin`. Options: (a) new Vite project in `orchid/interfaces/admin/`; (b) same Vite project as portal with multiple entry points. Portal uses `base: '/app/'`. Admin would need `base: '/admin/'`. Separate project = clear isolation, easy to gate. **Recommend: separate Vite project.**
+**Decision:** Separate Vite project (`orchid/interfaces/admin/`, `base: '/admin/'`)
+**Reason:** Clean isolation, independent build, no risk to portal `vite.config.js`. Same pattern as portal.
 
-2. **Telegram/Slack notification wiring (still deferred).** Stubs in `orchid/auth/notifications.py`. Wire through `CentralBotManager` in `orchid/interfaces/central_bot.py` — use lazy local import. Phase 4 can do this as a side task.
+**Decision:** Root redirect sends admins to `/admin/` only when `_ADMIN_DIST_DIR.exists()`
+**Reason:** Graceful degradation — if dist not built, admins fall through to old power-user SPA. No breakage for deployments that haven't built admin yet.
 
-3. **`readonly` role in portal.** Currently same view as `user`. Does Phase 4 add a stripped-down view? Or is `readonly` only for admin console ACL? Decision not required until Admin Console SPA lands.
+---
+
+## 9. Open Questions for Phase 5
+
+1. **`BudgetGuard` implementation.** `User.budget_usd` is now editable from the admin console. Phase 5 needs `BudgetGuard` middleware that intercepts LLM calls, checks remaining budget, and increments cost counter. Where does cost tracking live? Options: (a) new `User.budget_used_usd` field in users.json; (b) separate `~/.config/orchid/budget_ledger.jsonl`. Proposal says UserStore — keep it simple.
+
+2. **Per-user provider resolution.** `TaskExecutor.execute(task_dict, owner_id)` already takes `owner_id`. Phase 5 extends D0030 resolution order: `CLI > user vault > project providers > global providers > env > defaults`. Vault credential lookup for providers needs `VaultStore.get(owner_id, key)`.
+
+3. **Telegram/Slack notification wiring (still deferred from Phase 2).** Stubs in `orchid/auth/notifications.py`. Wire through `CentralBotManager`. Can land in Phase 5 as a side task.
 
 ---
 
@@ -227,6 +266,22 @@ Same as Phase 1 — see that section. New addition:
 
 ---
 
-## 10. Resume Command
+## 10. Gotchas Added in Phase 4
 
-> Read `HANDOFF.md`. We're building multi-user support for Orchid (internal agentic OS). Phases 1, 2, and 3 are complete at commit `3e76d22` — 152 tests pass. Start Phase 4: Admin Console SPA at `/admin`. Spec is in `docs/multiuser-proposal.md` under "Phase 4". Before writing code, ask: (1) Separate Vite project for the admin SPA, or multi-entry in the portal project? (2) Which admin pages to build first — Users, MCP Catalog, Audit Log, or all at once? Do not touch `orchid/web/server.py` (dead-end file). Do not change portal `vite.config.js` `base: '/app/'`. Commit between major changes.
+**`GET /api/auth/users` now includes `budget_usd`, `cpu_budget_seconds`, `projects`, `created_at`.** If any code was relying on the old minimal shape `{user_id, username, email, role, is_active}`, it still works — fields are additive.
+
+**Admin SPA `dist/` not committed (gitignored).** Build before deployment:
+```bash
+cd orchid/interfaces/admin && npm install && npm run build
+```
+Dev server: `npm run dev` on port 5175.
+
+**Root redirect is conditional on dist existence.** `_ADMIN_DIST_DIR.exists()` check means admins land on `/admin/` only after building. Before building, they land on the old power-user SPA at `/`. This is intentional — no breaking change for existing deployments.
+
+**`AuditLog.jsx` uses React fragment shorthand `<>` in a `.map()`.** This is valid but requires keys on the fragment: `<React.Fragment key={ev.event_id}>`. Currently uses `<>` — if React warns about missing keys, switch to explicit `React.Fragment key=`.
+
+---
+
+## 11. Resume Command
+
+> Read `HANDOFF.md`. We're building multi-user support for Orchid (internal agentic OS). Phases 1–4 are complete at commit `6f4490a` — 304 tests pass. Start Phase 5: Budget enforcement + per-user provider resolution. Spec is in `docs/multiuser-proposal.md` under "Phase 5". Do not touch `orchid/web/server.py` (dead-end file). Do not change portal `vite.config.js` `base: '/app/'`. Commit between major changes.
