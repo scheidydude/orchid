@@ -707,6 +707,8 @@ def create_app(
         if _central_bot_manager is not None:
             try:
                 _central_bot_manager.start()
+                from orchid.interfaces.central_bot import set_bot_manager
+                set_bot_manager(_central_bot_manager)
                 logger.info("CentralBotManager started")
             except Exception as exc:
                 logger.warning("CentralBotManager failed to start: %s", exc)
@@ -766,6 +768,8 @@ def create_app(
             _agent_manager.stop()
         if _central_bot_manager is not None:
             try:
+                from orchid.interfaces.central_bot import set_bot_manager
+                set_bot_manager(None)
                 _central_bot_manager.stop()
             except Exception as exc:
                 logger.warning("CentralBotManager stop error: %s", exc)

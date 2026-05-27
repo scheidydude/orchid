@@ -6,8 +6,8 @@ configured channels.
 
 Channel support:
     email     — via orchid.auth.mailer (SMTP env vars required)
-    telegram  — stub; logs only until Phase 3 wires per-user Telegram chat IDs
-    slack     — stub; logs only until Phase 3 wires per-user Slack DM targets
+    telegram  — via CentralTelegramBot.send_dm() when bot manager is running
+    slack     — via CentralSlackBot.send_dm() when bot manager is running
 
 Configuration keys in ``User.notification_config``:
     email_enabled:       bool  (default False)
@@ -29,6 +29,30 @@ from __future__ import annotations
 import logging
 
 logger = logging.getLogger(__name__)
+
+_STATUS_EMOJI = {
+    "success": "✅",
+    "failure": "❌",
+    "timeout": "⏱️",
+}
+_OUTPUT_MAX = 500
+
+
+def _format_dm_text(task_name: str, status: str, run_id: str, output: str) -> str:
+    """Format a short DM message for Telegram or Slack."""
+    emoji = _STATUS_EMOJI.get(status, "🔔")
+    lines = [
+        f"🌸 *Orchid Task Notification*",
+        f"Task: {task_name}",
+        f"Status: {emoji} {status}",
+        f"Run: `{run_id}`",
+    ]
+    if output:
+        snippet = output[:_OUTPUT_MAX]
+        if len(output) > _OUTPUT_MAX:
+            snippet += "…"
+        lines.append(f"Output:\n```\n{snippet}\n```")
+    return "\n".join(lines)
 
 
 def dispatch_task_notification(owner_id: str, task_dict: dict, run: object) -> None:
@@ -93,20 +117,38 @@ def _dispatch(owner_id: str, task_dict: dict, run: object) -> None:
         else:
             logger.debug("Email notification skipped — no address for user %s", owner_id)
 
-    # ── Telegram (stub) ───────────────────────────────────────────────────────
+    # ── Telegram ──────────────────────────────────────────────────────────────
     if cfg.get("telegram_enabled", False) and cfg.get("telegram_chat_id"):
         chat_id = cfg["telegram_chat_id"]
-        logger.info(
-            "Telegram notification stub: chat_id=%s task=%s status=%s run=%s",
-            chat_id, task_name, status, run_id,
-        )
-        # TODO Phase 3: use existing Telegram bot to send DM to chat_id
+        try:
+            from orchid.interfaces.central_bot import get_bot_manager
+            mgr = get_bot_manager()
+            if mgr is not None:
+                mgr.send_telegram_dm(int(chat_id), _format_dm_text(task_name, status, run_id, output))
+                logger.debug("Telegram DM dispatched: chat_id=%s run=%s", chat_id, run_id)
+            else:
+                logger.info(
+                    "Telegram DM skipped — bot manager not running "
+                    "(chat_id=%s task=%s status=%s run=%s)",
+                    chat_id, task_name, status, run_id,
+                )
+        except Exception as exc:
+            logger.warning("Telegram notification failed (chat_id=%s run=%s): %s", chat_id, run_id, exc)
 
-    # ── Slack (stub) ──────────────────────────────────────────────────────────
+    # ── Slack ─────────────────────────────────────────────────────────────────
     if cfg.get("slack_enabled", False) and cfg.get("slack_user_id"):
         slack_uid = cfg["slack_user_id"]
-        logger.info(
-            "Slack notification stub: user_id=%s task=%s status=%s run=%s",
-            slack_uid, task_name, status, run_id,
-        )
-        # TODO Phase 3: use existing Slack bot to send DM to slack_uid
+        try:
+            from orchid.interfaces.central_bot import get_bot_manager
+            mgr = get_bot_manager()
+            if mgr is not None:
+                mgr.send_slack_dm(slack_uid, _format_dm_text(task_name, status, run_id, output))
+                logger.debug("Slack DM dispatched: user_id=%s run=%s", slack_uid, run_id)
+            else:
+                logger.info(
+                    "Slack DM skipped — bot manager not running "
+                    "(user_id=%s task=%s status=%s run=%s)",
+                    slack_uid, task_name, status, run_id,
+                )
+        except Exception as exc:
+            logger.warning("Slack notification failed (user_id=%s run=%s): %s", slack_uid, run_id, exc)

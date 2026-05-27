@@ -904,3 +904,304 @@ class TestSlackCancel:
         from orchid.interfaces import slack_central
         src = inspect.getsource(slack_central.CentralSlackBot.start)
         assert "/orchid-cancel" in src
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# send_dm — Telegram
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestTelegramSendDM:
+    """CentralTelegramBot.send_dm() dispatches to the bot's event loop."""
+
+    def _make_bot(self, tmp_path: Path) -> Any:
+        from orchid.interfaces.telegram_central import CentralTelegramBot
+        disc = _make_discovery([])
+        with patch("orchid.interfaces.telegram_central._TELEGRAM_AVAILABLE", True):
+            bot = object.__new__(CentralTelegramBot)
+            bot._discovery = disc
+            bot.token = "test-token"
+            bot.allowed_users = set()
+            bot._state_file = tmp_path / "state.json"
+            bot._user_state = {}
+            bot._state_lock = __import__("threading").Lock()
+            bot._runners = {}
+            bot._runners_lock = __import__("threading").Lock()
+            bot._subscribers = {}
+            bot._sub_lock = __import__("threading").Lock()
+            bot._app = None
+            bot._loop = None
+            bot._stop_event = None
+        return bot
+
+    def test_send_dm_no_app_logs_warning(self, tmp_path, caplog):
+        import logging
+        bot = self._make_bot(tmp_path)
+        with caplog.at_level(logging.WARNING, logger="orchid.interfaces.telegram_central"):
+            bot.send_dm(12345, "hello")
+        assert any("not initialised" in r.message for r in caplog.records)
+
+    def test_send_dm_no_loop_logs_warning(self, tmp_path, caplog):
+        import logging
+        bot = self._make_bot(tmp_path)
+        bot._app = MagicMock()  # app present, loop absent
+        with caplog.at_level(logging.WARNING, logger="orchid.interfaces.telegram_central"):
+            bot.send_dm(12345, "hello")
+        assert any("event loop not running" in r.message for r in caplog.records)
+
+    def test_send_dm_dispatches_coroutine(self, tmp_path):
+        import asyncio
+        from unittest.mock import AsyncMock, patch as upatch
+
+        bot = self._make_bot(tmp_path)
+        loop = asyncio.new_event_loop()
+        bot._loop = loop
+
+        mock_bot = MagicMock()
+        mock_bot.send_message = AsyncMock(return_value=None)
+        mock_app = MagicMock()
+        mock_app.bot = mock_bot
+        bot._app = mock_app
+
+        with upatch("asyncio.run_coroutine_threadsafe") as mock_rtf:
+            bot.send_dm(99999, "test message")
+            mock_rtf.assert_called_once()
+            args = mock_rtf.call_args
+            assert args[0][1] is loop  # loop passed correctly
+
+        loop.close()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# send_dm — Slack
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestSlackSendDM:
+    """CentralSlackBot.send_dm() opens a DM channel and posts the message."""
+
+    def _make_bot(self, tmp_path: Path) -> Any:
+        from orchid.interfaces.slack_central import CentralSlackBot
+        disc = _make_discovery([])
+        import asyncio
+        with patch("orchid.interfaces.slack_central._SLACK_AVAILABLE", True):
+            bot = object.__new__(CentralSlackBot)
+            bot._discovery = disc
+            bot.bot_token = "xoxb-test"
+            bot.app_token = "xapp-test"
+            bot._channels_file = tmp_path / "channels.json"
+            bot.auto_create_channels = False
+            bot.default_channel = "#orchid-general"
+            bot._channel_map = {}
+            bot._map_lock = __import__("threading").Lock()
+            bot._runners = {}
+            bot._runners_lock = __import__("threading").Lock()
+            bot._notify_channels = {}
+            bot._notify_lock = __import__("threading").Lock()
+            bot._loop = asyncio.new_event_loop()
+            bot._loop_thread = __import__("threading").Thread(
+                target=bot._loop.run_forever, daemon=True
+            )
+            bot._loop_thread.start()
+            bot._client = None
+            bot._handler = None
+        return bot
+
+    def test_send_dm_no_client_logs_warning(self, tmp_path, caplog):
+        import logging
+        bot = self._make_bot(tmp_path)
+        with caplog.at_level(logging.WARNING, logger="orchid.interfaces.slack_central"):
+            bot.send_dm("U012AB3CD", "hello")
+        assert any("not initialised" in r.message for r in caplog.records)
+
+    def test_send_dm_calls_conversations_open_and_post(self, tmp_path):
+        bot = self._make_bot(tmp_path)
+        mock_client = MagicMock()
+        mock_client.conversations_open.return_value = {"channel": {"id": "DM_CHANNEL_ID"}}
+        mock_client.chat_postMessage.return_value = {"ts": "1234.5678"}
+        bot._client = mock_client
+
+        bot.send_dm("U012AB3CD", "test dm text")
+
+        mock_client.conversations_open.assert_called_once_with(users="U012AB3CD")
+        mock_client.chat_postMessage.assert_called_once_with(
+            channel="DM_CHANNEL_ID", text="test dm text"
+        )
+
+    def test_send_dm_handles_conversations_open_error(self, tmp_path, caplog):
+        import logging
+        bot = self._make_bot(tmp_path)
+        mock_client = MagicMock()
+        mock_client.conversations_open.side_effect = RuntimeError("API error")
+        bot._client = mock_client
+
+        with caplog.at_level(logging.WARNING, logger="orchid.interfaces.slack_central"):
+            bot.send_dm("U012AB3CD", "hello")
+        assert any("send_dm" in r.message for r in caplog.records)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CentralBotManager — delegation
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestCentralBotManagerDM:
+    """CentralBotManager.send_telegram_dm / send_slack_dm delegate correctly."""
+
+    def _make_manager(self) -> Any:
+        from orchid.interfaces.central_bot import CentralBotManager
+        disc = _make_discovery([])
+        mgr = CentralBotManager(discovery=disc)
+        return mgr
+
+    def test_send_telegram_dm_no_bot_logs_warning(self, caplog):
+        import logging
+        mgr = self._make_manager()
+        with caplog.at_level(logging.WARNING, logger="orchid.interfaces.central_bot"):
+            mgr.send_telegram_dm(12345, "hi")
+        assert any("not running" in r.message for r in caplog.records)
+
+    def test_send_telegram_dm_delegates(self):
+        mgr = self._make_manager()
+        mock_tg = MagicMock()
+        mgr._telegram_bot = mock_tg
+        mgr.send_telegram_dm(12345, "hello")
+        mock_tg.send_dm.assert_called_once_with(12345, "hello")
+
+    def test_send_slack_dm_no_bot_logs_warning(self, caplog):
+        import logging
+        mgr = self._make_manager()
+        with caplog.at_level(logging.WARNING, logger="orchid.interfaces.central_bot"):
+            mgr.send_slack_dm("U123", "hi")
+        assert any("not running" in r.message for r in caplog.records)
+
+    def test_send_slack_dm_delegates(self):
+        mgr = self._make_manager()
+        mock_sl = MagicMock()
+        mgr._slack_bot = mock_sl
+        mgr.send_slack_dm("U123", "hello")
+        mock_sl.send_dm.assert_called_once_with("U123", "hello")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# get_bot_manager / set_bot_manager singleton
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestBotManagerSingleton:
+    def test_set_and_get_bot_manager(self):
+        from orchid.interfaces.central_bot import get_bot_manager, set_bot_manager
+        original = get_bot_manager()
+        try:
+            fake = MagicMock()
+            set_bot_manager(fake)
+            assert get_bot_manager() is fake
+            set_bot_manager(None)
+            assert get_bot_manager() is None
+        finally:
+            set_bot_manager(original)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# notifications.py — Telegram + Slack dispatch
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestDispatchTaskNotification:
+    """dispatch_task_notification() wires into real bot DMs."""
+
+    def _make_run(self, status="success", output="ok"):
+        run = MagicMock()
+        run.status = status
+        run.run_id = "run-abc"
+        run.output = output
+        return run
+
+    def _make_task(self, **kwargs):
+        base = {"task_id": "T001", "name": "My Task", "notify_on_success": True, "notify_on_failure": True}
+        base.update(kwargs)
+        return base
+
+    def _make_user(self, cfg):
+        user = MagicMock()
+        user.email = "test@example.com"
+        user.notification_config = cfg
+        return user
+
+    def test_telegram_dm_dispatched_when_bot_running(self, tmp_path):
+        from unittest.mock import patch as upatch
+        from orchid.auth.notifications import dispatch_task_notification
+
+        mock_mgr = MagicMock()
+        user = self._make_user({
+            "telegram_enabled": True,
+            "telegram_chat_id": "99999",
+            "notify_on_success": True,
+        })
+
+        with upatch("orchid.auth.store.get_store") as mock_store, \
+             upatch("orchid.interfaces.central_bot.get_bot_manager", return_value=mock_mgr):
+            mock_store.return_value.get_user.return_value = user
+            dispatch_task_notification("user1", self._make_task(), self._make_run("success"))
+
+        mock_mgr.send_telegram_dm.assert_called_once()
+        call_args = mock_mgr.send_telegram_dm.call_args
+        assert call_args[0][0] == 99999  # chat_id as int
+        assert "My Task" in call_args[0][1]
+        assert "success" in call_args[0][1]
+
+    def test_telegram_dm_skipped_when_no_bot(self, caplog, tmp_path):
+        import logging
+        from unittest.mock import patch as upatch
+        from orchid.auth.notifications import dispatch_task_notification
+
+        user = self._make_user({
+            "telegram_enabled": True,
+            "telegram_chat_id": "99999",
+        })
+
+        with upatch("orchid.auth.store.get_store") as mock_store, \
+             upatch("orchid.interfaces.central_bot.get_bot_manager", return_value=None), \
+             caplog.at_level(logging.INFO, logger="orchid.auth.notifications"):
+            mock_store.return_value.get_user.return_value = user
+            dispatch_task_notification("user1", self._make_task(), self._make_run("failure"))
+
+        assert any("bot manager not running" in r.message for r in caplog.records)
+
+    def test_slack_dm_dispatched_when_bot_running(self, tmp_path):
+        from unittest.mock import patch as upatch
+        from orchid.auth.notifications import dispatch_task_notification
+
+        mock_mgr = MagicMock()
+        user = self._make_user({
+            "slack_enabled": True,
+            "slack_user_id": "U012AB3CD",
+            "notify_on_failure": True,
+        })
+
+        with upatch("orchid.auth.store.get_store") as mock_store, \
+             upatch("orchid.interfaces.central_bot.get_bot_manager", return_value=mock_mgr):
+            mock_store.return_value.get_user.return_value = user
+            dispatch_task_notification("user1", self._make_task(), self._make_run("failure"))
+
+        mock_mgr.send_slack_dm.assert_called_once()
+        call_args = mock_mgr.send_slack_dm.call_args
+        assert call_args[0][0] == "U012AB3CD"
+        assert "My Task" in call_args[0][1]
+
+    def test_format_dm_text_success(self):
+        from orchid.auth.notifications import _format_dm_text
+        text = _format_dm_text("My Task", "success", "run-123", "all good")
+        assert "My Task" in text
+        assert "✅" in text
+        assert "run-123" in text
+        assert "all good" in text
+
+    def test_format_dm_text_failure(self):
+        from orchid.auth.notifications import _format_dm_text
+        text = _format_dm_text("My Task", "failure", "run-456", "boom")
+        assert "❌" in text
+        assert "boom" in text
+
+    def test_format_dm_text_truncates_long_output(self):
+        from orchid.auth.notifications import _format_dm_text
+        long_out = "x" * 600
+        text = _format_dm_text("T", "success", "r", long_out)
+        assert "…" in text
+        # Output section should not exceed 500 chars of the original
+        assert "x" * 501 not in text

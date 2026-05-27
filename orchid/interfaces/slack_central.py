@@ -297,6 +297,22 @@ class CentralSlackBot:
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
+    def send_dm(self, user_id: str, text: str) -> None:
+        """Send a DM to a Slack user by their user_id (e.g. 'U012AB3CD').
+
+        Opens a DM conversation via conversations_open, then posts the message.
+        Safe to call from cron worker threads. No-op if bot not running.
+        """
+        if not self._client:
+            logger.warning("Slack client not initialised — cannot send DM to %s", user_id)
+            return
+        try:
+            resp = self._client.conversations_open(users=user_id)
+            channel_id = resp["channel"]["id"]
+            self._post(channel_id, text)
+        except Exception as exc:
+            logger.warning("Slack send_dm to %s failed: %s", user_id, exc)
+
     def _post(self, channel: str, text: str, thread_ts: str | None = None) -> str | None:
         if not self._client:
             return None

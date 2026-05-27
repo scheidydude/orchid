@@ -71,6 +71,28 @@ class CentralBotManager:
             except Exception as exc:
                 logger.warning("Error stopping Slack bot: %s", exc)
 
+    # ── Direct messaging ──────────────────────────────────────────────────────
+
+    def send_telegram_dm(self, chat_id: int, text: str) -> None:
+        """Send a Telegram DM. Delegates to running bot; no-op if unavailable."""
+        if self._telegram_bot is None:
+            logger.warning("Telegram bot not running — DM to %s dropped", chat_id)
+            return
+        try:
+            self._telegram_bot.send_dm(chat_id, text)
+        except Exception as exc:
+            logger.warning("send_telegram_dm error (chat=%s): %s", chat_id, exc)
+
+    def send_slack_dm(self, user_id: str, text: str) -> None:
+        """Send a Slack DM. Delegates to running bot; no-op if unavailable."""
+        if self._slack_bot is None:
+            logger.warning("Slack bot not running — DM to %s dropped", user_id)
+            return
+        try:
+            self._slack_bot.send_dm(user_id, text)
+        except Exception as exc:
+            logger.warning("send_slack_dm error (user=%s): %s", user_id, exc)
+
     # ── Discovery callbacks ───────────────────────────────────────────────────
 
     def on_project_added(self, project_path: str) -> None:
@@ -198,3 +220,27 @@ class CentralBotManager:
             slack_channels_file=Path(slack_channels_file_str).expanduser() if slack_channels_file_str else None,
             slack_auto_create_channels=slack_auto_create,
         )
+
+
+# ── Module-level singleton ─────────────────────────────────────────────────────
+
+_bot_manager_instance: "CentralBotManager | None" = None
+
+
+def set_bot_manager(mgr: "CentralBotManager | None") -> None:
+    """Register (or clear) the running CentralBotManager singleton.
+
+    Called by web_server._lifespan after bot manager starts/stops.
+    Thread-safe: GIL protects single-object assignment.
+    """
+    global _bot_manager_instance
+    _bot_manager_instance = mgr
+
+
+def get_bot_manager() -> "CentralBotManager | None":
+    """Return the running CentralBotManager, or None if bots are not active.
+
+    Intended for fire-and-forget callers (e.g. notifications.py) that must
+    not import web_server (circular import risk).
+    """
+    return _bot_manager_instance

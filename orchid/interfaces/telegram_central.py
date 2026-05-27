@@ -227,6 +227,27 @@ class CentralTelegramBot:
         with self._sub_lock:
             self._subscribers.get(project_path, set()).discard(chat_id)
 
+    def send_dm(self, chat_id: int, text: str) -> None:
+        """Send a DM to a specific Telegram chat_id from a sync thread.
+
+        Uses run_coroutine_threadsafe to schedule on the bot's event loop.
+        Safe to call from cron worker threads. No-op if bot not running.
+        """
+        if self._app is None:
+            logger.warning("Telegram bot not initialised — cannot send DM to %s", chat_id)
+            return
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            logger.warning("Telegram event loop not running — cannot send DM to %s", chat_id)
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(
+                self._app.bot.send_message(chat_id=chat_id, text=text),
+                loop,
+            )
+        except Exception as exc:
+            logger.warning("Telegram send_dm to %s failed: %s", chat_id, exc)
+
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     def start(self) -> None:
