@@ -357,12 +357,9 @@ def register_routes(app: Any) -> None:
         import os
 
         try:
-            from orchid.providers.anthropic import AnthropicProvider as _AnthropicProvider
+            from orchid.providers.registry import get_registry as _get_registry
         except ImportError:
-            raise HTTPException(status_code=503, detail="AnthropicProvider not available")
-
-        if not os.environ.get("ANTHROPIC_API_KEY", ""):
-            raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not configured")
+            raise HTTPException(status_code=503, detail="Provider registry not available")
 
         body = await request.json()
         messages = body.get("messages", [])   # [{role, content}] — alternating, starts with user
@@ -419,12 +416,16 @@ OUTPUT FORMAT (when ready — do not include extra text after the JSON):
         if not messages:
             raise HTTPException(status_code=400, detail="messages must not be empty")
 
-        provider = _AnthropicProvider()
-        content = provider.complete(
-            messages=messages,
-            system=system_prompt,
-            max_tokens=600,
-        ).strip()
+        import asyncio as _asyncio
+
+        registry = _get_registry()
+        provider = registry.resolve(agent_type="base")
+
+        loop = _asyncio.get_running_loop()
+        content = (await loop.run_in_executor(
+            None,
+            lambda: provider.complete(messages=messages, system=system_prompt, max_tokens=600),
+        )).strip()
 
         task_config = None
         display_content = content
