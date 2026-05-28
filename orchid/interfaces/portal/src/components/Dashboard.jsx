@@ -281,9 +281,17 @@ function CollapsibleSection({ title, count, loading, headerAction, children }) {
               borderRadius: 10, padding: '1px 7px',
             }}>{count}</span>
           )}
-          <span style={{ fontSize: 14, color: 'var(--text-dim)', marginLeft: 4, lineHeight: 1 }}>
-            {open ? '▾' : '▸'}
-          </span>
+          <svg
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+            style={{
+              width: 18, height: 18, flexShrink: 0,
+              color: 'var(--text-dim)', marginLeft: 4,
+              transition: 'transform 0.2s',
+              transform: open ? 'rotate(0deg)' : 'rotate(-90deg)',
+            }}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
         </button>
         {headerAction}
       </div>
