@@ -342,3 +342,105 @@ def register_routes(app: Any) -> None:
         list_mcp_tools,
         methods=["GET"],
     )
+
+    # ── endpoint: POST /api/scheduler/wizard ──────────────────────────────
+
+    async def task_wizard(request: Request, current_user = Depends(require_auth())):
+        """LLM-powered conversational task configuration wizard.
+
+        Accepts ``{messages, mcp_servers, timezone}`` and returns
+        ``{message, task_config}`` where ``task_config`` is non-null only
+        when the LLM has collected enough information to build the full
+        task definition.
+        """
+        import json as _json
+        import os
+
+        try:
+            from orchid.providers.anthropic import AnthropicProvider as _AnthropicProvider
+        except ImportError:
+            raise HTTPException(status_code=503, detail="AnthropicProvider not available")
+
+        if not os.environ.get("ANTHROPIC_API_KEY", ""):
+            raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not configured")
+
+        body = await request.json()
+        messages = body.get("messages", [])   # [{role, content}] — alternating, starts with user
+        mcp_servers = body.get("mcp_servers", [])
+        timezone = body.get("timezone", "UTC")
+
+        # Build MCP context string for the system prompt
+        if mcp_servers:
+            mcp_lines = []
+            for s in mcp_servers:
+                tools = [t["name"] for t in s.get("tools", [])]
+                tools_str = ", ".join(tools) if tools else "no tools discovered"
+                err = s.get("error")
+                suffix = f" ⚠ {err}" if err else ""
+                mcp_lines.append(f"  - {s['server']}: {tools_str}{suffix}")
+            mcp_context = "\n".join(mcp_lines)
+        else:
+            mcp_context = "  (none configured)"
+
+        system_prompt = f"""You are a friendly task configuration wizard for Orchid, an AI agent scheduling platform. Help the user set up a scheduled task through a short, natural conversation.
+
+AVAILABLE TASK TYPES:
+- agent_prompt  — Claude reads a prompt and generates output. Config: {{"prompt": "...", "system": "optional"}}
+- agent_tool    — Claude uses one or more MCP servers as tools to accomplish a goal. Config: {{"servers": ["name"], "prompt": "...", "system": ""}}
+- mcp_tool      — Directly calls one specific tool on one MCP server. Config: {{"server": "name", "tool": "tool_name", "args": {{}}}}
+- shell         — Runs a shell command. Config: {{"command": "bash command", "timeout_sec": 60}}
+
+AVAILABLE MCP SERVERS (for agent_tool / mcp_tool tasks):
+{mcp_context}
+
+USER'S TIMEZONE: {timezone}
+
+SCHEDULE GUIDANCE — convert all times to UTC cron (5-field):
+- every weekday at 9 am local → convert to UTC based on timezone offset
+- "every hour"                → "0 * * * *"
+- "every 15 minutes"          → "*/15 * * * *"
+- "daily at midnight"         → "0 0 * * *"
+- "weekly Monday 9 am"        → "0 9 * * 1" (then adjust for TZ)
+- "monthly on the 1st"        → "0 9 1 * *"
+
+CONVERSATION RULES:
+1. Ask what the task should do (one concise question).
+2. Ask when it should run — accept plain English; you will convert to cron.
+3. Infer the best task_type from the description. Suggest MCP servers when relevant.
+4. Gather remaining details (specific tool name, prompt text, shell command, etc.).
+5. Ask at most TWO questions per reply. Keep replies short.
+6. When you have all the information needed, output a short confirmation sentence followed immediately by the marker and JSON — nothing else after the closing brace.
+
+OUTPUT FORMAT (when ready — do not include extra text after the JSON):
+<TASK_READY>
+{{"name":"Short task name","description":"One sentence","schedule":"cron expr","task_type":"one of the four types","config":{{}},"enabled":true,"notify_on_failure":true,"notify_on_success":false}}
+"""
+
+        if not messages:
+            raise HTTPException(status_code=400, detail="messages must not be empty")
+
+        provider = _AnthropicProvider()
+        content = provider.complete(
+            messages=messages,
+            system=system_prompt,
+            max_tokens=600,
+        ).strip()
+
+        task_config = None
+        display_content = content
+
+        if "<TASK_READY>" in content:
+            parts = content.split("<TASK_READY>", 1)
+            display_content = parts[0].strip()
+            try:
+                task_config = _json.loads(parts[1].strip())
+            except (_json.JSONDecodeError, IndexError):
+                pass
+
+        return {"message": display_content, "task_config": task_config}
+
+    app.add_api_route(
+        "/api/scheduler/wizard",
+        task_wizard,
+        methods=["POST"],
+    )

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import CronBuilder from './CronBuilder.jsx'
 import MCPToolPicker from './MCPToolPicker.jsx'
+import TaskWizard from './TaskWizard.jsx'
 
 const SCHEDULE_PRESETS = [
   { label: 'Every minute',  value: '* * * * *' },
@@ -45,6 +46,7 @@ export default function TaskFormModal({ initial, onSave, onTest, onToast, onClos
   const [saving, setSaving]       = useState(false)
   const [showCronBuilder, setShowCronBuilder] = useState(false)
   const [showMCPPicker, setShowMCPPicker]   = useState(false)
+  const [showWizard, setShowWizard]         = useState(false)
   const [testStatus, setTestStatus] = useState(null) // null | 'running' | 'dispatched' | 'error'
   // Track task_id after a save-and-test so repeat tests don't create duplicates
   const [savedTaskId, setSavedTaskId] = useState(editing ? (initial?.task_id ?? null) : null)
@@ -139,6 +141,18 @@ export default function TaskFormModal({ initial, onSave, onTest, onToast, onClos
     }
   }
 
+  const handleWizardApply = (cfg) => {
+    if (cfg.name)        setName(cfg.name)
+    if (cfg.description !== undefined) setDesc(cfg.description)
+    if (cfg.schedule)    setSchedule(cfg.schedule)
+    if (cfg.task_type && BLANK_CONFIGS[cfg.task_type]) setTaskType(cfg.task_type)
+    if (cfg.config)      setConfigStr(JSON.stringify(cfg.config, null, 2))
+    if (cfg.enabled !== undefined)            setEnabled(cfg.enabled)
+    if (cfg.notify_on_failure !== undefined)  setNotifyFail(cfg.notify_on_failure)
+    if (cfg.notify_on_success !== undefined)  setNotifyOk(cfg.notify_on_success)
+    setShowWizard(false)
+  }
+
   const handleExport = () => {
     let config
     try { config = JSON.parse(configStr) } catch { config = configStr }
@@ -185,7 +199,23 @@ export default function TaskFormModal({ initial, onSave, onTest, onToast, onClos
       <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
         <div className="modal" style={{ maxWidth: 900, width: '95vw' }}>
           <div className="modal-header">
-            <span className="modal-title">{isDuplicate ? '⧉ Duplicate Task' : editing ? '✏️ Edit Task' : '＋ New Scheduled Task'}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span className="modal-title">{isDuplicate ? '⧉ Duplicate Task' : editing ? '✏️ Edit Task' : '＋ New Scheduled Task'}</span>
+              {!editing && !isDuplicate && (
+                <button
+                  type="button"
+                  onClick={() => setShowWizard(true)}
+                  style={{
+                    padding: '3px 11px', fontSize: 12, borderRadius: 20,
+                    background: 'color-mix(in srgb, var(--accent) 12%, transparent)',
+                    borderColor: 'var(--accent)', color: 'var(--accent)',
+                    fontWeight: 600,
+                  }}
+                >
+                  ✨ Wizard
+                </button>
+              )}
+            </div>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
               {/* Import */}
               <input
@@ -369,6 +399,13 @@ export default function TaskFormModal({ initial, onSave, onTest, onToast, onClos
           currentConfig={(() => { try { return JSON.parse(configStr) } catch { return {} } })()}
           onApply={(cfg) => setConfigStr(JSON.stringify(cfg, null, 2))}
           onClose={() => setShowMCPPicker(false)}
+        />
+      )}
+
+      {showWizard && (
+        <TaskWizard
+          onApply={handleWizardApply}
+          onClose={() => setShowWizard(false)}
         />
       )}
     </>
