@@ -5,7 +5,7 @@
 
 ## Description
 
-AI agent orchestration framework with a lifecycle-driven planning engine. Install once, run against any project. V2 adds a full idea-to-execution pipeline: discuss requirements with an AI product manager, generate architecture docs, break work into milestones, then execute tasks with specialized agents. V2.2 adds parallel task dispatch, native git tools, worktree isolation, dynamic task spawning, a cross-project agent pool, and cost-aware scheduling. V2.3 adds full multi-user auth: JWT sessions, argon2id passwords, API keys with scope enforcement, Google/Entra/OIDC SSO, PKCE mobile flow, append-only audit log, per-user project scoping, a React login page, and pluggable auth storage (file or PostgreSQL). V2.4 adds OS-grade reliability: graceful shutdown, orphan recovery, subprocess worker pool, task preemption/pause-resume, WebSocket backpressure, CPU/latency budgets, and an ordered provider fallback chain that retries on 429/502/503 before marking a task BLOCKED. V2.5 adds a cron-based scheduled task manager: per-user schedules stored as dicts on User, APScheduler-backed engine, `agent_prompt`/`mcp_tool`/`shell` task types, append-only JSONL run history with 30-day pruning, and a full `/api/scheduler/*` REST API. **V3.0** transforms Orchid into a full multi-user agentic OS: per-user credential vault (Fernet/HKDF), admin-managed MCP server catalog with role/user-based access control, per-user LLM spend and CPU-time budgets enforced at execution time, two React SPAs (User Portal `/app/` and Admin Console `/admin/`), admin-invite flow, and a System Config page for live runtime settings. **V3.1** completes the hardening pass: live Telegram/Slack DM notifications from scheduled task runs, `allow_user_projects` flag enforcement across web/Telegram/Slack, per-user project ownership registry with user-namespaced paths, and a production-ready PostgreSQL auth backend with one-command migration from the JSON store.
+AI agent orchestration framework with a lifecycle-driven planning engine. Install once, run against any project. V2 adds a full idea-to-execution pipeline: discuss requirements with an AI product manager, generate architecture docs, break work into milestones, then execute tasks with specialized agents. V2.2 adds parallel task dispatch, native git tools, worktree isolation, dynamic task spawning, a cross-project agent pool, and cost-aware scheduling. V2.3 adds full multi-user auth: JWT sessions, argon2id passwords, API keys with scope enforcement, Google/Entra/OIDC SSO, PKCE mobile flow, append-only audit log, per-user project scoping, a React login page, and pluggable auth storage (file or PostgreSQL). V2.4 adds OS-grade reliability: graceful shutdown, orphan recovery, subprocess worker pool, task preemption/pause-resume, WebSocket backpressure, CPU/latency budgets, and an ordered provider fallback chain that retries on 429/502/503 before marking a task BLOCKED. V2.5 adds a cron-based scheduled task manager: per-user schedules stored as dicts on User, APScheduler-backed engine, `agent_prompt`/`mcp_tool`/`shell` task types, append-only JSONL run history with 30-day pruning, and a full `/api/scheduler/*` REST API. **V3.0** transforms Orchid into a full multi-user agentic OS: per-user credential vault (Fernet/HKDF), admin-managed MCP server catalog with role/user-based access control, per-user LLM spend and CPU-time budgets enforced at execution time, two React SPAs (User Portal `/app/` and Admin Console `/admin/`), admin-invite flow, and a System Config page for live runtime settings. **V3.1** completes the hardening pass: live Telegram/Slack DM notifications from scheduled task runs, `allow_user_projects` flag enforcement across web/Telegram/Slack, per-user project ownership registry with user-namespaced paths, and a production-ready PostgreSQL auth backend with one-command migration from the JSON store. **Portal scheduler UX** adds a timezone-aware visual schedule builder, per-row enable/disable toggle, JSON task export/import for sharing, Save & Test workflow (creates task then runs it, auto-closes on success), and an MCP tool browser for `mcp_tool` / `agent_tool` types.
 
 ```
 ~/orchid/              ← install here
@@ -79,7 +79,7 @@ After login, users land on the User Portal. Pages:
 
 | Page | What you can do |
 |------|----------------|
-| Dashboard | Scheduled tasks (status, next/last run) + projects |
+| Dashboard | Scheduled tasks (status, next/last run, enable/disable toggle) + projects |
 | Settings → Profile | Change username / email / password |
 | Settings → API Keys | Create and revoke API keys |
 | Settings → Credentials | Per-user encrypted vault — store `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc. |
@@ -1336,6 +1336,27 @@ Each run is appended to `~/.config/orchid/cron/runs.jsonl`. Runs older than 30 d
 #### Audit events
 
 Successful runs write `scheduled_task_run` to the audit log; failures write `scheduled_task_failed` (with truncated error detail).
+
+#### Portal UI helpers
+
+The User Portal task form (`/app/`) includes several helpers to reduce manual JSON editing:
+
+**Schedule builder** — click "🗓 Schedule builder" to open a visual picker with frequency (every N minutes / hourly / daily / weekly / monthly), time-of-day dropdowns in your local timezone (auto-detected), day-of-week toggles, and a live preview showing both the local time and the UTC cron expression that will be stored.
+
+**Enable / disable toggle** — each task row in the dashboard has a checkbox that flips `enabled` on/off with a single click. Disabled tasks remain visible in the list; the cron engine skips them at their scheduled time.
+
+**Export / Import** — the modal header has "↓ Export" (downloads `taskname.orchid-task.json`) and "↑ Import" (reads a JSON file and populates all form fields). Use this to share task definitions between users or back up configs.
+
+**Save & Test / Test** — a button always visible in the modal footer:
+- *New / duplicate task* — labelled **"▶ Save & Test"**: saves the task first (creating it in the scheduler), then triggers an immediate run. The modal stays open during the run. On success a toast fires and the modal auto-closes after 3 s. On failure the modal stays open with an inline error so you can edit and retry.
+- *Existing task* — labelled **"▶ Test"**: triggers an immediate run without saving (use "Save changes" first if you made edits).
+- A failed Save & Test stores the new task ID so clicking Test again reruns that task rather than creating a duplicate.
+
+**MCP tool browser** — for `mcp_tool` and `agent_tool` task types a "🔌 Browse MCP" button appears next to the type selector:
+- `mcp_tool` mode: two-panel server → tool list; selecting a tool shows its description and argument schema (name, type, required badge, description); "Use `tool_name`" fills the config JSON with `{server, tool, args}` pre-populated from the schema.
+- `agent_tool` mode: checkbox list of available servers (pre-ticked if already in config); Apply merges the `servers` array while preserving `prompt` and `system` fields.
+
+The modal is 900 px wide with a 12-row resizable textarea, giving enough room to edit complex JSON configs directly.
 
 ### Container Isolation
 

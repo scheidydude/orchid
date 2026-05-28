@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import CronBuilder from './CronBuilder.jsx'
+import MCPToolPicker from './MCPToolPicker.jsx'
 
 const SCHEDULE_PRESETS = [
   { label: 'Every minute',  value: '* * * * *' },
@@ -43,6 +44,7 @@ export default function TaskFormModal({ initial, onSave, onTest, onToast, onClos
   const [error, setError]         = useState('')
   const [saving, setSaving]       = useState(false)
   const [showCronBuilder, setShowCronBuilder] = useState(false)
+  const [showMCPPicker, setShowMCPPicker]   = useState(false)
   const [testStatus, setTestStatus] = useState(null) // null | 'running' | 'dispatched' | 'error'
   // Track task_id after a save-and-test so repeat tests don't create duplicates
   const [savedTaskId, setSavedTaskId] = useState(editing ? (initial?.task_id ?? null) : null)
@@ -232,12 +234,27 @@ export default function TaskFormModal({ initial, onSave, onTest, onToast, onClos
             {/* Task type */}
             <div className="field">
               <label>Task type *</label>
-              <select value={taskType} onChange={e => setTaskType(e.target.value)}>
-                <option value="agent_prompt">Agent prompt</option>
-                <option value="agent_tool">Agent tool (MCP)</option>
-                <option value="mcp_tool">MCP tool (single call)</option>
-                <option value="shell">Shell command</option>
-              </select>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <select value={taskType} onChange={e => setTaskType(e.target.value)} style={{ flex: 1 }}>
+                  <option value="agent_prompt">Agent prompt</option>
+                  <option value="agent_tool">Agent tool (MCP)</option>
+                  <option value="mcp_tool">MCP tool (single call)</option>
+                  <option value="shell">Shell command</option>
+                </select>
+                {(taskType === 'mcp_tool' || taskType === 'agent_tool') && (
+                  <button
+                    type="button"
+                    style={{
+                      padding: '6px 12px', fontSize: 12, whiteSpace: 'nowrap',
+                      borderColor: 'var(--accent)', color: 'var(--accent)',
+                      background: 'color-mix(in srgb, var(--accent) 8%, transparent)',
+                    }}
+                    onClick={() => setShowMCPPicker(true)}
+                  >
+                    🔌 Browse MCP
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Schedule */}
@@ -343,6 +360,15 @@ export default function TaskFormModal({ initial, onSave, onTest, onToast, onClos
         <CronBuilder
           onApply={(cron) => { setSchedule(cron); setShowCronBuilder(false) }}
           onClose={() => setShowCronBuilder(false)}
+        />
+      )}
+
+      {showMCPPicker && (
+        <MCPToolPicker
+          taskType={taskType}
+          currentConfig={(() => { try { return JSON.parse(configStr) } catch { return {} } })()}
+          onApply={(cfg) => setConfigStr(JSON.stringify(cfg, null, 2))}
+          onClose={() => setShowMCPPicker(false)}
         />
       )}
     </>
