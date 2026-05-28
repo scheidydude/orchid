@@ -50,7 +50,7 @@ function DeleteConfirm({ task, onConfirm, onCancel }) {
 
 // ── Task row ──────────────────────────────────────────────────────────────────
 
-function TaskRow({ task, onRunNow, onHistory, onEdit, onDelete }) {
+function TaskRow({ task, onRunNow, onHistory, onDuplicate, onEdit, onDelete }) {
   const [running, setRunning] = useState(false)
   const [runError, setRunError] = useState(null)
 
@@ -131,6 +131,7 @@ function TaskRow({ task, onRunNow, onHistory, onEdit, onDelete }) {
             : '▶'}
         </button>
         <button className="ghost icon" onClick={() => onHistory(task)} title="Run history">📋</button>
+        <button className="ghost icon" onClick={() => onDuplicate(task)} title="Duplicate">⧉</button>
         <button className="ghost icon" onClick={() => onEdit(task)} title="Edit">✏️</button>
         <button
           className="ghost icon"
@@ -257,7 +258,7 @@ function CollapsibleSection({ title, count, loading, headerAction, children }) {
               borderRadius: 10, padding: '1px 7px',
             }}>{count}</span>
           )}
-          <span style={{ fontSize: 11, color: 'var(--text-mute)', marginLeft: 2 }}>
+          <span style={{ fontSize: 14, color: 'var(--text-dim)', marginLeft: 4, lineHeight: 1 }}>
             {open ? '▾' : '▸'}
           </span>
         </button>
@@ -271,11 +272,12 @@ function CollapsibleSection({ title, count, loading, headerAction, children }) {
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 
 export default function Dashboard({ tasks, tasksLoading, projects, projectsLoading, taskOps }) {
-  const [historyTask, setHistoryTask] = useState(null)
-  const [editTask,    setEditTask]    = useState(null)
-  const [deleteTask,  setDeleteTask]  = useState(null)
-  const [showCreate,  setShowCreate]  = useState(false)
-  const [toastMsg,    setToastMsg]    = useState(null)
+  const [historyTask,    setHistoryTask]    = useState(null)
+  const [editTask,       setEditTask]       = useState(null)
+  const [duplicateTask,  setDuplicateTask]  = useState(null)
+  const [deleteTask,     setDeleteTask]     = useState(null)
+  const [showCreate,     setShowCreate]     = useState(false)
+  const [toastMsg,       setToastMsg]       = useState(null)
 
   const toast = (msg) => {
     setToastMsg(msg)
@@ -344,6 +346,7 @@ export default function Dashboard({ tasks, tasksLoading, projects, projectsLoadi
                 task={task}
                 onRunNow={handleRunNow}
                 onHistory={setHistoryTask}
+                onDuplicate={setDuplicateTask}
                 onEdit={setEditTask}
                 onDelete={setDeleteTask}
               />
@@ -359,6 +362,7 @@ export default function Dashboard({ tasks, tasksLoading, projects, projectsLoadi
                 task={task}
                 onRunNow={handleRunNow}
                 onHistory={setHistoryTask}
+                onDuplicate={setDuplicateTask}
                 onEdit={setEditTask}
                 onDelete={setDeleteTask}
               />
@@ -407,6 +411,15 @@ export default function Dashboard({ tasks, tasksLoading, projects, projectsLoadi
           initial={editTask}
           onSave={(body) => taskOps.updateTask(editTask.task_id, body)}
           onClose={() => setEditTask(null)}
+        />
+      )}
+
+      {duplicateTask && (
+        <TaskFormModal
+          initial={{ ...duplicateTask, name: duplicateTask.name + ' copy' }}
+          isDuplicate
+          onSave={taskOps.createTask}
+          onClose={() => setDuplicateTask(null)}
         />
       )}
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 
 const SCHEDULE_PRESETS = [
   { label: 'Every minute',  value: '* * * * *' },
@@ -16,8 +16,8 @@ const BLANK_CONFIGS = {
   shell:        { command: '' },
 }
 
-export default function TaskFormModal({ initial, onSave, onClose }) {
-  const editing = !!initial
+export default function TaskFormModal({ initial, onSave, onClose, isDuplicate = false }) {
+  const editing = !!initial && !isDuplicate
 
   const [name, setName]           = useState(initial?.name || '')
   const [desc, setDesc]           = useState(initial?.description || '')
@@ -32,11 +32,13 @@ export default function TaskFormModal({ initial, onSave, onClose }) {
   const [error, setError]         = useState('')
   const [saving, setSaving]       = useState(false)
 
-  // Update config template when task type changes (only if not editing)
+  // Reset config template only when user actively changes the task type select
+  const prevTaskType = useRef(taskType)
   useEffect(() => {
-    if (!editing) {
+    if (!editing && taskType !== prevTaskType.current) {
       setConfigStr(JSON.stringify(BLANK_CONFIGS[taskType] || {}, null, 2))
     }
+    prevTaskType.current = taskType
   }, [taskType, editing])
 
   // Close on Escape
@@ -75,7 +77,7 @@ export default function TaskFormModal({ initial, onSave, onClose }) {
     <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal" style={{ maxWidth: 560 }}>
         <div className="modal-header">
-          <span className="modal-title">{editing ? '✏️ Edit Task' : '＋ New Scheduled Task'}</span>
+          <span className="modal-title">{isDuplicate ? '⧉ Duplicate Task' : editing ? '✏️ Edit Task' : '＋ New Scheduled Task'}</span>
           <button className="ghost icon" onClick={onClose}>✕</button>
         </div>
 
@@ -171,7 +173,7 @@ export default function TaskFormModal({ initial, onSave, onClose }) {
         <div className="modal-footer">
           <button onClick={onClose} disabled={saving}>Cancel</button>
           <button className="primary" onClick={handleSave} disabled={saving || !name.trim()}>
-            {saving ? 'Saving…' : (editing ? 'Save changes' : 'Create task')}
+            {saving ? 'Saving…' : isDuplicate ? 'Create copy' : editing ? 'Save changes' : 'Create task'}
           </button>
         </div>
       </div>
