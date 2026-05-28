@@ -250,3 +250,62 @@ class AnthropicProvider(ProviderBase):
                 sanitized = str(exc).replace(api_key, "***")
                 raise type(exc)(sanitized) from None
             raise
+
+    def complete_with_tools(self, messages, tools, dispatch_fn, system=None, max_tokens=4096, max_iterations=10):
+        import anthropic as anthropic_sdk
+        from orchid.budget.guard import get_env
+
+        client = anthropic_sdk.Anthropic(api_key=get_env("ANTHROPIC_API_KEY"))
+        anth_tools = [
+            {
+                "name": t["name"],
+                "description": t.get("description", ""),
+                "input_schema": t.get("input_schema") or {"type": "object", "properties": {}},
+            }
+            for t in tools
+        ]
+        msgs = list(self._normalise_messages(messages))
+        sys_text = system or "You are a helpful assistant."
+
+        for _ in range(max_iterations):
+            response = client.messages.create(
+                model=self.model,
+                max_tokens=max_tokens,
+                system=sys_text,
+                tools=anth_tools,
+                messages=msgs,
+            )
+            assistant_content = []
+            for block in response.content:
+                if block.type == "text":
+                    assistant_content.append({"type": "text", "text": block.text})
+                elif block.type == "tool_use":
+                    assistant_content.append({"type": "tool_use", "id": block.id, "name": block.name, "input": block.input})
+            msgs.append({"role": "assistant", "content": assistant_content})
+
+            if response.stop_reason == "end_turn":
+                for block in response.content:
+                    if block.type == "text":
+                        return block.text
+                return ""
+
+            if response.stop_reason != "tool_use":
+                break
+
+            tool_results = []
+            for block in response.content:
+                if block.type != "tool_use":
+                    continue
+                try:
+                    result = dispatch_fn(block.name, block.input or {})
+                except Exception as exc:
+                    result = f"Error: {exc}"
+                tool_results.append({"type": "tool_result", "tool_use_id": block.id, "content": str(result)})
+            msgs.append({"role": "user", "content": tool_results})
+
+        for msg in reversed(msgs):
+            if msg.get("role") == "assistant":
+                for block in msg.get("content", []):
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        return block["text"]
+        return ""

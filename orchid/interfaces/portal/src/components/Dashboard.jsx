@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { StatusBadge, TypeBadge } from './StatusBadge.jsx'
 import TaskRunHistory from './TaskRunHistory.jsx'
 import TaskFormModal from './TaskFormModal.jsx'
@@ -154,9 +154,11 @@ function ProjectCard({ project }) {
   const blocked = project.blocked        ?? 0
   const total  = todo + done + inprog + blocked
   const pct    = total > 0 ? Math.round((done / total) * 100) : null
+  const href   = `/projects/?p=${encodeURIComponent(project.id)}`
 
   return (
-    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <a href={href} style={{ textDecoration: 'none', color: 'inherit' }}>
+    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 10, cursor: 'pointer' }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontWeight: 600, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -201,6 +203,7 @@ function ProjectCard({ project }) {
         <span style={{ fontSize: 12, color: 'var(--text-mute)' }}>No tasks</span>
       )}
     </div>
+    </a>
   )
 }
 
@@ -219,6 +222,49 @@ function Toast({ msg }) {
     }}>
       {msg}
     </div>
+  )
+}
+
+// ── Collapsible Section ───────────────────────────────────────────────────────
+
+function CollapsibleSection({ title, count, loading, headerAction, children }) {
+  const [open, setOpen] = useState(true)
+  const autoDone = useRef(false)
+
+  useEffect(() => {
+    if (!loading && !autoDone.current) {
+      autoDone.current = true
+      if (count > 2) setOpen(false)
+    }
+  }, [loading, count])
+
+  return (
+    <section style={{ marginBottom: 40 }}>
+      <div className="section-header">
+        <button
+          onClick={() => setOpen(o => !o)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            background: 'none', border: 'none', padding: 0,
+            cursor: 'pointer', font: 'inherit', color: 'inherit',
+          }}
+        >
+          <span className="section-title">{title}</span>
+          {!open && count > 0 && (
+            <span style={{
+              fontSize: 11, fontWeight: 600,
+              background: 'var(--surface2)', color: 'var(--text-dim)',
+              borderRadius: 10, padding: '1px 7px',
+            }}>{count}</span>
+          )}
+          <span style={{ fontSize: 11, color: 'var(--text-mute)', marginLeft: 2 }}>
+            {open ? '▾' : '▸'}
+          </span>
+        </button>
+        {headerAction}
+      </div>
+      {open && children}
+    </section>
   )
 }
 
@@ -253,15 +299,18 @@ export default function Dashboard({ tasks, tasksLoading, projects, projectsLoadi
     }
   }
 
-  const activeTasks   = tasks.filter(t => t.enabled)
-  const disabledTasks = tasks.filter(t => !t.enabled)
+  const activeTasks    = tasks.filter(t => t.enabled)
+  const disabledTasks  = tasks.filter(t => !t.enabled)
+  const activeProjects = projects.filter(p => p.active !== false)
 
   return (
     <div className="page">
       {/* ── Scheduled Tasks ─────────────────────────────────────────────── */}
-      <section style={{ marginBottom: 40 }}>
-        <div className="section-header">
-          <span className="section-title">⏰ Scheduled Tasks</span>
+      <CollapsibleSection
+        title="⏰ Scheduled Tasks"
+        count={tasks.length}
+        loading={tasksLoading}
+        headerAction={
           <button
             className="primary"
             style={{ fontSize: 12, padding: '5px 12px' }}
@@ -269,8 +318,8 @@ export default function Dashboard({ tasks, tasksLoading, projects, projectsLoadi
           >
             + New task
           </button>
-        </div>
-
+        }
+      >
         {tasksLoading ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-dim)', padding: '20px 0' }}>
             <span className="spinner" /> Loading…
@@ -316,33 +365,33 @@ export default function Dashboard({ tasks, tasksLoading, projects, projectsLoadi
             ))}
           </div>
         )}
-      </section>
+      </CollapsibleSection>
 
       {/* ── Projects ────────────────────────────────────────────────────── */}
-      <section>
-        <div className="section-header">
-          <span className="section-title">📁 Projects</span>
-        </div>
-
+      <CollapsibleSection
+        title="📁 Projects"
+        count={activeProjects.length}
+        loading={projectsLoading}
+      >
         {projectsLoading ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-dim)', padding: '20px 0' }}>
             <span className="spinner" /> Loading…
           </div>
-        ) : projects.length === 0 ? (
+        ) : activeProjects.length === 0 ? (
           <div className="empty-state" style={{
             background: 'var(--surface)', border: '1px solid var(--border)',
             borderRadius: 'var(--radius-lg)',
           }}>
             <span className="empty-icon">📁</span>
-            <span className="empty-text">No projects assigned</span>
+            <span className="empty-text">No active projects</span>
             <span className="empty-sub">An admin can assign projects to your account.</span>
           </div>
         ) : (
           <div className="grid-2">
-            {projects.map(p => <ProjectCard key={p.id} project={p} />)}
+            {activeProjects.map(p => <ProjectCard key={p.id} project={p} />)}
           </div>
         )}
-      </section>
+      </CollapsibleSection>
 
       {/* ── Modals ──────────────────────────────────────────────────────── */}
       {historyTask && (

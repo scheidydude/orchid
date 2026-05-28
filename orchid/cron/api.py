@@ -56,8 +56,8 @@ def register_routes(app: Any) -> None:
         errors: list[str] = []
         if not body.get("name", "").strip():
             errors.append("'name' is required and must be non-empty")
-        if body.get("task_type", "") not in {"agent_prompt", "mcp_tool", "shell"}:
-            errors.append("'task_type' must be one of: agent_prompt, mcp_tool, shell")
+        if body.get("task_type", "") not in {"agent_prompt", "agent_tool", "mcp_tool", "shell"}:
+            errors.append("'task_type' must be one of: agent_prompt, agent_tool, mcp_tool, shell")
         if not body.get("schedule", "").strip():
             errors.append("'schedule' is required (cron expression, e.g. '0 9 * * *')")
         if not isinstance(body.get("config"), dict):

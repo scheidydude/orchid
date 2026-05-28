@@ -273,9 +273,13 @@ function AuthenticatedApp({ user, onLogout }) {
   const [planningBadge, setPlanningBadge] = useState(false)
   const { entries, runStatus, clear } = useAgentStream(activeProject)
 
-  // Auto-select first project
+  // Auto-select: honour ?p= URL param, else first project
   useEffect(() => {
-    if (!activeProject && projects.length > 0) setActiveProject(projects[0].id)
+    if (!activeProject && projects.length > 0) {
+      const param = new URLSearchParams(window.location.search).get('p')
+      const found = param && projects.find(p => p.id === param)
+      setActiveProject(found ? found.id : projects[0].id)
+    }
   }, [projects, activeProject])
 
   // Scroll panel body to top on tab switch

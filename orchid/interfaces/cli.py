@@ -25,6 +25,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 from pathlib import Path
+load_dotenv(Path.home() / ".config" / "orchid" / ".env", override=False)
 
 import typer
 from rich.console import Console

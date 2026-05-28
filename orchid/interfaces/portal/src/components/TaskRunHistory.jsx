@@ -20,12 +20,15 @@ export default function TaskRunHistory({ task, getRuns, onClose }) {
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState(null)
 
-  useEffect(() => {
+  const load = () => {
+    setLoading(true)
     getRuns(task.task_id)
       .then(setRuns)
       .catch(() => setRuns([]))
       .finally(() => setLoading(false))
-  }, [task.task_id, getRuns])
+  }
+
+  useEffect(() => { load() }, [task.task_id])
 
   // Close on Escape
   useEffect(() => {
@@ -104,6 +107,7 @@ export default function TaskRunHistory({ task, getRuns, onClose }) {
           )}
         </div>
         <div className="modal-footer">
+          <button onClick={load} disabled={loading}>↺ Refresh</button>
           <button onClick={onClose}>Close</button>
         </div>
       </div>

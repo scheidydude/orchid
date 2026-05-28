@@ -11,6 +11,7 @@ const SCHEDULE_PRESETS = [
 
 const BLANK_CONFIGS = {
   agent_prompt: { prompt: '', system: '' },
+  agent_tool:   { servers: [], prompt: '', system: '' },
   mcp_tool:     { server: '', tool: '', args: {} },
   shell:        { command: '' },
 }
@@ -96,7 +97,8 @@ export default function TaskFormModal({ initial, onSave, onClose }) {
             <label>Task type *</label>
             <select value={taskType} onChange={e => setTaskType(e.target.value)}>
               <option value="agent_prompt">Agent prompt</option>
-              <option value="mcp_tool">MCP tool</option>
+              <option value="agent_tool">Agent tool (MCP)</option>
+              <option value="mcp_tool">MCP tool (single call)</option>
               <option value="shell">Shell command</option>
             </select>
           </div>

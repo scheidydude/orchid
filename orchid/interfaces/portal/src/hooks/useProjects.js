@@ -9,7 +9,7 @@ export function useProjects() {
     setLoading(true)
     fetch('/api/projects')
       .then(r => r.ok ? r.json() : Promise.reject(r.status))
-      .then(d => { setProjects(d.projects || []); setError(null) })
+      .then(d => { setProjects(Array.isArray(d) ? d : (d.projects || [])); setError(null) })
       .catch(e => setError(String(e)))
       .finally(() => setLoading(false))
   }, [])

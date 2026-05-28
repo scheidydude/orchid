@@ -2,11 +2,57 @@
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
 
 from orchid.errors import ProviderError
 from orchid.providers.base import ProviderBase
+
+
+def _openai_tool_loop(client, model, messages, tools, dispatch_fn, system=None, max_tokens=4096, max_iterations=10) -> str:
+    """Native OpenAI function-calling agentic loop. Shared by OpenAI/Ollama/local providers."""
+    oai_tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": t["name"],
+                "description": t.get("description", ""),
+                "parameters": t.get("input_schema") or {"type": "object", "properties": {}},
+            },
+        }
+        for t in tools
+    ]
+    msgs = list(messages)
+    if system:
+        msgs = [{"role": "system", "content": system}] + msgs
+
+    for _ in range(max_iterations):
+        response = client.chat.completions.create(
+            model=model,
+            messages=msgs,
+            tools=oai_tools or None,
+            max_tokens=max_tokens,
+        )
+        msg = response.choices[0].message
+        msgs.append(msg)
+
+        if not msg.tool_calls:
+            return msg.content or ""
+
+        for tc in msg.tool_calls:
+            try:
+                args = json.loads(tc.function.arguments or "{}")
+                result = dispatch_fn(tc.function.name, args)
+            except Exception as exc:
+                result = f"Error: {exc}"
+            msgs.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": str(result),
+            })
+
+    return msg.content or ""
 
 
 class OpenAIProvider(ProviderBase):
@@ -75,6 +121,19 @@ class OpenAIProvider(ProviderBase):
         if not response.choices:
             raise ProviderError(f"{self.name}: empty choices in response")
         return response.choices[0].message.content or ""
+
+    def complete_with_tools(self, messages, tools, dispatch_fn, system=None, max_tokens=4096, max_iterations=10):
+        from openai import OpenAI
+        return _openai_tool_loop(
+            client=OpenAI(base_url=self.base_url, api_key=self.api_key),
+            model=self.model,
+            messages=self._normalise_messages(messages),
+            tools=tools,
+            dispatch_fn=dispatch_fn,
+            system=system,
+            max_tokens=max_tokens,
+            max_iterations=max_iterations,
+        )
 
     def embed(self, text: str) -> list[float]:
         from openai import OpenAI  # lazy import

@@ -84,6 +84,17 @@ class OllamaProvider(ProviderBase):
             raise ProviderError(f"{self.name}: empty choices in response")
         return response.choices[0].message.content or ""
 
+    def complete_with_tools(self, messages, tools, dispatch_fn, system=None, max_tokens=4096, max_iterations=10):
+        from openai import OpenAI
+        from orchid.providers.openai import _openai_tool_loop
+        return _openai_tool_loop(
+            client=OpenAI(base_url=f"{self.base_url}/v1", api_key="ollama"),
+            model=self.model,
+            messages=self._normalise_messages(messages),
+            tools=tools, dispatch_fn=dispatch_fn,
+            system=system, max_tokens=max_tokens, max_iterations=max_iterations,
+        )
+
     def embed(self, text: str) -> list[float]:
         import httpx  # noqa: PLC0415
 

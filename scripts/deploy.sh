@@ -122,7 +122,18 @@ echo ""
 sed -i "s/^version = \"$CURRENT\"/version = \"$NEW_VERSION\"/" "$PYPROJECT"
 echo "  Updated pyproject.toml: $CURRENT → $NEW_VERSION"
 
-# ── 7. Git commit (optional) ─────────────────────────────────────────────────
+# ── 7. Install (uv tool install) ─────────────────────────────────────────────
+echo ""
+echo "  Installing orchid from local source…"
+if command -v uv &>/dev/null; then
+    uv tool install "$REPO_ROOT" --force
+    echo "  Installed  ✓"
+else
+    echo "  Warning: uv not found — skipping install. Run manually:" >&2
+    echo "    uv tool install $REPO_ROOT --force" >&2
+fi
+
+# ── 8. Git commit (optional) ─────────────────────────────────────────────────
 echo ""
 read -rp "  Commit version bump to git? [y/N]: " COMMIT_CONFIRM
 if [[ "${COMMIT_CONFIRM,,}" == "y" ]]; then
@@ -138,7 +149,7 @@ else
     echo "  To commit manually:  git add pyproject.toml && git commit -m 'chore: bump version $CURRENT → $NEW_VERSION'"
 fi
 
-# ── 8. Git tag (optional) ─────────────────────────────────────────────────────
+# ── 9. Git tag (optional) ─────────────────────────────────────────────────────
 echo ""
 read -rp "  Create git tag v$NEW_VERSION? [y/N]: " TAG_CONFIRM
 if [[ "${TAG_CONFIRM,,}" == "y" ]]; then
@@ -148,7 +159,7 @@ else
     echo "  Skipped tag. To tag manually:  git tag v$NEW_VERSION"
 fi
 
-# ── 9. Push ───────────────────────────────────────────────────────────────────
+# ── 10. Push ──────────────────────────────────────────────────────────────────
 echo ""
 read -rp "  Push to origin (main + tag)? [y/N]: " PUSH_CONFIRM
 if [[ "${PUSH_CONFIRM,,}" == "y" ]]; then
@@ -165,13 +176,12 @@ else
     [[ "${TAG_CONFIRM,,}" == "y" ]] && echo "    git push origin v$NEW_VERSION"
 fi
 
-# ── 10. Post-deploy reminder ──────────────────────────────────────────────────
+# ── 11. Post-deploy reminder ──────────────────────────────────────────────────
 echo ""
 echo "  Done. orchid is now version $NEW_VERSION."
 echo ""
 echo "  ── Post-deploy checklist ──────────────────────────────────────────────"
 echo "  □  JWT_SECRET set in ~/.config/orchid/.env  (rotate → re-login required)"
 echo "  □  ORCHID_VAULT_KEY set                     (rotate → all vaults invalidated)"
-echo "  □  uv tool install ~/LocalAI/orchid --force  (or pip install -e .)"
 echo "  □  systemctl restart orchid-serve            (if running as service)"
 echo "  ────────────────────────────────────────────────────────────────────────"

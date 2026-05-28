@@ -91,6 +91,58 @@ class ProviderBase(ABC):
     ) -> str:
         """Send messages and return the response text."""
 
+    def complete_with_tools(
+        self,
+        messages: list[Any],
+        tools: list[dict],
+        dispatch_fn: "Any",
+        system: str | None = None,
+        max_tokens: int = 4096,
+        max_iterations: int = 10,
+    ) -> str:
+        """Agentic tool-use loop. Default: ReAct text fallback (works with any provider).
+
+        tools: list of {name, description, input_schema}
+        dispatch_fn: callable(tool_name: str, args: dict) -> str
+        """
+        import json, re
+
+        tool_desc = "\n".join(
+            f"- {t['name']}: {t.get('description', '')}" for t in tools
+        )
+        react_system = (
+            (system or "You are a helpful assistant.")
+            + f"\n\nAvailable tools:\n{tool_desc}"
+            + "\n\nTo call a tool respond with:\nAction: <tool_name>\nAction Input: <json args>\n\nWhen done respond with:\nFinal Answer: <answer>"
+        )
+        msgs = list(self._normalise_messages(messages))
+
+        for _ in range(max_iterations):
+            response = self.complete(msgs, system=react_system, max_tokens=max_tokens)
+            msgs.append({"role": "assistant", "content": response})
+
+            action_match = re.search(r"Action:\s*(\S+)", response)
+            input_match  = re.search(r"Action Input:\s*(\{.*?\})", response, re.DOTALL)
+            final_match  = re.search(r"Final Answer:\s*(.*)", response, re.DOTALL)
+
+            if final_match:
+                return final_match.group(1).strip()
+            if action_match and input_match:
+                tool_name = action_match.group(1).strip()
+                try:
+                    args = json.loads(input_match.group(1))
+                except json.JSONDecodeError:
+                    args = {}
+                try:
+                    result = dispatch_fn(tool_name, args)
+                except Exception as exc:
+                    result = f"Error: {exc}"
+                msgs.append({"role": "user", "content": f"Observation: {result}"})
+            else:
+                return response  # no tool pattern — return as-is
+
+        return response
+
     # ── Embeddings ────────────────────────────────────────────────────────────
 
     def embed(self, text: str) -> list[float]:
