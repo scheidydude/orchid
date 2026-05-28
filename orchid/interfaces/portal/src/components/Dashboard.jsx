@@ -50,9 +50,10 @@ function DeleteConfirm({ task, onConfirm, onCancel }) {
 
 // ── Task row ──────────────────────────────────────────────────────────────────
 
-function TaskRow({ task, onRunNow, onHistory, onDuplicate, onEdit, onDelete }) {
+function TaskRow({ task, onRunNow, onHistory, onDuplicate, onEdit, onDelete, onToggleEnabled }) {
   const [running, setRunning] = useState(false)
   const [runError, setRunError] = useState(null)
+  const [toggling, setToggling] = useState(false)
 
   const handleRun = async () => {
     setRunning(true)
@@ -63,6 +64,15 @@ function TaskRow({ task, onRunNow, onHistory, onDuplicate, onEdit, onDelete }) {
       setRunError(e.message)
     } finally {
       setRunning(false)
+    }
+  }
+
+  const handleToggleEnabled = async () => {
+    setToggling(true)
+    try {
+      await onToggleEnabled(task)
+    } finally {
+      setToggling(false)
     }
   }
 
@@ -120,6 +130,19 @@ function TaskRow({ task, onRunNow, onHistory, onDuplicate, onEdit, onDelete }) {
 
       {/* Actions */}
       <div style={{ display: 'flex', gap: 5, flexShrink: 0, alignItems: 'center' }}>
+        {/* Enable/disable toggle */}
+        <label
+          title={task.enabled ? 'Enabled — click to disable' : 'Disabled — click to enable'}
+          style={{ display: 'flex', alignItems: 'center', cursor: toggling ? 'wait' : 'pointer', padding: '0 2px' }}
+        >
+          <input
+            type="checkbox"
+            checked={task.enabled}
+            onChange={handleToggleEnabled}
+            disabled={toggling}
+            style={{ width: 'auto', cursor: 'pointer', accentColor: 'var(--accent)' }}
+          />
+        </label>
         <button
           className="ghost icon"
           onClick={handleRun}
@@ -290,6 +313,15 @@ export default function Dashboard({ tasks, tasksLoading, projects, projectsLoadi
     setTimeout(taskOps.refresh, 800)
   }, [taskOps])
 
+  const handleToggleEnabled = useCallback(async (task) => {
+    try {
+      await taskOps.updateTask(task.task_id, { ...task, enabled: !task.enabled })
+      toast(task.enabled ? 'Task disabled' : 'Task enabled')
+    } catch (e) {
+      toast(`Failed: ${e.message}`)
+    }
+  }, [taskOps])
+
   const handleDelete = async () => {
     try {
       await taskOps.deleteTask(deleteTask.task_id)
@@ -349,6 +381,7 @@ export default function Dashboard({ tasks, tasksLoading, projects, projectsLoadi
                 onDuplicate={setDuplicateTask}
                 onEdit={setEditTask}
                 onDelete={setDeleteTask}
+                onToggleEnabled={handleToggleEnabled}
               />
             ))}
             {disabledTasks.length > 0 && activeTasks.length > 0 && (
@@ -365,6 +398,7 @@ export default function Dashboard({ tasks, tasksLoading, projects, projectsLoadi
                 onDuplicate={setDuplicateTask}
                 onEdit={setEditTask}
                 onDelete={setDeleteTask}
+                onToggleEnabled={handleToggleEnabled}
               />
             ))}
           </div>
@@ -410,6 +444,8 @@ export default function Dashboard({ tasks, tasksLoading, projects, projectsLoadi
         <TaskFormModal
           initial={editTask}
           onSave={(body) => taskOps.updateTask(editTask.task_id, body)}
+          onTest={taskOps.runNow}
+          onToast={toast}
           onClose={() => setEditTask(null)}
         />
       )}
@@ -419,6 +455,8 @@ export default function Dashboard({ tasks, tasksLoading, projects, projectsLoadi
           initial={{ ...duplicateTask, name: duplicateTask.name + ' copy' }}
           isDuplicate
           onSave={taskOps.createTask}
+          onTest={taskOps.runNow}
+          onToast={toast}
           onClose={() => setDuplicateTask(null)}
         />
       )}
@@ -426,6 +464,8 @@ export default function Dashboard({ tasks, tasksLoading, projects, projectsLoadi
       {showCreate && (
         <TaskFormModal
           onSave={taskOps.createTask}
+          onTest={taskOps.runNow}
+          onToast={toast}
           onClose={() => setShowCreate(false)}
         />
       )}

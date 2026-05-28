@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import CronBuilder from './CronBuilder.jsx'
 
 const SCHEDULE_PRESETS = [
   { label: 'Every minute',  value: '* * * * *' },
@@ -16,7 +17,17 @@ const BLANK_CONFIGS = {
   shell:        { command: '' },
 }
 
-export default function TaskFormModal({ initial, onSave, onClose, isDuplicate = false }) {
+function downloadJSON(obj, filename) {
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+export default function TaskFormModal({ initial, onSave, onTest, onToast, onClose, isDuplicate = false }) {
   const editing = !!initial && !isDuplicate
 
   const [name, setName]           = useState(initial?.name || '')
@@ -31,6 +42,11 @@ export default function TaskFormModal({ initial, onSave, onClose, isDuplicate = 
   const [notifyOk, setNotifyOk]   = useState(initial?.notify_on_success ?? false)
   const [error, setError]         = useState('')
   const [saving, setSaving]       = useState(false)
+  const [showCronBuilder, setShowCronBuilder] = useState(false)
+  const [testStatus, setTestStatus] = useState(null) // null | 'running' | 'dispatched' | 'error'
+  // Track task_id after a save-and-test so repeat tests don't create duplicates
+  const [savedTaskId, setSavedTaskId] = useState(editing ? (initial?.task_id ?? null) : null)
+  const importRef = useRef(null)
 
   // Reset config template only when user actively changes the task type select
   const prevTaskType = useRef(taskType)
@@ -43,10 +59,10 @@ export default function TaskFormModal({ initial, onSave, onClose, isDuplicate = 
 
   // Close on Escape
   useEffect(() => {
-    const h = (e) => { if (e.key === 'Escape') onClose() }
+    const h = (e) => { if (e.key === 'Escape' && !showCronBuilder) onClose() }
     document.addEventListener('keydown', h)
     return () => document.removeEventListener('keydown', h)
-  }, [onClose])
+  }, [onClose, showCronBuilder])
 
   const handleSave = async () => {
     setError('')
@@ -73,110 +89,262 @@ export default function TaskFormModal({ initial, onSave, onClose, isDuplicate = 
     }
   }
 
+  const handleTest = async () => {
+    setError('')
+    let taskId = savedTaskId
+
+    // New/duplicate task that hasn't been saved yet — save first
+    if (!taskId) {
+      if (!name.trim()) { setError('Name is required to save & test'); return }
+      let config
+      try { config = JSON.parse(configStr) }
+      catch { setError('Config is not valid JSON'); return }
+
+      setSaving(true)
+      try {
+        const saved = await onSave({
+          name: name.trim(),
+          description: desc.trim(),
+          schedule,
+          task_type: taskType,
+          config,
+          enabled,
+          notify_on_failure: notifyFail,
+          notify_on_success: notifyOk,
+        })
+        taskId = saved?.task_id
+        setSavedTaskId(taskId)
+      } catch (e) {
+        setError(e.message || 'Save failed')
+        setSaving(false)
+        return
+      }
+      setSaving(false)
+    }
+
+    if (!taskId || !onTest) return
+
+    setTestStatus('running')
+    try {
+      await onTest(taskId)
+      setTestStatus('dispatched')
+      onToast?.('Task dispatched ▶')
+      // Close modal after toast duration
+      setTimeout(() => onClose(), 3000)
+    } catch (e) {
+      setTestStatus('error')
+      setError(e.message || 'Test dispatch failed')
+    }
+  }
+
+  const handleExport = () => {
+    let config
+    try { config = JSON.parse(configStr) } catch { config = configStr }
+    const data = {
+      name: name.trim(),
+      description: desc.trim(),
+      schedule,
+      task_type: taskType,
+      config,
+      enabled,
+      notify_on_failure: notifyFail,
+      notify_on_success: notifyOk,
+    }
+    const filename = `${(name.trim() || 'task').replace(/\s+/g, '_')}.orchid-task.json`
+    downloadJSON(data, filename)
+  }
+
+  const handleImport = (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result)
+        if (data.name)        setName(data.name)
+        if (data.description !== undefined) setDesc(data.description)
+        if (data.schedule)    setSchedule(data.schedule)
+        if (data.task_type && BLANK_CONFIGS[data.task_type]) setTaskType(data.task_type)
+        if (data.config)      setConfigStr(JSON.stringify(data.config, null, 2))
+        if (data.notify_on_failure !== undefined) setNotifyFail(data.notify_on_failure)
+        if (data.notify_on_success !== undefined) setNotifyOk(data.notify_on_success)
+        if (data.enabled !== undefined) setEnabled(data.enabled)
+        setError('')
+      } catch {
+        setError('Could not parse JSON file')
+      }
+    }
+    reader.readAsText(file)
+    e.target.value = ''
+  }
+
   return (
-    <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={{ maxWidth: 560 }}>
-        <div className="modal-header">
-          <span className="modal-title">{isDuplicate ? '⧉ Duplicate Task' : editing ? '✏️ Edit Task' : '＋ New Scheduled Task'}</span>
-          <button className="ghost icon" onClick={onClose}>✕</button>
-        </div>
-
-        <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {/* Name */}
-          <div className="field">
-            <label>Name *</label>
-            <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Daily standup report" autoFocus />
+    <>
+      <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
+        <div className="modal" style={{ maxWidth: 900, width: '95vw' }}>
+          <div className="modal-header">
+            <span className="modal-title">{isDuplicate ? '⧉ Duplicate Task' : editing ? '✏️ Edit Task' : '＋ New Scheduled Task'}</span>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              {/* Import */}
+              <input
+                ref={importRef}
+                type="file"
+                accept=".json,.orchid-task.json"
+                onChange={handleImport}
+                style={{ display: 'none' }}
+              />
+              <button
+                type="button"
+                className="ghost"
+                style={{ fontSize: 12, padding: '3px 10px' }}
+                onClick={() => importRef.current?.click()}
+                title="Import task from JSON file"
+              >
+                ↑ Import
+              </button>
+              {/* Export */}
+              <button
+                type="button"
+                className="ghost"
+                style={{ fontSize: 12, padding: '3px 10px' }}
+                onClick={handleExport}
+                title="Export task as JSON file"
+              >
+                ↓ Export
+              </button>
+              <button className="ghost icon" onClick={onClose}>✕</button>
+            </div>
           </div>
 
-          {/* Description */}
-          <div className="field">
-            <label>Description</label>
-            <input value={desc} onChange={e => setDesc(e.target.value)} placeholder="Optional note" />
-          </div>
+          <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* Name */}
+            <div className="field">
+              <label>Name *</label>
+              <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Daily standup report" autoFocus />
+            </div>
 
-          {/* Task type */}
-          <div className="field">
-            <label>Task type *</label>
-            <select value={taskType} onChange={e => setTaskType(e.target.value)}>
-              <option value="agent_prompt">Agent prompt</option>
-              <option value="agent_tool">Agent tool (MCP)</option>
-              <option value="mcp_tool">MCP tool (single call)</option>
-              <option value="shell">Shell command</option>
-            </select>
-          </div>
+            {/* Description */}
+            <div className="field">
+              <label>Description</label>
+              <input value={desc} onChange={e => setDesc(e.target.value)} placeholder="Optional note" />
+            </div>
 
-          {/* Schedule */}
-          <div className="field">
-            <label>Schedule (cron) *</label>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
-              {SCHEDULE_PRESETS.map(p => (
+            {/* Task type */}
+            <div className="field">
+              <label>Task type *</label>
+              <select value={taskType} onChange={e => setTaskType(e.target.value)}>
+                <option value="agent_prompt">Agent prompt</option>
+                <option value="agent_tool">Agent tool (MCP)</option>
+                <option value="mcp_tool">MCP tool (single call)</option>
+                <option value="shell">Shell command</option>
+              </select>
+            </div>
+
+            {/* Schedule */}
+            <div className="field">
+              <label>Schedule (cron) *</label>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+                {SCHEDULE_PRESETS.map(p => (
+                  <button
+                    key={p.value}
+                    type="button"
+                    style={{
+                      padding: '3px 10px', fontSize: 11,
+                      borderRadius: 4,
+                      background: schedule === p.value ? 'var(--accent)' : 'var(--surface2)',
+                      borderColor: schedule === p.value ? 'var(--accent)' : 'var(--border)',
+                      color: schedule === p.value ? '#fff' : 'var(--text-dim)',
+                    }}
+                    onClick={() => setSchedule(p.value)}
+                  >
+                    {p.label}
+                  </button>
+                ))}
                 <button
-                  key={p.value}
                   type="button"
                   style={{
                     padding: '3px 10px', fontSize: 11,
                     borderRadius: 4,
-                    background: schedule === p.value ? 'var(--accent)' : 'var(--surface2)',
-                    borderColor: schedule === p.value ? 'var(--accent)' : 'var(--border)',
-                    color: schedule === p.value ? '#fff' : 'var(--text-dim)',
+                    background: 'var(--surface2)',
+                    borderColor: 'var(--accent)',
+                    color: 'var(--accent)',
+                    fontWeight: 600,
                   }}
-                  onClick={() => setSchedule(p.value)}
+                  onClick={() => setShowCronBuilder(true)}
                 >
-                  {p.label}
+                  🗓 Schedule builder
                 </button>
+              </div>
+              <input
+                value={schedule}
+                onChange={e => setSchedule(e.target.value)}
+                placeholder="* * * * *"
+                style={{ fontFamily: 'var(--mono)', fontSize: 13 }}
+              />
+              <span className="hint">min hour dom month dow — all UTC</span>
+            </div>
+
+            {/* Config */}
+            <div className="field">
+              <label>Config (JSON) *</label>
+              <textarea
+                value={configStr}
+                onChange={e => setConfigStr(e.target.value)}
+                rows={12}
+                style={{ fontFamily: 'var(--mono)', fontSize: 12, resize: 'vertical', minHeight: 160 }}
+              />
+            </div>
+
+            {/* Toggles */}
+            <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+              {[
+                [enabled, setEnabled, 'Enabled'],
+                [notifyFail, setNotifyFail, 'Notify on failure'],
+                [notifyOk, setNotifyOk, 'Notify on success'],
+              ].map(([val, setter, label]) => (
+                <label key={label} style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', fontSize: 13 }}>
+                  <input
+                    type="checkbox"
+                    checked={val}
+                    onChange={e => setter(e.target.checked)}
+                    style={{ width: 'auto', cursor: 'pointer', accentColor: 'var(--accent)' }}
+                  />
+                  {label}
+                </label>
               ))}
             </div>
-            <input
-              value={schedule}
-              onChange={e => setSchedule(e.target.value)}
-              placeholder="* * * * *"
-              style={{ fontFamily: 'var(--mono)', fontSize: 13 }}
-            />
-            <span className="hint">min hour dom month dow — all UTC</span>
+
+            {error && (
+              <p style={{ color: 'var(--error-fg)', fontSize: 13 }}>{error}</p>
+            )}
           </div>
 
-          {/* Config */}
-          <div className="field">
-            <label>Config (JSON) *</label>
-            <textarea
-              value={configStr}
-              onChange={e => setConfigStr(e.target.value)}
-              rows={6}
-              style={{ fontFamily: 'var(--mono)', fontSize: 12, resize: 'vertical' }}
-            />
+          <div className="modal-footer">
+            <button
+              type="button"
+              onClick={handleTest}
+              disabled={saving || testStatus === 'running' || !name.trim()}
+              style={{ marginRight: 'auto' }}
+            >
+              {testStatus === 'running'     ? 'Testing…'
+              : testStatus === 'dispatched' ? '✓ Dispatched'
+              : (editing || savedTaskId)    ? '▶ Test'
+              : '▶ Save & Test'}
+            </button>
+            <button onClick={onClose} disabled={saving}>Cancel</button>
+            <button className="primary" onClick={handleSave} disabled={saving || !name.trim()}>
+              {saving ? 'Saving…' : isDuplicate ? 'Create copy' : editing ? 'Save changes' : 'Create task'}
+            </button>
           </div>
-
-          {/* Toggles */}
-          <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
-            {[
-              [enabled, setEnabled, 'Enabled'],
-              [notifyFail, setNotifyFail, 'Notify on failure'],
-              [notifyOk, setNotifyOk, 'Notify on success'],
-            ].map(([val, setter, label]) => (
-              <label key={label} style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', fontSize: 13 }}>
-                <input
-                  type="checkbox"
-                  checked={val}
-                  onChange={e => setter(e.target.checked)}
-                  style={{ width: 'auto', cursor: 'pointer', accentColor: 'var(--accent)' }}
-                />
-                {label}
-              </label>
-            ))}
-          </div>
-
-          {error && (
-            <p style={{ color: 'var(--error-fg)', fontSize: 13 }}>{error}</p>
-          )}
-        </div>
-
-        <div className="modal-footer">
-          <button onClick={onClose} disabled={saving}>Cancel</button>
-          <button className="primary" onClick={handleSave} disabled={saving || !name.trim()}>
-            {saving ? 'Saving…' : isDuplicate ? 'Create copy' : editing ? 'Save changes' : 'Create task'}
-          </button>
         </div>
       </div>
-    </div>
+
+      {showCronBuilder && (
+        <CronBuilder
+          onApply={(cron) => { setSchedule(cron); setShowCronBuilder(false) }}
+          onClose={() => setShowCronBuilder(false)}
+        />
+      )}
+    </>
   )
 }
