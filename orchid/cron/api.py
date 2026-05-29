@@ -419,8 +419,12 @@ When you have everything needed, end your reply with the single word TASK_READY 
         if "TASK_READY" in content:
             display_content = content.split("TASK_READY")[0].strip()
 
-            # Second call: extract structured JSON from the conversation so far
-            extraction_msgs = list(messages) + [{"role": "assistant", "content": display_content}]
+            # Second call: extract structured JSON — must end with user turn
+            extraction_msgs = (
+                list(messages)
+                + [{"role": "assistant", "content": display_content}]
+                + [{"role": "user", "content": "Output the task configuration as JSON now."}]
+            )
             extraction_sys = (
                 "Output ONLY a valid JSON object. No explanation, no markdown, no extra text.\n\n"
                 'Fill ALL fields with real values from the conversation:\n'
@@ -431,10 +435,14 @@ When you have everything needed, end your reply with the single word TASK_READY 
                 '- mcp_tool:     {"server":"<name>","tool":"<name>","args":{}}\n'
                 '- shell:        {"command":"<actual command>","timeout_sec":60}'
             )
-            json_raw = (await loop.run_in_executor(
-                None,
-                lambda: provider.complete(messages=extraction_msgs, system=extraction_sys, max_tokens=500),
-            )).strip()
+            try:
+                json_raw = (await loop.run_in_executor(
+                    None,
+                    lambda: provider.complete(messages=extraction_msgs, system=extraction_sys, max_tokens=500),
+                )).strip()
+            except Exception as exc:
+                logger.warning("Wizard extraction call failed: %s", exc)
+                json_raw = ""
 
             logger.debug("Wizard extraction raw output: %r", json_raw)
 
