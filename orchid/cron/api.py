@@ -428,6 +428,15 @@ When you have everything needed, end your reply with the single word TASK_READY 
             )
             if display_content:
                 convo_text += f"\nAssistant: {display_content}"
+            # Build server name list for extraction guidance
+            server_names = [s["server"] for s in mcp_servers if "server" in s] if mcp_servers else []
+            servers_hint = (
+                f"Available MCP servers: {server_names}. "
+                "If the task searches APIs, sends email, reads files, or calls external services "
+                "it needs agent_tool with those servers — NOT agent_prompt. "
+                f"agent_tool config: {{\"servers\":{server_names!r},\"prompt\":\"...\",\"system\":\"\"}}. "
+                if server_names else ""
+            )
             extraction_msgs = [
                 {
                     "role": "user",
@@ -435,16 +444,23 @@ When you have everything needed, end your reply with the single word TASK_READY 
                         "Read the conversation below and output ONLY a JSON object "
                         "for the scheduled task. No explanation, no markdown.\n\n"
                         f"{convo_text}\n\n"
-                        "JSON fields required: name, description, schedule (cron), "
-                        "task_type (agent_prompt|agent_tool|mcp_tool|shell), config, "
+                        "TASK TYPE RULES:\n"
+                        "- agent_prompt: pure text generation, no external APIs or tools needed.\n"
+                        "- agent_tool: task needs to search, fetch, send email, call APIs, or use any MCP server.\n"
+                        "- mcp_tool: single direct tool call.\n"
+                        "- shell: shell command.\n"
+                        f"{servers_hint}"
+                        "JSON fields: name, description, schedule (cron), task_type, config, "
                         "enabled (true), notify_on_failure (true), notify_on_success (false).\n"
-                        "For agent_prompt config use: "
-                        '{"prompt":"<verbatim task description from user>","system":""}. '
                         "Output JSON:"
                     ),
                 }
             ]
-            extraction_sys = "You extract structured task configuration from conversations. Output only valid JSON."
+            extraction_sys = (
+                "You extract scheduled task configuration from a conversation and output ONLY valid JSON. "
+                "When a task involves searching, fetching data, sending email, or calling any external service, "
+                "choose task_type=agent_tool and include a servers list."
+            )
             try:
                 json_raw = (await loop.run_in_executor(
                     None,
