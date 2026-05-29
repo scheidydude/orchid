@@ -419,22 +419,32 @@ When you have everything needed, end your reply with the single word TASK_READY 
         if "TASK_READY" in content:
             display_content = content.split("TASK_READY")[0].strip()
 
-            # Second call: extract structured JSON — must end with user turn
-            extraction_msgs = (
-                list(messages)
-                + [{"role": "assistant", "content": display_content}]
-                + [{"role": "user", "content": "Output the task configuration as JSON now."}]
+            # Second call: flatten conversation into one user message so the
+            # LLM does extraction, not conversation-following (local LLMs copy
+            # template placeholders when given a message array + JSON template).
+            convo_text = "\n".join(
+                f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
+                for m in messages
             )
-            extraction_sys = (
-                "Output ONLY a valid JSON object. No explanation, no markdown, no extra text.\n\n"
-                'Fill ALL fields with real values from the conversation:\n'
-                '{"name":"<short task name>","description":"<one sentence>","schedule":"<cron>","task_type":"<type>","config":<config>,"enabled":true,"notify_on_failure":true,"notify_on_success":false}\n\n'
-                "Config structure by task type:\n"
-                '- agent_prompt: {"prompt":"<actual instructions the user gave>","system":""}\n'
-                '- agent_tool:   {"servers":["<server name>"],"prompt":"<actual instructions>","system":""}\n'
-                '- mcp_tool:     {"server":"<name>","tool":"<name>","args":{}}\n'
-                '- shell:        {"command":"<actual command>","timeout_sec":60}'
-            )
+            if display_content:
+                convo_text += f"\nAssistant: {display_content}"
+            extraction_msgs = [
+                {
+                    "role": "user",
+                    "content": (
+                        "Read the conversation below and output ONLY a JSON object "
+                        "for the scheduled task. No explanation, no markdown.\n\n"
+                        f"{convo_text}\n\n"
+                        "JSON fields required: name, description, schedule (cron), "
+                        "task_type (agent_prompt|agent_tool|mcp_tool|shell), config, "
+                        "enabled (true), notify_on_failure (true), notify_on_success (false).\n"
+                        "For agent_prompt config use: "
+                        '{"prompt":"<verbatim task description from user>","system":""}. '
+                        "Output JSON:"
+                    ),
+                }
+            ]
+            extraction_sys = "You extract structured task configuration from conversations. Output only valid JSON."
             try:
                 json_raw = (await loop.run_in_executor(
                     None,
