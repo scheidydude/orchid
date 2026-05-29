@@ -51,14 +51,17 @@ export default function TaskFormModal({ initial, onSave, onTest, onToast, onClos
   // Track task_id after a save-and-test so repeat tests don't create duplicates
   const [savedTaskId, setSavedTaskId] = useState(editing ? (initial?.task_id ?? null) : null)
   const importRef = useRef(null)
+  // Prevents task-type change effect from overwriting config set by wizard/import
+  const skipConfigResetRef = useRef(false)
 
   // Reset config template only when user actively changes the task type select
   const prevTaskType = useRef(taskType)
   useEffect(() => {
-    if (!editing && taskType !== prevTaskType.current) {
+    if (!editing && taskType !== prevTaskType.current && !skipConfigResetRef.current) {
       setConfigStr(JSON.stringify(BLANK_CONFIGS[taskType] || {}, null, 2))
     }
     prevTaskType.current = taskType
+    skipConfigResetRef.current = false
   }, [taskType, editing])
 
   // Close on Escape
@@ -142,10 +145,13 @@ export default function TaskFormModal({ initial, onSave, onTest, onToast, onClos
   }
 
   const handleWizardApply = (cfg) => {
+    if (cfg.task_type && BLANK_CONFIGS[cfg.task_type]) {
+      skipConfigResetRef.current = true  // prevent task-type effect from overwriting config
+      setTaskType(cfg.task_type)
+    }
     if (cfg.name)        setName(cfg.name)
     if (cfg.description !== undefined) setDesc(cfg.description)
     if (cfg.schedule)    setSchedule(cfg.schedule)
-    if (cfg.task_type && BLANK_CONFIGS[cfg.task_type]) setTaskType(cfg.task_type)
     if (cfg.config)      setConfigStr(JSON.stringify(cfg.config, null, 2))
     if (cfg.enabled !== undefined)            setEnabled(cfg.enabled)
     if (cfg.notify_on_failure !== undefined)  setNotifyFail(cfg.notify_on_failure)
@@ -180,7 +186,10 @@ export default function TaskFormModal({ initial, onSave, onTest, onToast, onClos
         if (data.name)        setName(data.name)
         if (data.description !== undefined) setDesc(data.description)
         if (data.schedule)    setSchedule(data.schedule)
-        if (data.task_type && BLANK_CONFIGS[data.task_type]) setTaskType(data.task_type)
+        if (data.task_type && BLANK_CONFIGS[data.task_type]) {
+          skipConfigResetRef.current = true
+          setTaskType(data.task_type)
+        }
         if (data.config)      setConfigStr(JSON.stringify(data.config, null, 2))
         if (data.notify_on_failure !== undefined) setNotifyFail(data.notify_on_failure)
         if (data.notify_on_success !== undefined) setNotifyOk(data.notify_on_success)
