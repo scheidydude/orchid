@@ -296,11 +296,16 @@ class AnthropicProvider(ProviderBase):
             for block in response.content:
                 if block.type != "tool_use":
                     continue
+                is_err = False
                 try:
                     result = dispatch_fn(block.name, block.input or {})
                 except Exception as exc:
                     result = f"Error: {exc}"
-                tool_results.append({"type": "tool_result", "tool_use_id": block.id, "content": str(result)})
+                    is_err = True
+                tr: dict = {"type": "tool_result", "tool_use_id": block.id, "content": str(result)}
+                if is_err:
+                    tr["is_error"] = True
+                tool_results.append(tr)
             msgs.append({"role": "user", "content": tool_results})
 
         for msg in reversed(msgs):
@@ -308,4 +313,4 @@ class AnthropicProvider(ProviderBase):
                 for block in msg.get("content", []):
                     if isinstance(block, dict) and block.get("type") == "text":
                         return block["text"]
-        return ""
+        return f"[truncated: reached max_iterations={max_iterations}]"

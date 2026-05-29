@@ -189,7 +189,7 @@ def _run_agent_tool(config: dict) -> str:
 
         def dispatch(prefixed_name: str, args: dict) -> str:
             if prefixed_name not in tool_map:
-                return f"Error: unknown tool '{prefixed_name}'"
+                raise ValueError(f"unknown tool '{prefixed_name}'")
             adapter, original_name = tool_map[prefixed_name]
             result = adapter.call_tool(original_name, args)
             content = result.content

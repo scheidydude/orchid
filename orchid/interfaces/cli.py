@@ -2019,11 +2019,27 @@ def whoami() -> None:
 
     if resp.status_code == 200:
         user = resp.json()
+        budget_usd = user.get("budget_usd") or 0.0
+        budget_used = user.get("budget_used_usd") or 0.0
+        cpu_budget = user.get("cpu_budget_seconds") or 0.0
+        cpu_used = user.get("cpu_used_seconds") or 0.0
+        budget_str = (
+            f"${budget_used:.4f} / ${budget_usd:.2f}"
+            if budget_usd
+            else f"${budget_used:.4f} (unlimited)"
+        )
+        cpu_str = (
+            f"{cpu_used:.0f}s / {cpu_budget:.0f}s"
+            if cpu_budget
+            else f"{cpu_used:.0f}s (unlimited)"
+        )
         console.print(
             f"[bold]{user.get('username', session['username'])}[/bold]\n"
             f"  user_id:  {user.get('user_id', session['user_id'])}\n"
             f"  role:     {user.get('role', session.get('role', '?'))}\n"
             f"  email:    {user.get('email') or '—'}\n"
+            f"  budget:   {budget_str}\n"
+            f"  cpu:      {cpu_str}\n"
             f"  server:   [dim]{base}[/dim]"
         )
     else:
@@ -2281,6 +2297,251 @@ def call(
 
 
 app.add_typer(mcp_app)
+
+
+# ── user subcommands ──────────────────────────────────────────────────────────
+
+user_app = typer.Typer(name="user", help="User management (admin only).")
+
+
+def _api(method: str, path: str, session: dict, **kwargs):
+    """Make authenticated httpx call. Returns response or exits."""
+    import httpx
+    base = session.get("server_url", "http://localhost:7842").rstrip("/")
+    headers = kwargs.pop("headers", {})
+    headers["Authorization"] = f"Bearer {session.get('access_token', '')}"
+    try:
+        fn = getattr(httpx, method)
+        return fn(f"{base}{path}", headers=headers, timeout=15, **kwargs)
+    except httpx.ConnectError:
+        console.print(f"[red]Cannot connect to {base}. Is orchid serve running?[/red]")
+        raise typer.Exit(1)
+
+
+def _require_session() -> dict:
+    from orchid.interfaces.cli_auth import get_valid_session
+    session = get_valid_session()
+    if session is None:
+        console.print("[red]Not logged in. Run: orchid login[/red]")
+        raise typer.Exit(1)
+    return session
+
+
+@user_app.command(name="list")
+def user_list() -> None:
+    """List all users (admin only)."""
+    session = _require_session()
+    resp = _api("get", "/api/auth/users", session)
+    if resp.status_code == 403:
+        console.print("[red]Admin role required.[/red]")
+        raise typer.Exit(1)
+    if resp.status_code != 200:
+        console.print(f"[red]HTTP {resp.status_code}: {resp.text}[/red]")
+        raise typer.Exit(1)
+
+    users = resp.json().get("users", [])
+    if not users:
+        console.print("[yellow]No users found.[/yellow]")
+        return
+
+    table = Table(title="Users", show_lines=True)
+    table.add_column("user_id", style="dim")
+    table.add_column("username", style="bold")
+    table.add_column("role", style="cyan")
+    table.add_column("active")
+    table.add_column("budget used / limit")
+    table.add_column("cpu used / limit")
+
+    for u in users:
+        b_usd = u.get("budget_usd") or 0.0
+        b_used = u.get("budget_used_usd") or 0.0
+        cpu_b = u.get("cpu_budget_seconds") or 0.0
+        cpu_u = u.get("cpu_used_seconds") or 0.0
+        budget_str = f"${b_used:.4f} / ${b_usd:.2f}" if b_usd else f"${b_used:.4f} / ∞"
+        cpu_str = f"{cpu_u:.0f}s / {cpu_b:.0f}s" if cpu_b else f"{cpu_u:.0f}s / ∞"
+        active = "[green]yes[/green]" if u.get("is_active") else "[red]no[/red]"
+        table.add_row(u["user_id"], u.get("username", ""), u.get("role", ""), active, budget_str, cpu_str)
+
+    console.print(table)
+
+
+@user_app.command()
+def invite(
+    email: str = typer.Argument(..., help="Email address for the new user"),
+    role: str = typer.Option("user", "--role", "-r", help="Role: user, admin, readonly"),
+    username: str = typer.Option("", "--username", "-u", help="Username (defaults to email local part)"),
+) -> None:
+    """Create an inactive user and return an invite URL (admin only)."""
+    session = _require_session()
+    payload: dict = {"email": email, "role": role}
+    if username:
+        payload["username"] = username
+    resp = _api("post", "/api/admin/invite", session, json=payload)
+    if resp.status_code == 403:
+        console.print("[red]Admin role required.[/red]")
+        raise typer.Exit(1)
+    if resp.status_code not in (200, 201):
+        console.print(f"[red]HTTP {resp.status_code}: {resp.text}[/red]")
+        raise typer.Exit(1)
+
+    data = resp.json()
+    console.print(f"[green]Invite created.[/green]  user_id: {data.get('user_id', '?')}")
+    console.print(f"  Invite URL: [bold]{data.get('invite_url', '?')}[/bold]")
+    if data.get("email_sent"):
+        console.print("  [dim](invite email sent)[/dim]")
+
+
+@user_app.command(name="budget-reset")
+def user_budget_reset(
+    user_id: str = typer.Argument(..., help="User ID to reset"),
+) -> None:
+    """Reset a user's budget_used_usd to 0 (admin only)."""
+    session = _require_session()
+    resp = _api("post", f"/api/admin/users/{user_id}/budget/reset", session)
+    if resp.status_code == 403:
+        console.print("[red]Admin role required.[/red]")
+        raise typer.Exit(1)
+    if resp.status_code == 404:
+        console.print(f"[red]User '{user_id}' not found.[/red]")
+        raise typer.Exit(1)
+    if resp.status_code != 200:
+        console.print(f"[red]HTTP {resp.status_code}: {resp.text}[/red]")
+        raise typer.Exit(1)
+
+    data = resp.json()
+    console.print(
+        f"[green]Budget reset.[/green]  "
+        f"user_id: {data.get('user_id', user_id)}  "
+        f"budget_used_usd: {data.get('budget_used_usd', 0.0):.4f}"
+    )
+
+
+app.add_typer(user_app)
+
+
+# ── scheduler subcommands ─────────────────────────────────────────────────────
+
+scheduler_app = typer.Typer(name="scheduler", help="Manage scheduled tasks.")
+
+
+@scheduler_app.command(name="list")
+def scheduler_list() -> None:
+    """List scheduled tasks for the current user."""
+    session = _require_session()
+    resp = _api("get", "/api/scheduler/tasks", session)
+    if resp.status_code != 200:
+        console.print(f"[red]HTTP {resp.status_code}: {resp.text}[/red]")
+        raise typer.Exit(1)
+
+    tasks = resp.json().get("tasks", [])
+    if not tasks:
+        console.print("[yellow]No scheduled tasks.[/yellow]")
+        return
+
+    table = Table(title="Scheduled Tasks", show_lines=True)
+    table.add_column("task_id", style="dim")
+    table.add_column("name", style="bold")
+    table.add_column("type", style="cyan")
+    table.add_column("schedule")
+    table.add_column("enabled")
+    table.add_column("last status")
+
+    for t in tasks:
+        enabled = "[green]yes[/green]" if t.get("enabled") else "[red]no[/red]"
+        last_status = t.get("last_run_status") or "—"
+        table.add_row(
+            t.get("task_id", ""),
+            t.get("name", ""),
+            t.get("task_type", ""),
+            t.get("schedule", ""),
+            enabled,
+            last_status,
+        )
+
+    console.print(table)
+
+
+@scheduler_app.command(name="run")
+def scheduler_run(
+    task_id: str = typer.Argument(..., help="Task ID to trigger immediately"),
+) -> None:
+    """Trigger a scheduled task to run immediately."""
+    session = _require_session()
+    resp = _api("post", f"/api/scheduler/tasks/{task_id}/run", session)
+    if resp.status_code == 404:
+        console.print(f"[red]Task '{task_id}' not found.[/red]")
+        raise typer.Exit(1)
+    if resp.status_code != 200:
+        console.print(f"[red]HTTP {resp.status_code}: {resp.text}[/red]")
+        raise typer.Exit(1)
+
+    data = resp.json()
+    run = data.get("run", data)
+    status = run.get("status", "?")
+    color = "green" if status == "success" else "red" if status == "failure" else "yellow"
+    console.print(f"[{color}]Status: {status}[/{color}]  run_id: {run.get('run_id', '?')}")
+    if run.get("output"):
+        console.print(Panel(run["output"], title="Output", border_style="dim"))
+    if run.get("error"):
+        console.print(f"[red]Error: {run['error']}[/red]")
+
+
+app.add_typer(scheduler_app)
+
+
+# ── audit command ─────────────────────────────────────────────────────────────
+
+@app.command()
+def audit(
+    limit: int = typer.Option(50, "--limit", "-n", help="Max events to show"),
+    user: str = typer.Option("", "--user", "-u", help="Filter by user_id"),
+    action: str = typer.Option("", "--action", "-a", help="Filter by action name"),
+) -> None:
+    """Show the audit log (admin only)."""
+    session = _require_session()
+    params: dict = {"limit": limit}
+    if user:
+        params["user_id"] = user
+    if action:
+        params["action"] = action
+
+    resp = _api("get", "/api/audit", session, params=params)
+    if resp.status_code == 403:
+        console.print("[red]Admin role required.[/red]")
+        raise typer.Exit(1)
+    if resp.status_code != 200:
+        console.print(f"[red]HTTP {resp.status_code}: {resp.text}[/red]")
+        raise typer.Exit(1)
+
+    data = resp.json()
+    events = data.get("events", [])
+    total = data.get("total", len(events))
+
+    if not events:
+        console.print("[yellow]No audit events found.[/yellow]")
+        return
+
+    table = Table(title=f"Audit Log ({len(events)} of {total})", show_lines=True)
+    table.add_column("timestamp", style="dim", no_wrap=True)
+    table.add_column("action", style="cyan")
+    table.add_column("user_id", style="dim")
+    table.add_column("status")
+    table.add_column("detail", style="dim")
+
+    for e in events:
+        ts = e.get("timestamp", "")
+        if ts and len(ts) > 19:
+            ts = ts[:19].replace("T", " ")
+        status = e.get("status", "")
+        color = "green" if status == "success" else "red" if status == "failure" else ""
+        status_str = f"[{color}]{status}[/{color}]" if color else status
+        detail = e.get("detail", "") or ""
+        if len(detail) > 60:
+            detail = detail[:57] + "..."
+        table.add_row(ts, e.get("action", ""), e.get("user_id", ""), status_str, detail)
+
+    console.print(table)
+
 
 # Register hooks CLI subcommands
 try:

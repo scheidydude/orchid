@@ -235,6 +235,15 @@ class TestTaskExecutorAgentTool:
     # ---- helpers -------------------------------------------------------
 
     @staticmethod
+    def _anth_reg():
+        """Mock registry resolving to AnthropicProvider so anthropic.Anthropic mock is used."""
+        from orchid.providers.anthropic import AnthropicProvider
+        m = MagicMock()
+        m.resolve.return_value = AnthropicProvider()
+        m.get_by_key.return_value = None
+        return m
+
+    @staticmethod
     def _make_tool():
         from orchid.mcp.types import MCPTool
         return MCPTool(
@@ -285,7 +294,8 @@ class TestTaskExecutorAgentTool:
         mock_client.messages.create.return_value = mock_response
 
         with patch("orchid.mcp.manager.MCPManager", return_value=mock_manager), \
-             patch("anthropic.Anthropic", return_value=mock_client):
+             patch("anthropic.Anthropic", return_value=mock_client), \
+             patch("orchid.providers.registry.get_registry", return_value=self._anth_reg()):
             run = executor.execute(
                 {
                     "task_id": "t1",
@@ -323,7 +333,8 @@ class TestTaskExecutorAgentTool:
         mock_client.messages.create.side_effect = [turn1, turn2]
 
         with patch("orchid.mcp.manager.MCPManager", return_value=mock_manager), \
-             patch("anthropic.Anthropic", return_value=mock_client):
+             patch("anthropic.Anthropic", return_value=mock_client), \
+             patch("orchid.providers.registry.get_registry", return_value=self._anth_reg()):
             run = executor.execute(
                 {
                     "task_id": "t1",
@@ -371,7 +382,8 @@ class TestTaskExecutorAgentTool:
         mock_client.messages.create.side_effect = [turn1, turn2]
 
         with patch("orchid.mcp.manager.MCPManager", return_value=mock_manager), \
-             patch("anthropic.Anthropic", return_value=mock_client):
+             patch("anthropic.Anthropic", return_value=mock_client), \
+             patch("orchid.providers.registry.get_registry", return_value=self._anth_reg()):
             run = executor.execute(
                 {
                     "task_id": "t1",
@@ -407,7 +419,8 @@ class TestTaskExecutorAgentTool:
         mock_client.messages.create.side_effect = [turn1, turn2]
 
         with patch("orchid.mcp.manager.MCPManager", return_value=mock_manager), \
-             patch("anthropic.Anthropic", return_value=mock_client):
+             patch("anthropic.Anthropic", return_value=mock_client), \
+             patch("orchid.providers.registry.get_registry", return_value=self._anth_reg()):
             run = executor.execute(
                 {
                     "task_id": "t1",
@@ -423,10 +436,15 @@ class TestTaskExecutorAgentTool:
         mock_adapter.call_tool.assert_not_called()
         # Two API calls were made: tool_use turn + end_turn
         assert mock_client.messages.create.call_count == 2
-        # Second call's messages include a tool_result with is_error=True
+        # All messages passed to the second call include a tool_result with is_error=True
         second_msgs = mock_client.messages.create.call_args_list[1].kwargs["messages"]
-        tool_result_msg = second_msgs[-1]["content"]
-        assert any(r.get("is_error") for r in tool_result_msg)
+        all_tool_results = [
+            c
+            for m in second_msgs
+            for c in (m.get("content") if isinstance(m.get("content"), list) else [])
+            if isinstance(c, dict) and c.get("type") == "tool_result"
+        ]
+        assert any(r.get("is_error") for r in all_tool_results)
 
     def test_max_iterations_guard(self, executor):
         """Loop capped at max_iterations; returns last text found."""
@@ -447,7 +465,8 @@ class TestTaskExecutorAgentTool:
         mock_client.messages.create.return_value = infinite_response
 
         with patch("orchid.mcp.manager.MCPManager", return_value=mock_manager), \
-             patch("anthropic.Anthropic", return_value=mock_client):
+             patch("anthropic.Anthropic", return_value=mock_client), \
+             patch("orchid.providers.registry.get_registry", return_value=self._anth_reg()):
             run = executor.execute(
                 {
                     "task_id": "t1",
@@ -478,7 +497,8 @@ class TestTaskExecutorAgentTool:
         mock_client.messages.create.side_effect = RuntimeError("api down")
 
         with patch("orchid.mcp.manager.MCPManager", return_value=mock_manager), \
-             patch("anthropic.Anthropic", return_value=mock_client):
+             patch("anthropic.Anthropic", return_value=mock_client), \
+             patch("orchid.providers.registry.get_registry", return_value=self._anth_reg()):
             run = executor.execute(
                 {
                     "task_id": "t1",

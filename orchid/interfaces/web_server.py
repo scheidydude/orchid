@@ -927,6 +927,10 @@ def create_app(
                 "username": current_user.username,
                 "email": current_user.email,
                 "role": current_user.role,
+                "budget_usd": current_user.budget_usd,
+                "budget_used_usd": current_user.budget_used_usd,
+                "cpu_budget_seconds": current_user.cpu_budget_seconds,
+                "cpu_used_seconds": current_user.cpu_used_seconds,
             }
 
         @app.put("/api/auth/me/password")
