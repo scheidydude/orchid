@@ -5,7 +5,7 @@
 
 ## Description
 
-AI agent orchestration framework with a lifecycle-driven planning engine. Install once, run against any project. V2 adds a full idea-to-execution pipeline: discuss requirements with an AI product manager, generate architecture docs, break work into milestones, then execute tasks with specialized agents. V2.2 adds parallel task dispatch, native git tools, worktree isolation, dynamic task spawning, a cross-project agent pool, and cost-aware scheduling. V2.3 adds full multi-user auth: JWT sessions, argon2id passwords, API keys with scope enforcement, Google/Entra/OIDC SSO, PKCE mobile flow, append-only audit log, per-user project scoping, a React login page, and pluggable auth storage (file or PostgreSQL). V2.4 adds OS-grade reliability: graceful shutdown, orphan recovery, subprocess worker pool, task preemption/pause-resume, WebSocket backpressure, CPU/latency budgets, and an ordered provider fallback chain that retries on 429/502/503 before marking a task BLOCKED. V2.5 adds a cron-based scheduled task manager: per-user schedules stored as dicts on User, APScheduler-backed engine, `agent_prompt`/`mcp_tool`/`shell` task types, append-only JSONL run history with 30-day pruning, and a full `/api/scheduler/*` REST API. **V3.0** transforms Orchid into a full multi-user agentic OS: per-user credential vault (Fernet/HKDF), admin-managed MCP server catalog with role/user-based access control, per-user LLM spend and CPU-time budgets enforced at execution time, two React SPAs (User Portal `/app/` and Admin Console `/admin/`), admin-invite flow, and a System Config page for live runtime settings. **V3.1** completes the hardening pass: live Telegram/Slack DM notifications from scheduled task runs, `allow_user_projects` flag enforcement across web/Telegram/Slack, per-user project ownership registry with user-namespaced paths, and a production-ready PostgreSQL auth backend with one-command migration from the JSON store. **Portal scheduler UX** adds a timezone-aware visual schedule builder, per-row enable/disable toggle, JSON task export/import for sharing, Save & Test workflow (creates task then runs it, auto-closes on success), an MCP tool browser for `mcp_tool` / `agent_tool` types, and a conversational Task Wizard that interviews the user in plain language and fills in the task form automatically. Auth tokens extended to 8 h with silent refresh so users are not prompted to log in during a normal working day.
+AI agent orchestration framework with a lifecycle-driven planning engine. Install once, run against any project. V2 adds a full idea-to-execution pipeline: discuss requirements with an AI product manager, generate architecture docs, break work into milestones, then execute tasks with specialized agents. V2.2 adds parallel task dispatch, native git tools, worktree isolation, dynamic task spawning, a cross-project agent pool, and cost-aware scheduling. V2.3 adds full multi-user auth: JWT sessions, argon2id passwords, API keys with scope enforcement, Google/Entra/OIDC SSO, PKCE mobile flow, append-only audit log, per-user project scoping, a React login page, and pluggable auth storage (file or PostgreSQL). V2.4 adds OS-grade reliability: graceful shutdown, orphan recovery, subprocess worker pool, task preemption/pause-resume, WebSocket backpressure, CPU/latency budgets, and an ordered provider fallback chain that retries on 429/502/503 before marking a task BLOCKED. V2.5 adds a cron-based scheduled task manager: per-user schedules stored as dicts on User, APScheduler-backed engine, `agent_prompt`/`mcp_tool`/`shell` task types, append-only JSONL run history with 30-day pruning, and a full `/api/scheduler/*` REST API. **V3.0** transforms Orchid into a full multi-user agentic OS: per-user credential vault (Fernet/HKDF), admin-managed MCP server catalog with role/user-based access control, per-user LLM spend and CPU-time budgets enforced at execution time, two React SPAs (User Portal `/app/` and Admin Console `/admin/`), admin-invite flow, and a System Config page for live runtime settings. **V3.1** completes the hardening pass: live Telegram/Slack DM notifications from scheduled task runs, `allow_user_projects` flag enforcement across web/Telegram/Slack, per-user project ownership registry with user-namespaced paths, and a production-ready PostgreSQL auth backend with one-command migration from the JSON store. **Portal scheduler UX** adds a timezone-aware visual schedule builder, per-row enable/disable toggle, JSON task export/import for sharing, Save & Test workflow (creates task then runs it, auto-closes on success), an MCP tool browser for `mcp_tool` / `agent_tool` types, and a conversational Task Wizard that interviews the user in plain language and fills in the task form automatically. Auth tokens extended to 8 h with silent refresh so users are not prompted to log in during a normal working day. **V3.2** completes the CLI auth integration: `orchid login/logout/whoami` authenticate against a running server; `--mode auto` and `--run-task` automatically inject vault credentials, enforce LLM/CPU budgets, and record spend for the logged-in user; `orchid mcp ls/call` respects per-user catalog ACLs; `orchid user`, `orchid scheduler`, and `orchid audit` subcommands provide admin and ops CLI access to the full multi-user API.
 
 ```
 ~/orchid/              ← install here
@@ -199,11 +199,48 @@ Requires `--telegram` / `--slack` flags on `orchid serve`:
 orchid serve --watch-dir ~/LocalAI --telegram --slack
 ```
 
+### CLI Auth
+
+The `orchid` CLI integrates with a running `orchid serve` instance for authenticated operations. Once logged in, vault credential injection, budget enforcement, and per-user MCP catalog ACLs apply to every CLI run automatically.
+
+```bash
+# Authenticate — saves session to ~/.config/orchid/cli_session.json (mode 0600)
+orchid login --server http://localhost:7842 --username alice
+
+# Show current user, role, and budget/CPU usage
+orchid whoami
+
+# Revoke server-side token and delete local session
+orchid logout
+```
+
+No session = silent fallback to anonymous single-user mode. Zero breaking change.
+
+**User management (admin only):**
+```bash
+orchid user list                          # table: all users, roles, budget usage
+orchid user invite alice@example.com      # create invite link (email auto-sent if SMTP set)
+orchid user invite alice@example.com --role admin
+orchid user budget-reset <user_id>        # reset budget_used_usd to 0
+```
+
+**Scheduler:**
+```bash
+orchid scheduler list                     # list your scheduled tasks
+orchid scheduler run <task_id>            # trigger a task immediately
+```
+
+**Audit log (admin only):**
+```bash
+orchid audit                              # last 50 events
+orchid audit --limit 200 --user alice --action LOGIN
+```
+
 ### Admin Invite Flow
 
 Admins create users via invite — no open registration:
 
-1. Admin: `POST /api/admin/invite` → returns `invite_url`
+1. Admin: `POST /api/admin/invite` or `orchid user invite EMAIL` → returns `invite_url`
 2. Admin sends URL to user (email auto-sent if SMTP configured)
 3. User visits URL → sets password → account activated
 
@@ -381,6 +418,23 @@ orchid hooks remove [--project PATH] HOOK_ID
 # MCP servers
 orchid mcp ls   [--project PATH]              list tools from all configured MCP servers
 orchid mcp call [--project PATH] TOOL [ARGS]  call a specific MCP tool
+
+# Auth (requires orchid serve running)
+orchid login [--server URL] [--username U]    authenticate, save session locally
+orchid logout                                 revoke token + delete session file
+orchid whoami                                 show user, role, email, budget usage
+
+# User management (admin only; requires session)
+orchid user list                              list all users with budget/CPU usage
+orchid user invite EMAIL [--role R]           create invite link
+orchid user budget-reset USER_ID              reset a user's LLM spend counter
+
+# Scheduler (requires session)
+orchid scheduler list                         list your scheduled tasks
+orchid scheduler run TASK_ID                  trigger a task immediately
+
+# Audit log (admin only; requires session)
+orchid audit [--limit N] [--user UID] [--action A]
 
 # Diagnostics
 orchid --check-providers                   probe all configured providers
