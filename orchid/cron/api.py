@@ -450,8 +450,15 @@ When you have everything needed, end your reply with the single word TASK_READY 
                         "- mcp_tool: single direct tool call.\n"
                         "- shell: shell command.\n"
                         f"{servers_hint}"
-                        "JSON fields: name, description, schedule (cron), task_type, config, "
-                        "enabled (true), notify_on_failure (true), notify_on_success (false).\n"
+                        "JSON fields:\n"
+                        "- name: short 3-5 word task name\n"
+                        "- description: one concise sentence summarising what the task does (NOT the user's words verbatim — write it as a system description, e.g. 'Emails a daily digest of top GitHub LLM repos.')\n"
+                        "- schedule: cron expression\n"
+                        "- task_type: see rules above\n"
+                        "- config: task-specific config object\n"
+                        "- enabled: true\n"
+                        "- notify_on_failure: true\n"
+                        "- notify_on_success: false\n"
                         "Output JSON:"
                     ),
                 }
