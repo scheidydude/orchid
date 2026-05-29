@@ -240,6 +240,7 @@ export default function TaskWizard({ onApply, onClose }) {
             {mcpReady
               ? `${mcpServers.length} MCP server${mcpServers.length !== 1 ? 's' : ''} available`
               : 'Loading MCP servers…'}
+            {' · '}Schedule uses your local time — use 🗓 Builder to adjust for UTC
           </span>
           <button
             className="ghost"

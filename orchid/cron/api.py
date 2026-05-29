@@ -379,39 +379,24 @@ def register_routes(app: Any) -> None:
         else:
             mcp_context = "  (none configured)"
 
-        system_prompt = f"""You are a friendly task configuration wizard for Orchid, an AI agent scheduling platform. Help the user set up a scheduled task through a short, natural conversation.
+        system_prompt = f"""You are a task setup wizard for Orchid, a scheduling platform. Help the user configure a scheduled task through a short, friendly conversation. Ask 1-2 questions at a time and keep replies brief.
 
-AVAILABLE TASK TYPES:
-- agent_prompt  — Claude reads a prompt and generates output. Config: {{"prompt": "...", "system": "optional"}}
-- agent_tool    — Claude uses one or more MCP servers as tools to accomplish a goal. Config: {{"servers": ["name"], "prompt": "...", "system": ""}}
-- mcp_tool      — Directly calls one specific tool on one MCP server. Config: {{"server": "name", "tool": "tool_name", "args": {{}}}}
-- shell         — Runs a shell command. Config: {{"command": "bash command", "timeout_sec": 60}}
+TASK TYPES:
+- agent_prompt: AI generates text (summaries, reports, emails). Needs: prompt, optional system.
+- agent_tool: AI uses MCP tools to accomplish a goal. Needs: servers list, prompt, optional system.
+- mcp_tool: Single direct tool call. Needs: server name, tool name, args object.
+- shell: Run a shell command. Needs: command string, optional timeout_sec.
 
-AVAILABLE MCP SERVERS (for agent_tool / mcp_tool tasks):
+AVAILABLE MCP SERVERS:
 {mcp_context}
 
-USER'S TIMEZONE: {timezone}
+SCHEDULE (cron, literal — no timezone conversion):
+  daily at 9am → 0 9 * * *   |  weekdays at 9am → 0 9 * * 1-5
+  every hour → 0 * * * *     |  every 15 min → */15 * * * *
+  weekly Mon 9am → 0 9 * * 1 |  monthly 1st 9am → 0 9 1 * *
 
-SCHEDULE GUIDANCE — convert all times to UTC cron (5-field):
-- every weekday at 9 am local → convert to UTC based on timezone offset
-- "every hour"                → "0 * * * *"
-- "every 15 minutes"          → "*/15 * * * *"
-- "daily at midnight"         → "0 0 * * *"
-- "weekly Monday 9 am"        → "0 9 * * 1" (then adjust for TZ)
-- "monthly on the 1st"        → "0 9 1 * *"
-
-CONVERSATION RULES:
-1. Ask what the task should do (one concise question).
-2. Ask when it should run — accept plain English; you will convert to cron.
-3. Infer the best task_type from the description. Suggest MCP servers when relevant.
-4. Gather remaining details (specific tool name, prompt text, shell command, etc.).
-5. Ask at most TWO questions per reply. Keep replies short.
-6. When you have all the information needed, output a short confirmation sentence followed immediately by the marker and JSON — nothing else after the closing brace.
-
-OUTPUT FORMAT (when ready — do not include extra text after the JSON):
-<TASK_READY>
-{{"name":"Short task name","description":"One sentence","schedule":"cron expr","task_type":"one of the four types","config":{{}},"enabled":true,"notify_on_failure":true,"notify_on_success":false}}
-"""
+Ask questions until you know: (1) what the task does, (2) when it runs, (3) any specific prompt/command/tool details.
+When you have everything needed, end your reply with the single word TASK_READY on its own line. Nothing after it."""
 
         if not messages:
             raise HTTPException(status_code=400, detail="messages must not be empty")
@@ -424,19 +409,59 @@ OUTPUT FORMAT (when ready — do not include extra text after the JSON):
         loop = _asyncio.get_running_loop()
         content = (await loop.run_in_executor(
             None,
-            lambda: provider.complete(messages=messages, system=system_prompt, max_tokens=600),
+            lambda: provider.complete(messages=messages, system=system_prompt, max_tokens=500),
         )).strip()
 
-        task_config = None
-        display_content = content
+        logger.debug("Wizard LLM raw output: %r", content)
 
-        if "<TASK_READY>" in content:
-            parts = content.split("<TASK_READY>", 1)
-            display_content = parts[0].strip()
-            try:
-                task_config = _json.loads(parts[1].strip())
-            except (_json.JSONDecodeError, IndexError):
-                pass
+        task_config = None
+
+        if "TASK_READY" in content:
+            display_content = content.split("TASK_READY")[0].strip()
+
+            # Second call: extract structured JSON from the conversation so far
+            extraction_msgs = list(messages) + [{"role": "assistant", "content": display_content}]
+            extraction_sys = (
+                "Output ONLY a valid JSON object. No explanation, no markdown, no extra text.\n\n"
+                'Fill ALL fields with real values from the conversation:\n'
+                '{"name":"<short task name>","description":"<one sentence>","schedule":"<cron>","task_type":"<type>","config":<config>,"enabled":true,"notify_on_failure":true,"notify_on_success":false}\n\n'
+                "Config structure by task type:\n"
+                '- agent_prompt: {"prompt":"<actual instructions the user gave>","system":""}\n'
+                '- agent_tool:   {"servers":["<server name>"],"prompt":"<actual instructions>","system":""}\n'
+                '- mcp_tool:     {"server":"<name>","tool":"<name>","args":{}}\n'
+                '- shell:        {"command":"<actual command>","timeout_sec":60}'
+            )
+            json_raw = (await loop.run_in_executor(
+                None,
+                lambda: provider.complete(messages=extraction_msgs, system=extraction_sys, max_tokens=500),
+            )).strip()
+
+            logger.debug("Wizard extraction raw output: %r", json_raw)
+
+            # Strip markdown fences if present
+            if json_raw.startswith("```"):
+                json_raw = json_raw.strip("`").strip()
+                if json_raw.startswith("json"):
+                    json_raw = json_raw[4:].strip()
+
+            # Extract first complete JSON object via brace depth tracking
+            brace_depth = 0
+            end_idx = 0
+            for idx, ch in enumerate(json_raw):
+                if ch == "{":
+                    brace_depth += 1
+                elif ch == "}":
+                    brace_depth -= 1
+                    if brace_depth == 0:
+                        end_idx = idx + 1
+                        break
+            if end_idx:
+                try:
+                    task_config = _json.loads(json_raw[:end_idx])
+                except _json.JSONDecodeError as exc:
+                    logger.warning("Wizard JSON parse failed: %s — raw: %r", exc, json_raw[:end_idx])
+        else:
+            display_content = content
 
         return {"message": display_content, "task_config": task_config}
 
