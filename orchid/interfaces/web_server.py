@@ -959,6 +959,12 @@ def create_app(
         async def auth_logout(request: Request, response: Response,
                               current_user: User | None = Depends(get_optional_user)):
             raw = request.cookies.get(_COOKIE_REFRESH)
+            if not raw:
+                try:
+                    body = await request.json()
+                except Exception:
+                    body = {}
+                raw = body.get("refresh_token", "")
             if raw:
                 store = _get_auth_store()
                 try:

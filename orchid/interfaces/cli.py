@@ -387,6 +387,20 @@ def _cmd_auto(
     if output_format == "stream-json":
         stream_emitter = NDJSONEmitter()
 
+    # Phase 2+3: load CLI session for vault injection and budget recording
+    from orchid.interfaces.cli_auth import load_cli_session
+    cli_session = load_cli_session()
+    cli_user_id = cli_session["user_id"] if cli_session else None
+
+    if cli_user_id:
+        try:
+            from orchid.budget.guard import BudgetExceededError, BudgetGuard
+            BudgetGuard(cli_user_id).check()
+            BudgetGuard(cli_user_id).check_cpu()
+        except Exception as _be:
+            console.print(f"[red]Budget check failed: {_be}[/red]")
+            raise typer.Exit(1)
+
     orch = Orchestrator(
         session,
         cli_model_override=code_model,
@@ -398,9 +412,23 @@ def _cmd_auto(
     if trace:
         trace_path = session.project_dir / ".orchid" / "trace.log"
         console.print(f"[dim]Trace → {trace_path}[/dim]")
+    if cli_user_id:
+        console.print(f"[dim]Running as user: {cli_session['username']} ({cli_user_id})[/dim]")
+
+    cost_before = _snapshot_ledger_cost(project)
+    import time as _time
+    wall_start = _time.monotonic()
     try:
-        orch.run_loop(max_tasks=max_tasks)
+        if cli_user_id:
+            from orchid.budget.guard import vault_env_context
+            with vault_env_context(cli_user_id):
+                orch.run_loop(max_tasks=max_tasks)
+        else:
+            orch.run_loop(max_tasks=max_tasks)
     finally:
+        wall_elapsed = _time.monotonic() - wall_start
+        if cli_user_id:
+            _record_run_cost(cli_user_id, project, cost_before, wall_elapsed)
         session.close(summary="Autonomous run complete.")
         console.print("[green]Session saved.[/green]")
 
@@ -427,14 +455,36 @@ def _cmd_run_task(
         border_style="green",
     ))
 
+    from orchid.interfaces.cli_auth import load_cli_session
+    cli_session = load_cli_session()
+    cli_user_id = cli_session["user_id"] if cli_session else None
+
+    if cli_user_id:
+        try:
+            from orchid.budget.guard import BudgetExceededError, BudgetGuard
+            BudgetGuard(cli_user_id).check()
+            BudgetGuard(cli_user_id).check_cpu()
+        except Exception as _be:
+            console.print(f"[red]Budget check failed: {_be}[/red]")
+            raise typer.Exit(1)
+
     from orchid.orchestrator import Orchestrator
 
     orch = Orchestrator(session, cli_model_override=code_model, offline_mode=offline, trace_enabled=trace)
     if trace:
         trace_path = session.project_dir / ".orchid" / "trace.log"
         console.print(f"[dim]Trace → {trace_path}[/dim]")
+
+    cost_before = _snapshot_ledger_cost(project)
+    import time as _time
+    wall_start = _time.monotonic()
     try:
-        result = orch._execute_task(task)
+        if cli_user_id:
+            from orchid.budget.guard import vault_env_context
+            with vault_env_context(cli_user_id):
+                result = orch._execute_task(task)
+        else:
+            result = orch._execute_task(task)
         session.save()
         snippet = str(result.get("result", ""))[:300] if result else ""
         console.print(f"[green]✓ {task.id} complete[/green]")
@@ -444,6 +494,9 @@ def _cmd_run_task(
         console.print(f"[red]Task {task.id} failed: {exc}[/red]")
         raise typer.Exit(1)
     finally:
+        wall_elapsed = _time.monotonic() - wall_start
+        if cli_user_id:
+            _record_run_cost(cli_user_id, project, cost_before, wall_elapsed)
         session.close(summary=f"Single task run: {task_id}")
 
 
@@ -770,6 +823,31 @@ def _cmd_inject(project: str, text: str) -> None:
         f.write(text + "\n")
     console.print(f"[green]Injected into queue: {text[:100]}[/green]")
     console.print("[dim]Agent will pick this up on next ReAct iteration.[/dim]")
+
+
+def _snapshot_ledger_cost(project: str) -> float:
+    """Read total cost from the on-disk ledger before a run (for delta calculation)."""
+    try:
+        from orchid.cost.ledger import CostLedger
+        return CostLedger(_resolve_project(project)).get_totals()["total_cost_usd"]
+    except Exception:
+        return 0.0
+
+
+def _record_run_cost(user_id: str, project: str, cost_before: float, wall_elapsed: float) -> None:
+    """Record cost delta and CPU time to BudgetGuard after a run. Never raises."""
+    try:
+        from orchid.budget.guard import BudgetGuard
+        from orchid.cost.ledger import get_cost_ledger
+        cost_after = get_cost_ledger().get_totals()["total_cost_usd"]
+        run_cost = max(0.0, cost_after - cost_before)
+        guard = BudgetGuard(user_id)
+        if run_cost > 0:
+            guard.record(run_cost)
+        if wall_elapsed > 0:
+            guard.record_cpu(wall_elapsed)
+    except Exception:
+        pass
 
 
 def _cmd_check_providers(proj: str | None = None) -> None:
@@ -1811,6 +1889,150 @@ def serve(
 
 
 
+# ── login / logout / whoami ───────────────────────────────────────────────────
+
+@app.command()
+def login(
+    server: str = typer.Option("http://localhost:7842", "--server", "-s", help="Orchid server URL"),
+    username: str | None = typer.Option(None, "--username", "-u", help="Username"),
+    log_level: str = typer.Option("WARNING", "--log-level", "-l"),
+) -> None:
+    """Authenticate with an Orchid server and save the session locally.
+
+    Saves credentials to ~/.config/orchid/cli_session.json (mode 0600).
+    Required for vault injection, budget enforcement, and per-user MCP catalog.
+    """
+    import time as _time
+
+    import httpx
+    from rich.prompt import Prompt
+
+    from orchid.interfaces.cli_auth import DEFAULT_SERVER_URL, save_cli_session
+
+    _setup_logging(log_level)
+    base = server.rstrip("/")
+
+    if not username:
+        username = Prompt.ask("[bold blue]Username[/bold blue]")
+    password = Prompt.ask("[bold blue]Password[/bold blue]", password=True)
+
+    try:
+        resp = httpx.post(
+            f"{base}/api/auth/login",
+            json={"username": username, "password": password},
+            timeout=15,
+        )
+    except httpx.ConnectError:
+        console.print(f"[red]Cannot connect to {base}. Is orchid serve running?[/red]")
+        raise typer.Exit(1)
+    except Exception as exc:
+        console.print(f"[red]Login request failed: {exc}[/red]")
+        raise typer.Exit(1)
+
+    if resp.status_code == 401:
+        console.print("[red]Invalid credentials.[/red]")
+        raise typer.Exit(1)
+    if resp.status_code != 200:
+        console.print(f"[red]Login failed: HTTP {resp.status_code}[/red]")
+        raise typer.Exit(1)
+
+    data = resp.json()
+    refresh_token = resp.cookies.get("orchid_refresh", "")
+
+    session = {
+        "user_id": data["user_id"],
+        "username": data["username"],
+        "role": data.get("role", "user"),
+        "access_token": data["access_token"],
+        "refresh_token": refresh_token,
+        "server_url": base,
+        "issued_at": _time.time(),
+    }
+    save_cli_session(session)
+
+    console.print(
+        f"[green]Logged in as[/green] [bold]{data['username']}[/bold]  "
+        f"role: {data.get('role', 'user')}  [dim]{base}[/dim]"
+    )
+    if not refresh_token:
+        console.print("[yellow]Warning: no refresh token in response. Session will not auto-renew.[/yellow]")
+
+
+@app.command()
+def logout() -> None:
+    """Revoke the current CLI session and delete the local session file."""
+    import httpx
+
+    from orchid.interfaces.cli_auth import clear_cli_session, load_cli_session
+
+    session = load_cli_session()
+    if session is None:
+        console.print("[yellow]No active session.[/yellow]")
+        return
+
+    base = session.get("server_url", "http://localhost:7842").rstrip("/")
+    refresh_token = session.get("refresh_token", "")
+    access_token = session.get("access_token", "")
+
+    try:
+        httpx.post(
+            f"{base}/api/auth/logout",
+            json={"refresh_token": refresh_token} if refresh_token else {},
+            headers={"Authorization": f"Bearer {access_token}"} if access_token else {},
+            timeout=10,
+        )
+    except Exception:
+        pass  # Server may be down; always clear local session regardless
+
+    clear_cli_session()
+    console.print("[green]Logged out.[/green]  [dim](session cleared)[/dim]")
+
+
+@app.command()
+def whoami() -> None:
+    """Show the currently authenticated CLI user."""
+    import httpx
+
+    from orchid.interfaces.cli_auth import get_valid_session
+
+    session = get_valid_session()
+    if session is None:
+        console.print("[yellow]Not logged in. Run: orchid login[/yellow]")
+        raise typer.Exit(1)
+
+    base = session.get("server_url", "http://localhost:7842").rstrip("/")
+    access_token = session.get("access_token", "")
+
+    try:
+        resp = httpx.get(
+            f"{base}/api/auth/me",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=10,
+        )
+    except Exception:
+        console.print(
+            f"[bold]{session['username']}[/bold]  "
+            f"role: {session.get('role', '?')}  "
+            f"[dim](server unreachable — showing cached info)[/dim]"
+        )
+        return
+
+    if resp.status_code == 200:
+        user = resp.json()
+        console.print(
+            f"[bold]{user.get('username', session['username'])}[/bold]\n"
+            f"  user_id:  {user.get('user_id', session['user_id'])}\n"
+            f"  role:     {user.get('role', session.get('role', '?'))}\n"
+            f"  email:    {user.get('email') or '—'}\n"
+            f"  server:   [dim]{base}[/dim]"
+        )
+    else:
+        console.print(
+            f"[yellow]Session may be expired (HTTP {resp.status_code}). "
+            f"Try: orchid login[/yellow]"
+        )
+
+
 # ── migrate-to-postgres ───────────────────────────────────────────────────────
 
 @app.command(name="migrate-to-postgres")
@@ -1951,12 +2173,31 @@ def ls(
     from rich.markup import escape
 
     from orchid import config as cfg
+    from orchid.interfaces.cli_auth import load_cli_session
     from orchid.mcp.manager import MCPManager
 
     cfg.configure_for_project(_resolve_project(project))
     manager = MCPManager()
-    manager.discover_servers()
-    manager.connect()
+
+    cli_session = load_cli_session()
+    if cli_session:
+        vault_store = None
+        try:
+            from orchid.vault.store import get_vault
+            vault_store = get_vault()
+        except Exception:
+            pass
+        manager.connect_for_user(
+            user_id=cli_session["user_id"],
+            user_role=cli_session.get("role", "user"),
+            vault_store=vault_store,
+            users_dir=Path("~/.config/orchid/users").expanduser(),
+        )
+        console.print(f"[dim]Showing servers for user: {cli_session['username']}[/dim]")
+    else:
+        manager.discover_servers()
+        manager.connect()
+
     try:
         tools = manager.list_tools()
         if not tools:
@@ -1992,12 +2233,30 @@ def call(
     from rich.markup import escape
 
     from orchid import config as cfg
+    from orchid.interfaces.cli_auth import load_cli_session
     from orchid.mcp.manager import MCPManager
 
     cfg.configure_for_project(_resolve_project(project))
     manager = MCPManager()
-    manager.discover_servers()
-    manager.connect()
+
+    cli_session = load_cli_session()
+    if cli_session:
+        vault_store = None
+        try:
+            from orchid.vault.store import get_vault
+            vault_store = get_vault()
+        except Exception:
+            pass
+        manager.connect_for_user(
+            user_id=cli_session["user_id"],
+            user_role=cli_session.get("role", "user"),
+            vault_store=vault_store,
+            users_dir=Path("~/.config/orchid/users").expanduser(),
+        )
+    else:
+        manager.discover_servers()
+        manager.connect()
+
     try:
         args: dict = {}
         if arguments:
