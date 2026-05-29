@@ -139,7 +139,7 @@ def _check_project_access(user: Any, project_id: str) -> None:
 
 
 def _set_auth_cookies(response: Any, access_token: str, refresh_raw: str) -> None:
-    response.set_cookie(_COOKIE_ACCESS, access_token, max_age=900, **_COOKIE_OPTS)
+    response.set_cookie(_COOKIE_ACCESS, access_token, max_age=28_800, **_COOKIE_OPTS)
     response.set_cookie(_COOKIE_REFRESH, refresh_raw, max_age=2_592_000, **_COOKIE_OPTS)
 
 

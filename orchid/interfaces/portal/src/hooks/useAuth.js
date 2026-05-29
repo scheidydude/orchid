@@ -6,7 +6,18 @@ export function useAuth() {
 
   useEffect(() => {
     fetch('/api/auth/me')
-      .then(r => r.ok ? r.json() : null)
+      .then(async r => {
+        if (r.ok) return r.json()
+        if (r.status === 401) {
+          // Access token expired — try silent refresh via refresh cookie
+          const ref = await fetch('/api/auth/refresh', { method: 'POST' }).catch(() => null)
+          if (ref?.ok) {
+            const r2 = await fetch('/api/auth/me').catch(() => null)
+            return r2?.ok ? r2.json() : null
+          }
+        }
+        return null
+      })
       .then(d => { if (d?.authenticated) setUser(d) })
       .catch(() => {})
       .finally(() => setChecked(true))

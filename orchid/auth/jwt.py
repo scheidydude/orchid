@@ -21,7 +21,7 @@ from orchid.auth.types import ApiKey, AuthError, RefreshToken, User
 if TYPE_CHECKING:
     from orchid.auth.store import UserStore
 
-ACCESS_TOKEN_TTL = timedelta(minutes=15)
+ACCESS_TOKEN_TTL = timedelta(hours=8)
 REFRESH_TOKEN_TTL = timedelta(days=30)
 
 _ph = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=4)
