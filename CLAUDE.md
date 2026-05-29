@@ -32,14 +32,20 @@ Live agent: `--tail` · `--inject TEXT` · `--get-result TASK_ID`
 `orchid multi start|status|stop [--project P] [--workers N]` — alternate multi-project entry
 `orchid login [--server URL] [--username]` — auth with server, save session to `~/.config/orchid/cli_session.json` (0600)
 `orchid logout` — revoke refresh token server-side + delete session file
-`orchid whoami` — show current user from `/api/auth/me`
+`orchid whoami` — show current user, role, email, budget used/limit, cpu used/limit from `/api/auth/me`
 `orchid mcp ls` / `orchid mcp call <tool> [--arg JSON]` — MCP tool inspect/call; uses `connect_for_user()` when logged in (per-user catalog ACLs), anonymous `connect()` otherwise
+`orchid user list` — list all users with budget/CPU usage (admin only)
+`orchid user invite EMAIL [--role R] [--username U]` — create invite link; email auto-sent if SMTP set (admin only)
+`orchid user budget-reset USER_ID` — reset `budget_used_usd` to 0 (admin only)
+`orchid scheduler list` — list caller's scheduled tasks
+`orchid scheduler run TASK_ID` — trigger a scheduled task immediately
+`orchid audit [--limit N] [--user UID] [--action A]` — paginated audit log (admin only)
 `orchid migrate-to-postgres --dsn DSN [--dry-run]` — migrate FileUserStore → Postgres
 `orchid hooks` — manage CLI hooks (registered from `hooks_cli.py`)
 
 *Deprecated (still functional):* `orchid telegram|slack|web` → use `orchid serve --telegram/--slack`.
 
-**Auth (D0066):** When logged in (`cli_session.json` present): `--mode auto` and `--run-task` wrap task execution in `vault_env_context(user_id)` so vault credentials are available to providers, and call `BudgetGuard.check()` before / `BudgetGuard.record()` after. No session = silent fallback to anonymous mode (no vault, no budget tracking, no MCP catalog ACLs). Scheduler, audit log, and user management remain web/API only.
+**Auth (D0066):** When logged in (`cli_session.json` present): `--mode auto` and `--run-task` wrap task execution in `vault_env_context(user_id)` so vault credentials are available to providers, and call `BudgetGuard.check()` before / `BudgetGuard.record()` after. No session = silent fallback to anonymous mode (no vault, no budget tracking, no MCP catalog ACLs). `orchid user`, `orchid scheduler`, `orchid audit` are thin httpx wrappers around existing API endpoints; all require a valid session. `/api/auth/me` returns `budget_usd`, `budget_used_usd`, `cpu_budget_seconds`, `cpu_used_seconds`.
 
 ## Tasks (`tasks.md`)
 `- [ ] **T001** Title \`type:code_generate\` \`p1\` \`needs:T002\` \`model:claude\``.
