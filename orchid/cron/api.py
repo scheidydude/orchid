@@ -282,7 +282,24 @@ def register_routes(app: Any) -> None:
         TIMEOUT = 30.0  # seconds per server
 
         mgr = MCPManager()
-        mgr.discover_servers()
+        mgr.discover_servers()  # loads mcp_servers from project config
+
+        # Merge catalog entries accessible to this user (not already in config)
+        try:
+            from orchid.mcp.catalog import get_catalog as _get_catalog
+            from orchid.mcp.adapter import MCPAdapter
+            _cat = _get_catalog()
+            for _entry in _cat.get_servers_for_user(current_user.user_id, current_user.role):
+                if _entry.server_id not in mgr._adapters:
+                    _cfg = dict(_entry.config)
+                    _cfg["transport"] = _entry.transport
+                    try:
+                        _client = mgr._create_client(_entry.server_id, _cfg)
+                        mgr._adapters[_entry.server_id] = MCPAdapter(_client)
+                    except Exception as _exc:
+                        logger.warning("Skipping catalog server '%s': %s", _entry.server_id, _exc)
+        except Exception as _exc:
+            logger.warning("Catalog merge failed for mcp-tools: %s", _exc)
 
         def _probe(server_name: str, adapter) -> dict:
             """Synchronous connect+list+disconnect — run in a thread."""
@@ -409,7 +426,7 @@ When you have everything needed, end your reply with the single word TASK_READY 
         loop = _asyncio.get_running_loop()
         content = (await loop.run_in_executor(
             None,
-            lambda: provider.complete(messages=messages, system=system_prompt, max_tokens=500),
+            lambda: provider.complete(messages=messages, system=system_prompt, max_tokens=2000),
         )).strip()
 
         logger.debug("Wizard LLM raw output: %r", content)
@@ -471,7 +488,7 @@ When you have everything needed, end your reply with the single word TASK_READY 
             try:
                 json_raw = (await loop.run_in_executor(
                     None,
-                    lambda: provider.complete(messages=extraction_msgs, system=extraction_sys, max_tokens=500),
+                    lambda: provider.complete(messages=extraction_msgs, system=extraction_sys, max_tokens=2000),
                 )).strip()
             except Exception as exc:
                 logger.warning("Wizard extraction call failed: %s", exc)

@@ -214,7 +214,12 @@ class LocalProvider(ProviderBase):
         except Exception as exc:
             logger.debug("[local] could not extract timings: %s", exc)
 
-        return response.choices[0].message.content or ""
+        import re as _re
+        content = response.choices[0].message.content or ""
+        # Strip <think>…</think> blocks emitted by Qwen3/DeepSeek-R1 style
+        # models when thinking leaks into content (server-version dependent).
+        content = _re.sub(r"<think>.*?</think>", "", content, flags=_re.DOTALL).strip()
+        return content
 
     def complete_with_tools(self, messages, tools, dispatch_fn, system=None, max_tokens=4096, max_iterations=10):
         from openai import OpenAI

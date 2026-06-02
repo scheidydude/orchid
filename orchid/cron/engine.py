@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 
 from orchid.cron.executor import TaskExecutor
 from orchid.cron.store import TaskRunStore
+from orchid.cron.types import TaskRun
 
 logger = logging.getLogger(__name__)
 
@@ -92,12 +93,7 @@ class CronEngine:
             return
 
         def _job() -> None:
-            run = self._executor.execute(task_dict, owner_id)
-            self._run_store.append(run)
-            logger.info(
-                "Cron run %s for task %s: status=%s",
-                run.run_id, task_id, run.status,
-            )
+            self._run_task(owner_id, task_dict)
 
         cron_kwargs = self._parse_cron_expression(schedule_str)
         if cron_kwargs is None:
@@ -165,17 +161,27 @@ class CronEngine:
     def _run_task(self, owner_id: str, task_dict: dict) -> None:
         """Execute *task_dict* for *owner_id* and record the run.
 
-        This method is called by both ``run_now`` (in a thread) and by
-        APScheduler job callbacks.  It can be patched in tests to avoid
-        real execution.
+        Writes a "running" entry immediately so the task is visible in the
+        monitor before it completes.  The final entry shares the same run_id;
+        ``get_runs()`` deduplicates by run_id and keeps the newest.
         """
+        initial = TaskRun(
+            task_id=task_dict.get("task_id", ""),
+            owner_id=owner_id,
+            task_name=task_dict.get("name", ""),
+            task_type=task_dict.get("task_type", ""),
+            status="running",
+        )
+        self._run_store.append(initial)
+
         run = self._executor.execute(task_dict, owner_id)
+        run.run_id = initial.run_id  # same id → deduped to final status in get_runs
         self._run_store.append(run)
         logger.info(
             "Run %s for task %s: status=%s",
             run.run_id, task_dict.get("task_id"), run.status,
         )
-        # Dispatch notifications (Phase 2) — fire-and-forget, never raises
+        # Dispatch notifications — fire-and-forget, never raises
         try:
             from orchid.auth.notifications import dispatch_task_notification
             dispatch_task_notification(owner_id, task_dict, run)

@@ -139,4 +139,15 @@ class TaskRunStore:
             return sa
 
         results.sort(key=_sort_key, reverse=True)
+
+        # Dedup by run_id — keep only the latest entry per run_id (final status
+        # overwrites the initial "running" entry written at task start).
+        seen: set[str] = set()
+        deduped: list[TaskRun] = []
+        for r in results:
+            if r.run_id not in seen:
+                seen.add(r.run_id)
+                deduped.append(r)
+        results = deduped
+
         return results[:limit]

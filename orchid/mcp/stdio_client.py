@@ -40,6 +40,11 @@ class StdioMCPClient(MCPClient):
         # Merge parent env with any extra vars from config so PATH, HOME, etc.
         # are inherited and vars like GITHUB_TOKEN are injected correctly.
         proc_env = {**os.environ, **(self._env or {})}
+        # Prepend the running Python's bin dir so orchid-mcp-* entrypoints are
+        # found even when the server process has a minimal PATH (e.g. systemd).
+        import sys as _sys
+        _venv_bin = os.path.dirname(_sys.executable)
+        proc_env["PATH"] = _venv_bin + os.pathsep + proc_env.get("PATH", "")
 
         self._process = subprocess.Popen(
             self._command,

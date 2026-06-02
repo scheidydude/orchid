@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 
 const STATUS_BADGE = {
   success: 'badge-success',
@@ -60,6 +60,12 @@ export default function TaskMonitor() {
 
   useEffect(() => { load(0) }, [load])
 
+  // Auto-refresh every 15 s so in-progress runs become visible without manual reload
+  useEffect(() => {
+    const id = setInterval(() => load(offset), 15_000)
+    return () => clearInterval(id)
+  }, [load, offset])
+
   const pages = Math.ceil(total / PAGE_SIZE)
   const currentPage = Math.floor(offset / PAGE_SIZE)
 
@@ -67,7 +73,10 @@ export default function TaskMonitor() {
     <div className="page">
       <div className="section-header">
         <h2 style={{ fontSize: 18, fontWeight: 700 }}>Task Monitor</h2>
-        <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>{total} runs</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>{total} runs</span>
+          <button className="ghost" style={{ fontSize: 12, padding: '3px 10px' }} onClick={() => load(offset)} disabled={loading}>↺ Refresh</button>
+        </div>
       </div>
 
       {/* Filters */}

@@ -18,11 +18,43 @@ import threading
 _exec_local = threading.local()
 
 
+def _build_mcp_manager(owner_id: str) -> "MCPManager":
+    """Return MCPManager with project config + catalog entries for *owner_id*."""
+    from orchid.mcp.manager import MCPManager
+    from orchid.mcp.adapter import MCPAdapter
+
+    mgr = MCPManager()
+    mgr.discover_servers()  # project mcp_servers config
+
+    try:
+        from orchid.mcp.catalog import get_catalog
+        from orchid.auth.store import get_store
+
+        store = get_store()
+        user = store.get_user(owner_id)
+        role = user.role if user else "user"
+
+        for entry in get_catalog().get_servers_for_user(owner_id, role):
+            if entry.server_id not in mgr._adapters:
+                cfg = dict(entry.config)
+                cfg["transport"] = entry.transport
+                try:
+                    mgr._adapters[entry.server_id] = MCPAdapter(
+                        mgr._create_client(entry.server_id, cfg)
+                    )
+                except Exception as exc:
+                    logger.warning("Skipping catalog server '%s': %s", entry.server_id, exc)
+    except Exception as exc:
+        logger.warning("Catalog merge failed in executor: %s", exc)
+
+    return mgr
+
+
 class TaskExecutionError(Exception):
     """Raised for known, non-retriable config errors."""
 
 
-def _run_agent_prompt(config: dict) -> str:
+def _run_agent_prompt(config: dict, owner_id: str = "") -> str:
     """Execute an agent_prompt type task."""
     from orchid.providers.registry import get_registry
 
@@ -41,10 +73,7 @@ def _run_agent_prompt(config: dict) -> str:
     mcp_servers = config.get("mcp_servers", [])
     if mcp_servers:
         try:
-            from orchid.mcp.manager import MCPManager
-
-            mgr = MCPManager()
-            mgr.discover_servers()
+            mgr = _build_mcp_manager(owner_id)
             tool_lines: list[str] = []
             for server_name in mcp_servers:
                 try:
@@ -85,10 +114,8 @@ def _run_agent_prompt(config: dict) -> str:
     return str(result)
 
 
-def _run_mcp_tool(config: dict) -> str:
+def _run_mcp_tool(config: dict, owner_id: str = "") -> str:
     """Execute an mcp_tool type task."""
-    from orchid.mcp.manager import MCPManager
-
     server_name = config.get("server", "").strip()
     if not server_name:
         raise TaskExecutionError(
@@ -107,12 +134,11 @@ def _run_mcp_tool(config: dict) -> str:
             "mcp_tool config field 'args' must be a dict"
         )
 
-    mgr = MCPManager()
-    mgr.discover_servers()
+    mgr = _build_mcp_manager(owner_id)
     adapter = mgr.get_adapter(server_name)
     if adapter is None:
         raise TaskExecutionError(
-            f"MCP server '{server_name}' not found in config"
+            f"MCP server '{server_name}' not found in config/catalog"
         )
 
     try:
@@ -132,7 +158,7 @@ def _run_mcp_tool(config: dict) -> str:
     return str(result.content)
 
 
-def _run_agent_tool(config: dict) -> str:
+def _run_agent_tool(config: dict, owner_id: str = "") -> str:
     """Execute an agent_tool task: agentic loop with multiple MCP servers.
 
     Config fields:
@@ -145,7 +171,6 @@ def _run_agent_tool(config: dict) -> str:
 
     Tool names are prefixed ``server__toolname`` to avoid cross-server collisions.
     """
-    from orchid.mcp.manager import MCPManager
     from orchid.providers.registry import get_registry
 
     servers = config.get("servers", [])
@@ -164,8 +189,7 @@ def _run_agent_tool(config: dict) -> str:
     provider_key = config.get("provider", "").strip()
     provider = registry.get_by_key(provider_key) if provider_key else registry.resolve(agent_type="base")
 
-    mgr = MCPManager()
-    mgr.discover_servers()
+    mgr = _build_mcp_manager(owner_id)
 
     adapters: dict[str, object] = {}
     tool_defs: list[dict] = []
@@ -217,7 +241,7 @@ def _run_agent_tool(config: dict) -> str:
                 pass
 
 
-def _run_shell(config: dict) -> str:
+def _run_shell(config: dict, owner_id: str = "") -> str:
     """Execute a shell type task."""
     from orchid.tools.shell import bash
 
@@ -287,7 +311,7 @@ class TaskExecutor:
             try:
                 guard.check()       # LLM budget
                 guard.check_cpu()   # daily CPU budget (auto-resets at midnight)
-                output = dispatch_fn(config)
+                output = dispatch_fn(config, owner_id)
                 run.finished_at = _utcnow()
                 run.status = "success"
                 run.output = output or ""
