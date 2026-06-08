@@ -5,7 +5,23 @@
 
 ## Description
 
-AI agent orchestration framework with a lifecycle-driven planning engine. Install once, run against any project. V2 adds a full idea-to-execution pipeline: discuss requirements with an AI product manager, generate architecture docs, break work into milestones, then execute tasks with specialized agents. V2.2 adds parallel task dispatch, native git tools, worktree isolation, dynamic task spawning, a cross-project agent pool, and cost-aware scheduling. V2.3 adds full multi-user auth: JWT sessions, argon2id passwords, API keys with scope enforcement, Google/Entra/OIDC SSO, PKCE mobile flow, append-only audit log, per-user project scoping, a React login page, and pluggable auth storage (file or PostgreSQL). V2.4 adds OS-grade reliability: graceful shutdown, orphan recovery, subprocess worker pool, task preemption/pause-resume, WebSocket backpressure, CPU/latency budgets, and an ordered provider fallback chain that retries on 429/502/503 before marking a task BLOCKED. V2.5 adds a cron-based scheduled task manager: per-user schedules stored as dicts on User, APScheduler-backed engine, `agent_prompt`/`mcp_tool`/`shell` task types, append-only JSONL run history with 30-day pruning, and a full `/api/scheduler/*` REST API. **V3.0** transforms Orchid into a full multi-user agentic OS: per-user credential vault (Fernet/HKDF), admin-managed MCP server catalog with role/user-based access control, per-user LLM spend and CPU-time budgets enforced at execution time, two React SPAs (User Portal `/app/` and Admin Console `/admin/`), admin-invite flow, and a System Config page for live runtime settings. **V3.1** completes the hardening pass: live Telegram/Slack DM notifications from scheduled task runs, `allow_user_projects` flag enforcement across web/Telegram/Slack, per-user project ownership registry with user-namespaced paths, and a production-ready PostgreSQL auth backend with one-command migration from the JSON store. **Portal scheduler UX** adds a timezone-aware visual schedule builder, per-row enable/disable toggle, JSON task export/import for sharing, Save & Test workflow (creates task then runs it, auto-closes on success), an MCP tool browser for `mcp_tool` / `agent_tool` types, and a conversational Task Wizard that interviews the user in plain language and fills in the task form automatically. Auth tokens extended to 8 h with silent refresh so users are not prompted to log in during a normal working day. **V3.2** completes the CLI auth integration: `orchid login/logout/whoami` authenticate against a running server; `--mode auto` and `--run-task` automatically inject vault credentials, enforce LLM/CPU budgets, and record spend for the logged-in user; `orchid mcp ls/call` respects per-user catalog ACLs; `orchid user`, `orchid scheduler`, and `orchid audit` subcommands provide admin and ops CLI access to the full multi-user API.
+Orchid is an AI agent orchestration framework you install once and run against any project.
+
+**Who is it for:**
+Developers and small teams who want AI agents doing real work — writing code, running tests, summarizing research, calling APIs — not just answering questions. Solo devs get a tireless pair programmer. Teams get a shared agentic OS where every user has isolated credentials, budgets, and tool access.
+
+**What it does:**
+- Turns a plain repo into an agentic workspace: discuss requirements with an AI product manager, generate architecture docs and a task board, then execute tasks with specialized agents (developer, tester, reviewer, researcher)
+- Runs tasks in parallel with dependency-aware scheduling, provider fallback, and cost tracking
+- Simulates an async coworker bench via scheduled tasks — set up recurring agent prompts, MCP tool calls, or shell commands on a cron schedule, and wake up to completed work: daily standup summaries, nightly test runs, automated research briefs
+- Serves a web UI, Telegram/Slack bots, and a REST API from a single `orchid serve` process
+
+**Multi-user mode (V3):**
+Deploy as a shared agentic OS. Each user gets an encrypted credential vault, per-user MCP server access, and LLM/CPU spend limits — managed through two React SPAs (User Portal `/app/`, Admin Console `/admin/`).
+
+**Interface options:** CLI · REST API · React web UI · Telegram · Slack · cron scheduler · remote worker nodes
+
+See [CHANGELOG.md](CHANGELOG.md) for full version history.
 
 ```
 ~/orchid/              ← install here
