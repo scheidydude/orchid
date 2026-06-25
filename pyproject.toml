@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "orchid"
-version = "3.1.42"
+version = "3.1.43"
 description = "AI agent orchestration framework for persistent bare-metal deployment"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -36,6 +36,7 @@ dependencies = [
     "watchdog>=4.0.0",
     "apscheduler>=3.10.0",
     "mcp>=1.0.0",
+    "jinja2>=3.1.0",
 ]
 license = {text = "AGPL-3.0-or-later"}
 
@@ -56,6 +57,7 @@ dev = [
 orchid = "orchid.interfaces.cli:app"
 orchid-mcp-smtp = "orchid.servers.smtp:main"
 orchid-mcp-searxng = "orchid.servers.searxng_server:main"
+orchid-mcp-email-template = "orchid.servers.email_template.server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["orchid"]
