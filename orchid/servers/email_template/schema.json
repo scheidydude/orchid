@@ -1,0 +1,32 @@
+{
+  "subject": "AI Infra Digest — June 20, 2026",
+  "preheader": "3 items on MCP servers, 1 on Bedrock pricing",
+  "intro": "Optional 1-2 sentence summary shown at the top of the email.",
+  "sections": [
+    {
+      "heading": "MCP & Agent Tooling",
+      "items": [
+        {
+          "title": "Short, punchy headline for the item",
+          "summary": "1-3 sentence summary in plain prose. No markdown.",
+          "url": "https://source-article-url.com",
+          "source": "TechCrunch",
+          "tag": "new"
+        }
+      ]
+    },
+    {
+      "heading": "Inference & Local LLM",
+      "items": [
+        {
+          "title": "Another item",
+          "summary": "Summary text.",
+          "url": "https://example.com",
+          "source": "Hacker News",
+          "tag": null
+        }
+      ]
+    }
+  ],
+  "footer_note": "Optional closing line, e.g. run metadata or a joke."
+}

@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ subject }}</title>
+</head>
+<body style="margin:0; padding:0; background-color:#f4f5f7; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+
+  <!-- Preheader (hidden, shows in inbox preview) -->
+  {% if preheader %}
+  <div style="display:none; max-height:0; overflow:hidden; mso-hide:all;">{{ preheader }}</div>
+  {% endif %}
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f5f7;">
+    <tr>
+      <td align="center" style="padding: 24px 16px;">
+
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px; max-width:600px; background-color:#ffffff; border-radius:8px; overflow:hidden;">
+
+          <!-- Header bar -->
+          <tr>
+            <td style="background-color:#1a1f2e; padding:20px 28px;">
+              <span style="color:#ffffff; font-size:18px; font-weight:600; letter-spacing:0.2px;">{{ subject }}</span>
+            </td>
+          </tr>
+
+          {% if intro %}
+          <tr>
+            <td style="padding:20px 28px 4px 28px;">
+              <p style="margin:0; color:#444444; font-size:14px; line-height:1.5;">{{ intro }}</p>
+            </td>
+          </tr>
+          {% endif %}
+
+          <!-- Sections -->
+          {% for section in sections %}
+          <tr>
+            <td style="padding: 20px 28px 4px 28px;">
+              <p style="margin:0 0 4px 0; color:#1a1f2e; font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:0.6px; border-bottom:2px solid #e8eaed; padding-bottom:8px;">
+                {{ section.heading }}
+              </p>
+            </td>
+          </tr>
+
+          {% for item in section['items'] %}
+          <tr>
+            <td style="padding: 14px 28px; {% if not loop.last %}border-bottom:1px solid #f0f1f3;{% endif %}">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="vertical-align:top;">
+                    <p style="margin:0 0 4px 0;">
+                      {% if item.url %}
+                      <a href="{{ item.url }}" style="color:#1a56db; font-size:15px; font-weight:600; text-decoration:none; line-height:1.4;">{{ item.title }}</a>
+                      {% else %}
+                      <span style="color:#1a1f2e; font-size:15px; font-weight:600;">{{ item.title }}</span>
+                      {% endif %}
+                      {% if item.tag %}
+                      <span style="display:inline-block; margin-left:6px; padding:2px 8px; background-color:#eef2ff; color:#4338ca; font-size:11px; font-weight:600; border-radius:10px; text-transform:uppercase; vertical-align:middle;">{{ item.tag }}</span>
+                      {% endif %}
+                    </p>
+                    <p style="margin:0 0 4px 0; color:#555555; font-size:13.5px; line-height:1.5;">{{ item.summary }}</p>
+                    {% if item.source %}
+                    <p style="margin:0; color:#9aa0a6; font-size:12px;">{{ item.source }}</p>
+                    {% endif %}
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          {% endfor %}
+          {% endfor %}
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding: 20px 28px; background-color:#fafafa; border-top:1px solid #eeeeee;">
+              <p style="margin:0; color:#9aa0a6; font-size:12px; line-height:1.5;">
+                {% if footer_note %}{{ footer_note }}<br>{% endif %}
+                Generated automatically by Orchid &middot; {{ generated_at }}
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

@@ -51,7 +51,8 @@
       "Skill(caveman:caveman-commit)",
       "Bash(npm install *)",
       "Bash(tee /tmp/suite_run.txt)",
-      "Bash(grep -v \"^$\")"
+      "Bash(grep -v \"^$\")",
+      "Bash(timeout 5 npx -y @resend/mcp-server)"
     ]
   },
   "enabledMcpjsonServers": [

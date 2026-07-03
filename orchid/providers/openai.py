@@ -28,12 +28,29 @@ def _openai_tool_loop(client, model, messages, tools, dispatch_fn, system=None, 
         msgs = [{"role": "system", "content": system}] + msgs
 
     for _ in range(max_iterations):
-        response = client.chat.completions.create(
-            model=model,
-            messages=msgs,
-            tools=oai_tools or None,
-            max_tokens=max_tokens,
-        )
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=msgs,
+                tools=oai_tools or None,
+                max_tokens=max_tokens,
+            )
+        except Exception as exc:
+            err = str(exc)
+            # llama.cpp / LocalAI returns 500 when the model generates tool-call
+            # arguments that contain unescaped JSON characters (common with long
+            # string values).  Return a recoverable error so the outer agent loop
+            # can decide whether to retry with shorter inputs.
+            if "parse tool call arguments" in err or (
+                "500" in err and "parse error" in err
+            ):
+                return (
+                    "Error: model generated invalid JSON in tool-call arguments "
+                    "(likely an unescaped quote inside a long string). "
+                    "Retry with shorter field values — summaries ≤ 300 chars, "
+                    "no raw article text in arguments."
+                )
+            raise
         msg = response.choices[0].message
         msgs.append(msg)
 

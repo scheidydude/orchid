@@ -76,8 +76,16 @@ _TOOL_SCHEMA: dict[str, Any] = {
             "html_body": {
                 "type": "string",
                 "description": (
-                    "Optional HTML body. "
-                    "When provided the message is sent as multipart/alternative."
+                    "Optional HTML body (small strings only). "
+                    "For render_email output use html_body_file instead."
+                ),
+            },
+            "html_body_file": {
+                "type": "string",
+                "description": (
+                    "Path to a file containing the HTML body. "
+                    "Use this instead of html_body when sending render_email output "
+                    "— avoids embedding large HTML in JSON arguments."
                 ),
             },
             "cc": {
@@ -278,13 +286,25 @@ class SMTPMCPServer:
         if bcc_str:
             recipients += _addr_list(bcc_str)
 
+        # --- Resolve HTML body (file path preferred over inline string) ------
+        html_body: str | None = args.get("html_body") or None
+        html_body_file: str | None = args.get("html_body_file", "").strip() or None
+        if html_body_file:
+            try:
+                html_body = open(html_body_file, encoding="utf-8").read()
+            except OSError as exc:
+                return {
+                    "content": [{"type": "text", "text": f"Cannot read html_body_file {html_body_file!r}: {exc}"}],
+                    "isError": True,
+                }
+
         # --- Build and send ------------------------------------------
         msg = _build_message(
             from_addr=from_addr,
             to=to_str,
             subject=args["subject"],
             body=args["body"],
-            html_body=args.get("html_body") or None,
+            html_body=html_body,
             cc=cc_str,
         )
 
