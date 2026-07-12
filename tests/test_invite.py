@@ -2,9 +2,9 @@
 POST /api/auth/invite/accept."""
 
 import os
-import pytest
 from unittest.mock import patch
 
+import pytest
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -13,11 +13,11 @@ def invite_client(tmp_path):
     """TestClient with an admin user and a regular user, no SMTP."""
     os.environ["JWT_SECRET"] = "test-jwt-secret-invite-tests"
 
-    from orchid.interfaces.web_server import create_app
     import orchid.auth.store as store_mod
-    from orchid.auth.store import FileUserStore
     from orchid.auth.jwt import hash_password
+    from orchid.auth.store import FileUserStore
     from orchid.auth.types import User
+    from orchid.interfaces.web_server import create_app
 
     new_store = FileUserStore(path=tmp_path / "users.json")
     old_instance = store_mod._store_instance
@@ -90,8 +90,8 @@ class TestAdminInvite:
     def test_invite_requires_admin(self, invite_client, tmp_path):
         """A non-admin user cannot create invites."""
         client, store, app = invite_client
-        from orchid.auth.types import User
         from orchid.auth.jwt import hash_password
+        from orchid.auth.types import User
         regular = User(
             user_id="u_regular",
             username="regular_user",
@@ -134,7 +134,7 @@ class TestInviteValidate:
         assert r.status_code == 200
         url = r.json()["invite_url"]
         # Parse invite_id and invite_token from URL query string
-        from urllib.parse import urlparse, parse_qs
+        from urllib.parse import parse_qs, urlparse
         qs = parse_qs(urlparse(url).query)
         return qs["invite_id"][0], qs["invite_token"][0]
 
@@ -152,7 +152,7 @@ class TestInviteValidate:
 
     def test_expired_invite_410(self, invite_client):
         client, store, app = invite_client
-        from datetime import UTC, timedelta, datetime
+        from datetime import UTC, datetime, timedelta
         token_id, secret = self._get_invite_parts(client, store)
         # Manually expire the invite
         inv = store.get_invite(token_id)
@@ -172,7 +172,7 @@ class TestInviteAccept:
             r = client.post("/api/admin/invite", json={"email": email, "role": "user"})
         assert r.status_code == 200
         url = r.json()["invite_url"]
-        from urllib.parse import urlparse, parse_qs
+        from urllib.parse import parse_qs, urlparse
         qs = parse_qs(urlparse(url).query)
         return qs["invite_id"][0], qs["invite_token"][0], email
 
@@ -259,7 +259,7 @@ class TestInviteAccept:
     def test_expired_invite_rejected(self, invite_client):
         client, store, app = invite_client
         token_id, secret, _ = self._create_invite(client)
-        from datetime import UTC, timedelta, datetime
+        from datetime import UTC, datetime, timedelta
         inv = store.get_invite(token_id)
         inv.expires_at = datetime.now(UTC) - timedelta(hours=1)
         store.store_invite(inv)

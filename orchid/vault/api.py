@@ -18,8 +18,9 @@ def register_routes(app: Any) -> None:
     """
     try:
         from fastapi import Depends, HTTPException, Request
-        from orchid.auth.middleware import require_auth
+
         from orchid.auth.audit import AuditAction, AuditStore, make_event
+        from orchid.auth.middleware import require_auth
         from orchid.auth.store import get_store
         from orchid.vault.store import get_vault
     except ImportError as exc:

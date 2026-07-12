@@ -1,16 +1,14 @@
 """Tests for TaskRunStore and UserStore scheduled-task methods."""
 
 import pathlib
-import tempfile
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from orchid.cron.store import TaskRunStore
-from orchid.cron.types import TaskRun
 from orchid.auth.store import UserStore
 from orchid.auth.types import User
-
+from orchid.cron.store import TaskRunStore
+from orchid.cron.types import TaskRun
 
 # ── fixtures ───────────────────────────────────────────────────────────────────
 

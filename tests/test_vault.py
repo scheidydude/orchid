@@ -1,10 +1,9 @@
 """Tests for orchid.vault.store (VaultStore) and /api/user/credentials + notifications."""
 
 import os
-import pytest
-from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 
 # ── VaultStore unit tests ─────────────────────────────────────────────────────
 
@@ -128,13 +127,13 @@ def vault_client(tmp_path):
     os.environ["JWT_SECRET"] = "test-jwt-secret-for-vault-tests"
     os.environ["ORCHID_VAULT_KEY"] = "vault-master-key-for-tests"
 
-    from orchid.interfaces.web_server import create_app
     import orchid.auth.store as store_mod
-    from orchid.auth.store import FileUserStore
-    from orchid.auth.jwt import hash_password
-    from orchid.auth.types import User
-    from orchid.vault.store import reset_vault, VaultStore
     import orchid.vault.store as vault_mod
+    from orchid.auth.jwt import hash_password
+    from orchid.auth.store import FileUserStore
+    from orchid.auth.types import User
+    from orchid.interfaces.web_server import create_app
+    from orchid.vault.store import VaultStore, reset_vault
 
     # Fresh auth store
     new_store = FileUserStore(path=tmp_path / "users.json")

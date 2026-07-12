@@ -42,7 +42,7 @@ def _format_dm_text(task_name: str, status: str, run_id: str, output: str) -> st
     """Format a short DM message for Telegram or Slack."""
     emoji = _STATUS_EMOJI.get(status, "🔔")
     lines = [
-        f"🌸 *Orchid Task Notification*",
+        "🌸 *Orchid Task Notification*",
         f"Task: {task_name}",
         f"Status: {emoji} {status}",
         f"Run: `{run_id}`",

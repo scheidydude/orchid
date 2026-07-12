@@ -277,7 +277,7 @@ class MCPManager:
         Raises:
             MCPManagerError: If any server fails to connect.
         """
-        from orchid.mcp.catalog import get_catalog, UserMCPStore
+        from orchid.mcp.catalog import UserMCPStore, get_catalog
 
         cat = catalog_store or get_catalog()
         user_store = UserMCPStore(users_dir=users_dir)

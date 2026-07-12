@@ -25,13 +25,12 @@ Or reference in mcp_catalog.json::
 import sys
 import tempfile
 from pathlib import Path
-from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
 sys.path.insert(0, str(Path(__file__).parent))
-from render_email import render_digest_email, _validate  # noqa: E402
+from render_email import _validate, render_digest_email  # noqa: E402
 
 mcp = FastMCP("email-render")
 
@@ -41,9 +40,9 @@ TEMPLATE_DIR = Path(__file__).parent / "templates"
 class EmailItem(BaseModel):
     title: str = Field(..., description="Short headline for this item, no markdown.", max_length=150)
     summary: str = Field(..., description="1-3 sentence plain-text summary. Max ~300 chars. Do NOT paste raw article text.", max_length=500)
-    url: Optional[str] = Field(None, description="Source link, if any.", max_length=500)
-    source: Optional[str] = Field(None, description="Publication or site name.", max_length=100)
-    tag: Optional[str] = Field(None, description="Short label like 'new' or 'security'. Omit if not applicable.", max_length=20)
+    url: str | None = Field(None, description="Source link, if any.", max_length=500)
+    source: str | None = Field(None, description="Publication or site name.", max_length=100)
+    tag: str | None = Field(None, description="Short label like 'new' or 'security'. Omit if not applicable.", max_length=20)
 
 
 class EmailSection(BaseModel):
@@ -55,9 +54,9 @@ class EmailSection(BaseModel):
 def render_email(
     subject: str,
     sections: list[EmailSection],
-    preheader: Optional[str] = None,
-    intro: Optional[str] = None,
-    footer_note: Optional[str] = None,
+    preheader: str | None = None,
+    intro: str | None = None,
+    footer_note: str | None = None,
     template: str = "digest.html.j2",
 ) -> str:
     """

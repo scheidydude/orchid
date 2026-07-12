@@ -7,9 +7,6 @@ Covers:
 """
 
 import os
-import sys
-from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -33,9 +30,9 @@ def auth_client(tmp_path):
     ws._auth_store = None
     ws._audit_store = None
 
-    from orchid.auth.store import UserStore
-    from orchid.auth.audit import AuditStore
     import orchid.auth.store as store_mod
+    from orchid.auth.audit import AuditStore
+    from orchid.auth.store import UserStore
 
     new_store = UserStore(path=tmp_path / "users.json")
     new_audit = AuditStore(audit_dir=tmp_path / "audit")

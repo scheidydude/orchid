@@ -1,6 +1,4 @@
-from datetime import UTC, datetime
-import pytest
-from orchid.cron.types import ScheduledTask, TaskRun, _new_task_id, _new_run_id, _utcnow
+from orchid.cron.types import ScheduledTask, TaskRun, _new_run_id, _new_task_id
 
 
 class TestScheduledTask:

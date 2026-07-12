@@ -25,6 +25,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 from pathlib import Path
+
 load_dotenv(Path.home() / ".config" / "orchid" / ".env", override=False)
 
 import typer
@@ -394,7 +395,7 @@ def _cmd_auto(
 
     if cli_user_id:
         try:
-            from orchid.budget.guard import BudgetExceededError, BudgetGuard
+            from orchid.budget.guard import BudgetGuard
             BudgetGuard(cli_user_id).check()
             BudgetGuard(cli_user_id).check_cpu()
         except Exception as _be:
@@ -461,7 +462,7 @@ def _cmd_run_task(
 
     if cli_user_id:
         try:
-            from orchid.budget.guard import BudgetExceededError, BudgetGuard
+            from orchid.budget.guard import BudgetGuard
             BudgetGuard(cli_user_id).check()
             BudgetGuard(cli_user_id).check_cpu()
         except Exception as _be:
@@ -1907,7 +1908,7 @@ def login(
     import httpx
     from rich.prompt import Prompt
 
-    from orchid.interfaces.cli_auth import DEFAULT_SERVER_URL, save_cli_session
+    from orchid.interfaces.cli_auth import save_cli_session
 
     _setup_logging(log_level)
     base = server.rstrip("/")
@@ -2130,8 +2131,9 @@ def migrate_to_postgres(
             continue
 
         # API keys (stored inside user.api_keys dict: {key_id: ApiKey-dict})
-        from orchid.auth.types import ApiKey
         from datetime import datetime
+
+        from orchid.auth.types import ApiKey
         for key_id, ak_data in u.api_keys.items():
             try:
                 if isinstance(ak_data, dict):

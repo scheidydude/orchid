@@ -103,7 +103,7 @@ class TestUsersCRUD:
         assert got.role == "admin"
 
     def test_update_nonexistent_raises(self):
-        from orchid.auth.types import AuthError, User
+        from orchid.auth.types import AuthError
         ghost = _user()
         with pytest.raises(AuthError):
             self.store.update_user(ghost)

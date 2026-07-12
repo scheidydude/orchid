@@ -223,6 +223,7 @@ class LocalProvider(ProviderBase):
 
     def complete_with_tools(self, messages, tools, dispatch_fn, system=None, max_tokens=4096, max_iterations=10):
         from openai import OpenAI
+
         from orchid.providers.openai import _openai_tool_loop
         return _openai_tool_loop(
             client=OpenAI(base_url=self.base_url, api_key=self.api_key),

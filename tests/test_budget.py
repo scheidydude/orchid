@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import os
 import threading
-import pytest
 
+import pytest
 
 # ── BudgetGuard unit tests ────────────────────────────────────────────────────
 
@@ -24,8 +24,8 @@ import pytest
 def user_store(tmp_path):
     pytest.importorskip("fastapi")
     os.environ.setdefault("JWT_SECRET", "test-budget-secret")
-    from orchid.auth.store import FileUserStore
     from orchid.auth.jwt import hash_password
+    from orchid.auth.store import FileUserStore
     from orchid.auth.types import User
 
     store = FileUserStore(path=tmp_path / "users.json")
@@ -58,7 +58,7 @@ class TestBudgetGuardCheck:
         guard.check()  # 5 < 10 → no raise
 
     def test_over_budget_raises(self, user_store):
-        from orchid.budget.guard import BudgetGuard, BudgetExceededError
+        from orchid.budget.guard import BudgetExceededError, BudgetGuard
         store = user_store
         user = store.get_user("alice")
         user.budget_used_usd = 10.0
@@ -141,7 +141,7 @@ class TestVaultEnvContext:
         vault.set("alice", "ANTHROPIC_API_KEY", "sk-test-anthropic")
         vault.set("alice", "MY_CUSTOM_TOKEN", "custom-value")  # not in _PROVIDER_ENV_VARS
 
-        from orchid.budget.guard import vault_env_context, get_env
+        from orchid.budget.guard import get_env, vault_env_context
         with vault_env_context("alice", vault_store=vault) as injected:
             assert "ANTHROPIC_API_KEY" in injected
             assert injected["ANTHROPIC_API_KEY"] == "sk-test-anthropic"
@@ -163,7 +163,7 @@ class TestVaultEnvContext:
         vault.set("user1", "ANTHROPIC_API_KEY", "key-for-user1")
         vault.set("user2", "ANTHROPIC_API_KEY", "key-for-user2")
 
-        from orchid.budget.guard import vault_env_context, get_env
+        from orchid.budget.guard import get_env, vault_env_context
 
         results: dict[str, str | None] = {}
         errors: list[Exception] = []
@@ -213,10 +213,10 @@ class TestComputeAnthropicCost:
 @pytest.fixture()
 def executor_store(tmp_path):
     os.environ.setdefault("JWT_SECRET", "test-exec-budget")
-    from orchid.auth.store import FileUserStore
-    from orchid.auth.jwt import hash_password
-    from orchid.auth.types import User
     import orchid.auth.store as store_mod
+    from orchid.auth.jwt import hash_password
+    from orchid.auth.store import FileUserStore
+    from orchid.auth.types import User
 
     store = FileUserStore(path=tmp_path / "users.json")
     alice = User(
@@ -248,11 +248,10 @@ class TestExecutorBudget:
     def test_cost_recorded_after_success(self, tmp_path):
         """Cost accumulated in _exec_local.cost_usd is persisted after success."""
         os.environ.setdefault("JWT_SECRET", "test-cost-record")
-        from orchid.auth.store import FileUserStore
-        from orchid.auth.jwt import hash_password
-        from orchid.auth.types import User
         import orchid.auth.store as store_mod
-        import orchid.cron.executor as ex_mod
+        from orchid.auth.jwt import hash_password
+        from orchid.auth.store import FileUserStore
+        from orchid.auth.types import User
 
         store = FileUserStore(path=tmp_path / "users.json")
         bob = User(
@@ -296,12 +295,13 @@ def reset_client(tmp_path):
     pytest.importorskip("fastapi")
     os.environ.setdefault("JWT_SECRET", "test-budget-reset")
     from fastapi.testclient import TestClient
+
+    import orchid.auth.store as store_mod
     import orchid.interfaces.web_server as ws
-    from orchid.auth.store import FileUserStore
     from orchid.auth.audit import AuditStore
     from orchid.auth.jwt import hash_password
+    from orchid.auth.store import FileUserStore
     from orchid.auth.types import User
-    import orchid.auth.store as store_mod
 
     ws._projects.clear(); ws._managers.clear(); ws._runners.clear()
     ws._main_loop = None; ws._auth_store = None; ws._audit_store = None
@@ -373,7 +373,7 @@ class TestCPUBudget:
         BudgetGuard("alice", store=user_store).check_cpu()
 
     def test_over_cpu_budget_raises(self, user_store):
-        from orchid.budget.guard import BudgetGuard, BudgetExceededError
+        from orchid.budget.guard import BudgetExceededError, BudgetGuard
         u = user_store.get_user("alice")
         u.cpu_budget_seconds = 100.0
         u.cpu_used_seconds = 100.0
@@ -427,12 +427,13 @@ def admin_client2(tmp_path):
     pytest.importorskip("fastapi")
     os.environ.setdefault("JWT_SECRET", "test-stretch-endpoints")
     from fastapi.testclient import TestClient
+
+    import orchid.auth.store as store_mod
     import orchid.interfaces.web_server as ws
-    from orchid.auth.store import FileUserStore
     from orchid.auth.audit import AuditStore
     from orchid.auth.jwt import hash_password
+    from orchid.auth.store import FileUserStore
     from orchid.auth.types import User
-    import orchid.auth.store as store_mod
 
     ws._projects.clear(); ws._managers.clear(); ws._runners.clear()
     ws._main_loop = None; ws._auth_store = None; ws._audit_store = None
@@ -468,12 +469,13 @@ class TestAdminRunsEndpoint:
         pytest.importorskip("fastapi")
         os.environ.setdefault("JWT_SECRET", "test-stretch-nonadmin")
         from fastapi.testclient import TestClient
+
+        import orchid.auth.store as store_mod
         import orchid.interfaces.web_server as ws
-        from orchid.auth.store import FileUserStore
         from orchid.auth.audit import AuditStore
         from orchid.auth.jwt import hash_password
+        from orchid.auth.store import FileUserStore
         from orchid.auth.types import User
-        import orchid.auth.store as store_mod
 
         ws._projects.clear(); ws._managers.clear(); ws._runners.clear()
         ws._main_loop = None; ws._auth_store = None; ws._audit_store = None

@@ -40,7 +40,7 @@ class TaskRunStore:
         try:
             cutoff = datetime.now(UTC) - timedelta(days=_RETENTION_DAYS)
             kept_lines: list[str] = []
-            with open(self._file, "r", encoding="utf-8") as fh:
+            with open(self._file, encoding="utf-8") as fh:
                 for line in fh:
                     stripped = line.strip()
                     if not stripped:
@@ -93,7 +93,7 @@ class TaskRunStore:
             return []
 
         try:
-            with open(self._file, "r", encoding="utf-8") as fh:
+            with open(self._file, encoding="utf-8") as fh:
                 raw_lines = [l.strip() for l in fh if l.strip()]
         except Exception:
             logger.warning("get_runs failed to read %s", self._file)

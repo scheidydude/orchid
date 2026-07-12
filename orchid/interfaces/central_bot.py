@@ -224,10 +224,10 @@ class CentralBotManager:
 
 # ── Module-level singleton ─────────────────────────────────────────────────────
 
-_bot_manager_instance: "CentralBotManager | None" = None
+_bot_manager_instance: CentralBotManager | None = None
 
 
-def set_bot_manager(mgr: "CentralBotManager | None") -> None:
+def set_bot_manager(mgr: CentralBotManager | None) -> None:
     """Register (or clear) the running CentralBotManager singleton.
 
     Called by web_server._lifespan after bot manager starts/stops.
@@ -237,7 +237,7 @@ def set_bot_manager(mgr: "CentralBotManager | None") -> None:
     _bot_manager_instance = mgr
 
 
-def get_bot_manager() -> "CentralBotManager | None":
+def get_bot_manager() -> CentralBotManager | None:
     """Return the running CentralBotManager, or None if bots are not active.
 
     Intended for fire-and-forget callers (e.g. notifications.py) that must

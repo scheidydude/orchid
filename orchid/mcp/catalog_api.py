@@ -23,8 +23,9 @@ def register_admin_routes(app: Any) -> None:
     """
     try:
         from fastapi import Depends, HTTPException, Request
-        from orchid.auth.middleware import require_auth
+
         from orchid.auth.audit import AuditAction, AuditStore, make_event
+        from orchid.auth.middleware import require_auth
         from orchid.mcp.catalog import MCPServerEntry, get_catalog
     except ImportError as exc:
         logger.warning("MCP admin routes skipped: %s", exc)
@@ -221,10 +222,11 @@ def register_user_routes(app: Any) -> None:
     """
     try:
         from fastapi import Depends, HTTPException, Request
-        from orchid.auth.middleware import require_auth
+
         from orchid.auth.audit import AuditAction, AuditStore, make_event
-        from orchid.mcp.catalog import get_catalog, UserMCPStore
+        from orchid.auth.middleware import require_auth
         from orchid.config import get as _cfg_get
+        from orchid.mcp.catalog import UserMCPStore, get_catalog
     except ImportError as exc:
         logger.warning("MCP user routes skipped: %s", exc)
         return

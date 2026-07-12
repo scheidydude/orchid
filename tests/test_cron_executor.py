@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import MagicMock, patch
 
+import pytest
 
-from orchid.cron.executor import TaskExecutor, TaskExecutionError
+from orchid.cron.executor import TaskExecutor
 from orchid.cron.types import TaskRun
 
 
@@ -279,7 +279,6 @@ class TestTaskExecutorAgentTool:
 
     def test_single_turn_end_turn(self, executor):
         """No tool calls — end_turn on first response returns text."""
-        from orchid.mcp.types import MCPTool
 
         mock_adapter = MagicMock()
         mock_adapter.list_tools.return_value = [self._make_tool()]
@@ -354,7 +353,7 @@ class TestTaskExecutorAgentTool:
 
     def test_multi_server_tool_prefix(self, executor):
         """Tools from two servers are prefixed; dispatch routes correctly."""
-        from orchid.mcp.types import MCPTool, MCPResult
+        from orchid.mcp.types import MCPResult, MCPTool
 
         github_tool = MCPTool(name="search_repos", description="Search", parameters={})
         gmail_tool = MCPTool(name="send_email", description="Send", parameters={})

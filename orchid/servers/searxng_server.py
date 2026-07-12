@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import html.parser
-import json
-import sys
 
 import httpx
 import mcp.server.stdio

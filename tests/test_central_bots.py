@@ -950,7 +950,8 @@ class TestTelegramSendDM:
 
     def test_send_dm_dispatches_coroutine(self, tmp_path):
         import asyncio
-        from unittest.mock import AsyncMock, patch as upatch
+        from unittest.mock import AsyncMock
+        from unittest.mock import patch as upatch
 
         bot = self._make_bot(tmp_path)
         loop = asyncio.new_event_loop()
@@ -1125,6 +1126,7 @@ class TestDispatchTaskNotification:
 
     def test_telegram_dm_dispatched_when_bot_running(self, tmp_path):
         from unittest.mock import patch as upatch
+
         from orchid.auth.notifications import dispatch_task_notification
 
         mock_mgr = MagicMock()
@@ -1148,6 +1150,7 @@ class TestDispatchTaskNotification:
     def test_telegram_dm_skipped_when_no_bot(self, caplog, tmp_path):
         import logging
         from unittest.mock import patch as upatch
+
         from orchid.auth.notifications import dispatch_task_notification
 
         user = self._make_user({
@@ -1165,6 +1168,7 @@ class TestDispatchTaskNotification:
 
     def test_slack_dm_dispatched_when_bot_running(self, tmp_path):
         from unittest.mock import patch as upatch
+
         from orchid.auth.notifications import dispatch_task_notification
 
         mock_mgr = MagicMock()

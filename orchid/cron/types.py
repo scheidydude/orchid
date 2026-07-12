@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-import uuid
 
 
 def _new_task_id() -> str:

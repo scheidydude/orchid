@@ -6,12 +6,11 @@ import json
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from orchid.servers.smtp import SMTPMCPServer, _addr_list, _build_message, main
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

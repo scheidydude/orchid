@@ -13,13 +13,9 @@ Covers:
 
 from __future__ import annotations
 
-import json
-import os
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # ── Catalog store ─────────────────────────────────────────────────────────────
 
@@ -268,7 +264,7 @@ class TestUserMCPStore:
 class TestConnectForUser:
     @pytest.fixture(autouse=True)
     def setup(self, tmp_path):
-        from orchid.mcp.catalog import MCPCatalogStore, UserMCPStore, MCPServerEntry, reset_catalog
+        from orchid.mcp.catalog import MCPCatalogStore, MCPServerEntry, UserMCPStore, reset_catalog
         reset_catalog()
         self.tmp = tmp_path
         self.cat = MCPCatalogStore(catalog_path=tmp_path / "catalog.json")
@@ -335,8 +331,8 @@ class TestConnectForUser:
         assert "alice-private" in call_log
 
     def test_connect_for_user_denied_server_excluded(self):
-        from orchid.mcp.manager import MCPManager
         from orchid.mcp.catalog import MCPServerEntry
+        from orchid.mcp.manager import MCPManager
         # Add admin-only server
         self.cat.add_server(MCPServerEntry(
             server_id="admin-tool",
@@ -367,8 +363,8 @@ class TestConnectForUser:
         assert "echo" in call_log
 
     def test_credential_injection_stdio(self):
-        from orchid.mcp.manager import MCPManager
         from orchid.mcp.catalog import MCPServerEntry
+        from orchid.mcp.manager import MCPManager
         self.cat.add_server(MCPServerEntry(
             server_id="credserver",
             name="Cred Server",
@@ -404,8 +400,8 @@ class TestConnectForUser:
         assert injected_config.get("env", {}).get("MY_API_KEY") == "secret-value"
 
     def test_credential_injection_http(self):
-        from orchid.mcp.manager import MCPManager
         from orchid.mcp.catalog import MCPServerEntry
+        from orchid.mcp.manager import MCPManager
         self.cat.add_server(MCPServerEntry(
             server_id="httpserver",
             name="HTTP Server",
@@ -482,6 +478,7 @@ def admin_client(tmp_path):
     pytest.importorskip("httpx")
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
+
     from orchid.mcp.catalog import MCPCatalogStore, reset_catalog
     from orchid.mcp.catalog_api import register_admin_routes, register_user_routes
 
@@ -516,11 +513,12 @@ def catalog_client(tmp_path):
     """FastAPI test client for catalog admin routes with proper auth mock."""
     pytest.importorskip("fastapi")
     pytest.importorskip("httpx")
-    from fastapi import FastAPI, Depends
+    from fastapi import FastAPI
     from fastapi.testclient import TestClient
+
+    from orchid.auth.types import User
     from orchid.mcp.catalog import MCPCatalogStore, reset_catalog
     from orchid.mcp.catalog_api import register_admin_routes, register_user_routes
-    from orchid.auth.types import User
 
     cat = MCPCatalogStore(catalog_path=tmp_path / "catalog.json")
     user_store_dir = tmp_path / "users"
@@ -565,7 +563,6 @@ def catalog_client(tmp_path):
         orig_ru = capi.register_user_routes
 
         # Inject auth into app
-        from fastapi import Request
 
         # Override require_auth at the middleware module level
         with patch.object(mw, 'require_auth', fake_require_auth):
@@ -587,10 +584,11 @@ class TestAdminCatalogAPI:
         pytest.importorskip("httpx")
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
+
+        import orchid.auth.middleware as mw
+        from orchid.auth.types import User
         from orchid.mcp.catalog import MCPCatalogStore, reset_catalog
         from orchid.mcp.catalog_api import register_admin_routes
-        from orchid.auth.types import User
-        import orchid.auth.middleware as mw
 
         reset_catalog()
         self.cat = MCPCatalogStore(catalog_path=tmp_path / "catalog.json")
@@ -733,10 +731,11 @@ class TestUserMCPAPI:
         pytest.importorskip("httpx")
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
-        from orchid.mcp.catalog import MCPCatalogStore, UserMCPStore, MCPServerEntry, reset_catalog
-        from orchid.mcp.catalog_api import register_user_routes
-        from orchid.auth.types import User
+
         import orchid.auth.middleware as mw
+        from orchid.auth.types import User
+        from orchid.mcp.catalog import MCPCatalogStore, MCPServerEntry, UserMCPStore, reset_catalog
+        from orchid.mcp.catalog_api import register_user_routes
 
         reset_catalog()
         self.tmp = tmp_path
@@ -835,10 +834,11 @@ class TestAllowUserMCPFlag:
         pytest.importorskip("httpx")
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
+
+        import orchid.auth.middleware as mw
+        from orchid.auth.types import User
         from orchid.mcp.catalog import MCPCatalogStore, UserMCPStore, reset_catalog
         from orchid.mcp.catalog_api import register_user_routes
-        from orchid.auth.types import User
-        import orchid.auth.middleware as mw
 
         reset_catalog()
         self.tmp = tmp_path

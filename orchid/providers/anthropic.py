@@ -253,6 +253,7 @@ class AnthropicProvider(ProviderBase):
 
     def complete_with_tools(self, messages, tools, dispatch_fn, system=None, max_tokens=4096, max_iterations=10):
         import anthropic as anthropic_sdk
+
         from orchid.budget.guard import get_env
 
         client = anthropic_sdk.Anthropic(api_key=get_env("ANTHROPIC_API_KEY"))

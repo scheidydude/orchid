@@ -95,7 +95,7 @@ class ProviderBase(ABC):
         self,
         messages: list[Any],
         tools: list[dict],
-        dispatch_fn: "Any",
+        dispatch_fn: Any,
         system: str | None = None,
         max_tokens: int = 4096,
         max_iterations: int = 10,
@@ -105,7 +105,8 @@ class ProviderBase(ABC):
         tools: list of {name, description, input_schema}
         dispatch_fn: callable(tool_name: str, args: dict) -> str
         """
-        import json, re
+        import json
+        import re
 
         tool_desc = "\n".join(
             f"- {t['name']}: {t.get('description', '')}" for t in tools

@@ -816,6 +816,8 @@ def create_app(
     try:
         from orchid.mcp.catalog_api import (
             register_admin_routes as _register_mcp_admin,
+        )
+        from orchid.mcp.catalog_api import (
             register_user_routes as _register_mcp_user,
         )
         _register_mcp_admin(app)
@@ -1116,7 +1118,7 @@ def create_app(
             try:
                 existing: dict = {}
                 if _user_cfg_path.exists():
-                    with open(_user_cfg_path, "r", encoding="utf-8") as fh:
+                    with open(_user_cfg_path, encoding="utf-8") as fh:
                         existing = _yaml.safe_load(fh) or {}
 
                 # Only allow writing multi_user.* and web.allow_user_* keys
@@ -1309,6 +1311,7 @@ def create_app(
             """
             import uuid as _uuid
             from datetime import UTC, timedelta
+
             from orchid.auth.types import AuthError as _AE
 
             email = (data.get("email") or "").strip().lower()
@@ -1348,8 +1351,8 @@ def create_app(
             # Generate invite token
             token_id = f"inv_{_uuid.uuid4().hex}"
             secret = secrets.token_urlsafe(32)
-            from orchid.auth.types import InviteToken as _InviteToken
             from orchid.auth.jwt import hash_password as _hp
+            from orchid.auth.types import InviteToken as _InviteToken
             invite = _InviteToken(
                 token_id=token_id,
                 secret_hash=_hp(secret),
@@ -1514,7 +1517,7 @@ def create_app(
 
     @app.get("/api/projects")
     async def get_projects(
-        current_user: "User | None" = Depends(get_optional_user),
+        current_user: User | None = Depends(get_optional_user),
     ):
         with _state_lock:
             items = list(_projects.items())
@@ -1914,7 +1917,7 @@ def create_app(
     @app.post("/api/projects", status_code=201)
     async def create_project(
         body: CreateProjectBody,
-        current_user: "User | None" = Depends(get_optional_user),
+        current_user: User | None = Depends(get_optional_user),
     ):
         from orchid import config as _pcfg
         if not _pcfg.get("web.allow_user_projects", True):
@@ -1923,7 +1926,8 @@ def create_app(
                 raise HTTPException(403, "Project creation is disabled by admin")
         from orchid.machine_profile import MachineProfile
         from orchid.project_creator import ProjectCreator
-        from orchid.projects.registry import get_registry as _get_proj_reg, user_project_base
+        from orchid.projects.registry import get_registry as _get_proj_reg
+        from orchid.projects.registry import user_project_base
         profile = MachineProfile.load()
         creator = ProjectCreator(machine_profile=profile)
 
@@ -2383,7 +2387,7 @@ def create_app(
             r.headers["Expires"] = "0"
             return r
 
-        def _get_user_from_request(request: "Request") -> "Any | None":
+        def _get_user_from_request(request: Request) -> Any | None:
             """Extract and verify the JWT from cookies, return User or None."""
             if not _AUTH_AVAILABLE:
                 return None

@@ -8,6 +8,7 @@ Covers:
 from __future__ import annotations
 
 import os
+
 import pytest
 
 os.environ.setdefault("JWT_SECRET", "test-secret-admin-phase4")
@@ -18,12 +19,12 @@ def admin_client(tmp_path):
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
+    import orchid.auth.store as store_mod
     import orchid.interfaces.web_server as ws
-    from orchid.auth.store import FileUserStore as UserStore
     from orchid.auth.audit import AuditStore
     from orchid.auth.jwt import hash_password
+    from orchid.auth.store import FileUserStore as UserStore
     from orchid.auth.types import User
-    import orchid.auth.store as store_mod
 
     ws._projects.clear()
     ws._managers.clear()

@@ -20,11 +20,12 @@ def register_routes(app: Any) -> None:
     # ── framework / orchid imports (local, guarded) ───────────────────────
     try:
         from fastapi import Depends, HTTPException, Request  # noqa: F401
+
         from orchid.auth.middleware import require_auth  # noqa: F401
         from orchid.auth.store import get_store  # noqa: F401
-        from orchid.cron.types import ScheduledTask  # noqa: F401
-        from orchid.cron.store import TaskRunStore  # noqa: F401
         from orchid.cron.engine import get_engine  # noqa: F401
+        from orchid.cron.store import TaskRunStore  # noqa: F401
+        from orchid.cron.types import ScheduledTask  # noqa: F401
     except ImportError as exc:
         logger.warning("Cron API imports failed (%s); routes not registered", exc)
         return
@@ -277,6 +278,7 @@ def register_routes(app: Any) -> None:
         """
         import asyncio
         from concurrent.futures import ThreadPoolExecutor
+
         from orchid.mcp.manager import MCPManager
 
         TIMEOUT = 30.0  # seconds per server
@@ -286,8 +288,8 @@ def register_routes(app: Any) -> None:
 
         # Merge catalog entries accessible to this user (not already in config)
         try:
-            from orchid.mcp.catalog import get_catalog as _get_catalog
             from orchid.mcp.adapter import MCPAdapter
+            from orchid.mcp.catalog import get_catalog as _get_catalog
             _cat = _get_catalog()
             for _entry in _cat.get_servers_for_user(current_user.user_id, current_user.role):
                 if _entry.server_id not in mgr._adapters:
@@ -334,7 +336,7 @@ def register_routes(app: Any) -> None:
                         loop.run_in_executor(exe, _probe, server_name, adapter),
                         timeout=TIMEOUT,
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     try:
                         adapter.disconnect()
                     except Exception:
@@ -371,7 +373,6 @@ def register_routes(app: Any) -> None:
         task definition.
         """
         import json as _json
-        import os
 
         try:
             from orchid.providers.registry import get_registry as _get_registry

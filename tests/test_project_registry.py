@@ -13,7 +13,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-
 # ══════════════════════════════════════════════════════════════════════════════
 # ProjectRegistry unit tests
 # ══════════════════════════════════════════════════════════════════════════════
@@ -139,9 +138,10 @@ class TestGetProjectsFiltering:
         pytest.importorskip("fastapi")
         pytest.importorskip("httpx")
         from fastapi.testclient import TestClient
+
         import orchid.auth.middleware as mw
-        from orchid.projects.registry import ProjectRegistry, reset_registry
         from orchid.interfaces.web_server import create_app
+        from orchid.projects.registry import ProjectRegistry, reset_registry
 
         reset_registry()
 
@@ -237,11 +237,12 @@ class TestCreateProjectOwnership:
         pytest.importorskip("fastapi")
         pytest.importorskip("httpx")
         from fastapi.testclient import TestClient
+
         import orchid.auth.middleware as mw
         from orchid.auth.types import User
+        from orchid.interfaces.web_server import create_app
         from orchid.project_creator import ProjectCreator
         from orchid.projects.registry import ProjectRegistry, reset_registry, user_project_base
-        from orchid.interfaces.web_server import create_app
 
         reset_registry()
         reg = ProjectRegistry(registry_path=tmp_path / "registry.json")
@@ -269,18 +270,19 @@ class TestCreateProjectOwnership:
         call_kwargs = mock_create.call_args[1]
         passed_base = call_kwargs.get("base_dir")
         assert passed_base is not None
-        assert str(passed_base).endswith(f"/.config/orchid/projects/dave")
+        assert str(passed_base).endswith("/.config/orchid/projects/dave")
 
     def test_user_project_registers_ownership(self, tmp_path):
         import pytest
         pytest.importorskip("fastapi")
         pytest.importorskip("httpx")
         from fastapi.testclient import TestClient
+
         import orchid.auth.middleware as mw
         from orchid.auth.types import User
+        from orchid.interfaces.web_server import create_app
         from orchid.project_creator import ProjectCreator
         from orchid.projects.registry import ProjectRegistry, reset_registry
-        from orchid.interfaces.web_server import create_app
 
         reset_registry()
         reg = ProjectRegistry(registry_path=tmp_path / "registry.json")
@@ -316,11 +318,12 @@ class TestCreateProjectOwnership:
         pytest.importorskip("fastapi")
         pytest.importorskip("httpx")
         from fastapi.testclient import TestClient
+
         import orchid.auth.middleware as mw
         from orchid.auth.types import User
+        from orchid.interfaces.web_server import create_app
         from orchid.project_creator import ProjectCreator
         from orchid.projects.registry import ProjectRegistry, reset_registry
-        from orchid.interfaces.web_server import create_app
 
         reset_registry()
         reg = ProjectRegistry(registry_path=tmp_path / "registry.json")
@@ -352,11 +355,12 @@ class TestCreateProjectOwnership:
         pytest.importorskip("fastapi")
         pytest.importorskip("httpx")
         from fastapi.testclient import TestClient
+
         import orchid.auth.middleware as mw
         from orchid.auth.types import User
+        from orchid.interfaces.web_server import create_app
         from orchid.project_creator import ProjectCreator
         from orchid.projects.registry import ProjectRegistry, reset_registry
-        from orchid.interfaces.web_server import create_app
 
         reset_registry()
         reg = ProjectRegistry(registry_path=tmp_path / "registry.json")
@@ -402,7 +406,6 @@ def test_unregister_project_removes_from_registry():
     mock_reg = MagicMock()
     mock_reg.unregister.return_value = True
 
-    from orchid.interfaces import web_server as _ws
     import orchid.interfaces.web_server as ws_mod
 
     # Inject a fake project

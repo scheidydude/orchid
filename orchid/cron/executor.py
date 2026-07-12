@@ -2,9 +2,7 @@
 from __future__ import annotations
 
 import logging
-import os
 import time
-from datetime import UTC, datetime
 
 from orchid.cron.types import TaskRun, _utcnow
 
@@ -15,20 +13,21 @@ _AGENT_TOOL_MAX_TOKENS = 4096
 
 # Phase 5: thread-local cost accumulator — set by execute(), read by _run_agent_tool
 import threading
+
 _exec_local = threading.local()
 
 
-def _build_mcp_manager(owner_id: str) -> "MCPManager":
+def _build_mcp_manager(owner_id: str) -> MCPManager:
     """Return MCPManager with project config + catalog entries for *owner_id*."""
-    from orchid.mcp.manager import MCPManager
     from orchid.mcp.adapter import MCPAdapter
+    from orchid.mcp.manager import MCPManager
 
     mgr = MCPManager()
     mgr.discover_servers()  # project mcp_servers config
 
     try:
-        from orchid.mcp.catalog import get_catalog
         from orchid.auth.store import get_store
+        from orchid.mcp.catalog import get_catalog
 
         store = get_store()
         user = store.get_user(owner_id)

@@ -13,7 +13,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-
 # ── API route — POST /api/projects ───────────────────────────────────────────
 
 class TestCreateProjectFlagAPI:
@@ -24,11 +23,11 @@ class TestCreateProjectFlagAPI:
         pytest.importorskip("fastapi")
         pytest.importorskip("httpx")
 
-        from fastapi import FastAPI
         from fastapi.testclient import TestClient
-        from orchid.interfaces.web_server import create_app
+
         import orchid.auth.middleware as mw
         from orchid.auth.types import User
+        from orchid.interfaces.web_server import create_app
 
         user = User(
             user_id="alice",
@@ -52,8 +51,8 @@ class TestCreateProjectFlagAPI:
         import pytest
         pytest.importorskip("fastapi")
         pytest.importorskip("httpx")
-        from fastapi import FastAPI
         from fastapi.testclient import TestClient
+
         import orchid.auth.middleware as mw
         from orchid.auth.types import User
 
@@ -78,6 +77,7 @@ class TestCreateProjectFlagAPI:
         pytest.importorskip("fastapi")
         pytest.importorskip("httpx")
         from fastapi.testclient import TestClient
+
         import orchid.auth.middleware as mw
         from orchid.auth.types import User
         from orchid.project_creator import ProjectCreator
@@ -108,6 +108,7 @@ class TestCreateProjectFlagAPI:
         pytest.importorskip("fastapi")
         pytest.importorskip("httpx")
         from fastapi.testclient import TestClient
+
         import orchid.auth.middleware as mw
         from orchid.auth.types import User
         from orchid.project_creator import ProjectCreator
@@ -139,8 +140,9 @@ class TestTelegramNewFlagCheck:
     """CentralTelegramBot._cmd_new checks web.allow_user_projects."""
 
     def _make_bot(self, tmp_path: Path):
-        from orchid.interfaces.telegram_central import CentralTelegramBot
         import threading
+
+        from orchid.interfaces.telegram_central import CentralTelegramBot
         bot = object.__new__(CentralTelegramBot)
         bot._discovery = MagicMock()
         bot.token = "tok"
@@ -221,6 +223,7 @@ class TestSlackNewFlagCheck:
     def _make_bot(self, tmp_path: Path):
         import asyncio
         import threading
+
         from orchid.interfaces.slack_central import CentralSlackBot
 
         bot = object.__new__(CentralSlackBot)
