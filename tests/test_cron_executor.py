@@ -219,7 +219,8 @@ class TestTaskExecutorAgentTool:
         mock_manager = MagicMock()
         mock_manager.get_adapter.return_value = None
 
-        with patch("orchid.mcp.manager.MCPManager", return_value=mock_manager):
+        with patch("orchid.mcp.manager.MCPManager", return_value=mock_manager), \
+             patch("orchid.providers.registry.get_registry", return_value=self._anth_reg()):
             run = executor.execute(
                 {
                     "task_id": "t1",
@@ -533,7 +534,7 @@ class TestTaskExecutorNeverRaises:
     def test_execute_never_raises(self, executor, monkeypatch):
         """Even a wildly broken dispatch function must not propagate exceptions."""
 
-        def broken_dispatch(config):
+        def broken_dispatch(config, owner_id=""):
             raise SystemExit(1)
 
         monkeypatch.setattr(TaskExecutor, "_DISPATCH", {"shell": broken_dispatch})
