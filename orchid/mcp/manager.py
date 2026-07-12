@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from orchid.config import get
@@ -10,6 +11,8 @@ from orchid.mcp.client import MCPClient, MCPClientError
 from orchid.mcp.http_client import HTTPMCPClient
 from orchid.mcp.stdio_client import StdioMCPClient
 from orchid.mcp.types import MCPResult, MCPTool
+
+logger = logging.getLogger(__name__)
 
 
 class MCPManagerError(MCPClientError):

@@ -77,7 +77,6 @@ class CronEngine:
             return
 
         task_type = task_dict.get("task_type", "")
-        config = task_dict.get("config", {})
         schedule_str = task_dict.get("schedule", "0 9 * * *")
         enabled = task_dict.get("enabled", True)
         task_id = task_dict.get("task_id", "")

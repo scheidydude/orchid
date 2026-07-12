@@ -94,7 +94,7 @@ class TaskRunStore:
 
         try:
             with open(self._file, encoding="utf-8") as fh:
-                raw_lines = [l.strip() for l in fh if l.strip()]
+                raw_lines = [ln.strip() for ln in fh if ln.strip()]
         except Exception:
             logger.warning("get_runs failed to read %s", self._file)
             return []

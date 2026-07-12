@@ -382,7 +382,6 @@ def register_routes(app: Any) -> None:
         body = await request.json()
         messages = body.get("messages", [])   # [{role, content}] — alternating, starts with user
         mcp_servers = body.get("mcp_servers", [])
-        timezone = body.get("timezone", "UTC")
 
         # Build MCP context string for the system prompt
         if mcp_servers:
