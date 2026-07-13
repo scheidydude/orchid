@@ -26,6 +26,7 @@ def _make_minimal_project(tmp_path: Path) -> Path:
     return tmp_path
 
 
+@pytest.mark.network  # end-to-end run needs a live LLM provider (local llama or API key)
 @pytest.mark.skipif(sys.platform == "win32", reason="subprocess test is POSIX only")
 def test_stream_json_cli_emits_ndjson_events(tmp_path: Path) -> None:
     """Invoke the CLI with ``--output-format stream-json`` and verify NDJSON output."""

@@ -162,7 +162,8 @@ def test_delegation_logged_in_session(tmp_path):
 
     delegator = AgentDelegator(session=mock_session, project_name="test")
 
-    with patch("orchid.config.get") as mock_cfg:
+    with patch.object(AgentDelegator, "_resolve_model", return_value="local"), \
+         patch("orchid.config.get") as mock_cfg:
         def cfg_side(key, default=None):
             defaults = {
                 "delegation.max_depth": 3,
@@ -174,15 +175,9 @@ def test_delegation_logged_in_session(tmp_path):
             return defaults.get(key, default)
         mock_cfg.side_effect = cfg_side
 
-        with patch("orchid.agents.delegator._get_agent_class") as mock_cls:
-            fake_agent = MagicMock()
-            fake_agent.run.return_value = "Use tenacity library."
-            mock_cls.return_value = lambda **kw: fake_agent
-            mock_cls.return_value = type("FA", (), {
-                "__init__": lambda self, **kw: None,
-                "run": lambda self, t: "Use tenacity library.",
-            })
-
+        fake_agent = MagicMock()
+        fake_agent.run.return_value = "Use tenacity library."
+        with patch.object(AgentDelegator, "_acquire_agent", return_value=fake_agent):
             delegator.delegate(
                 agent_type="researcher",
                 task="find retry libraries",

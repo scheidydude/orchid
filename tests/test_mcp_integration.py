@@ -22,8 +22,7 @@ for line in sys.stdin:
     if method == "initialize":
         print(json.dumps({"jsonrpc": "2.0", "id": req_id, "result": {}}), flush=True)
     elif method == "notifications/initialized":
-        print(json.dumps({"jsonrpc": "2.0", "id": req_id, "result": {}}), flush=True)
-        print(json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}), flush=True)
+        pass  # JSON-RPC notification: no id, no response
     elif method == "tools/list":
         tools = [{"name": "echo", "description": "Echo a message", "inputSchema": {"type": "object", "properties": {"msg": {"type": "string"}}}}]
         print(json.dumps({"jsonrpc": "2.0", "id": req_id, "result": {"tools": tools}}), flush=True)

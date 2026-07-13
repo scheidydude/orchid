@@ -29,3 +29,9 @@ class NullEmitter(EmitterProtocol):
 
     def close(self) -> None:
         pass
+
+# Per-project registry of live web-stream emitters. Keyed by project path.
+# BackgroundRunner._run checks this to wire session events into an active
+# web stream; anything registering an emitter (e.g. a web streaming route)
+# should insert it here and pop it when the stream closes.
+_stream_emitters: dict[str, EmitterProtocol] = {}

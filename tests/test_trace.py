@@ -147,6 +147,7 @@ def test_orchestrator_trace_log_written_on_task(tmp_path):
     orch = Orchestrator(session, trace_enabled=True)
 
     with patch("orchid.agents.base.call") as mock_call, \
+         patch("orchid.config.get", side_effect=lambda key, default=None: default), \
          patch.object(session, "stream_react"), \
          patch.object(session, "save"), \
          patch.object(session, "update_task_status"), \

@@ -181,7 +181,7 @@ class TestProviderSemaphores:
 class TestRunnerLifecycle:
     def test_start_returns_true(self, tmp_path):
         runner = BackgroundRunner()
-        with patch.object(runner, "_run", return_value=None):
+        with patch.object(runner, "_run", return_value=None), patch.object(runner, "_write_marker", return_value=None):
             result = runner.start(str(tmp_path))
             assert result is True
 
@@ -220,7 +220,7 @@ class TestRunnerLifecycle:
 
     def test_stop_returns_false_if_done(self, tmp_path):
         runner = BackgroundRunner()
-        with patch.object(runner, "_run", return_value=None):
+        with patch.object(runner, "_run", return_value=None), patch.object(runner, "_write_marker", return_value=None):
             runner.start(str(tmp_path))
             state = runner._states[str(tmp_path)]
             result = runner.stop(str(tmp_path))
@@ -254,7 +254,7 @@ class TestRunnerLifecycle:
 
     def test_get_status_done(self, tmp_path):
         runner = BackgroundRunner()
-        with patch.object(runner, "_run", return_value=None):
+        with patch.object(runner, "_run", return_value=None), patch.object(runner, "_write_marker", return_value=None):
             runner.start(str(tmp_path))
             status = runner.get_status(str(tmp_path))
             assert status["running"] is False
@@ -425,6 +425,7 @@ class TestExecuteTaskWithSemaphore:
             def release(self):
                 pass
             def __enter__(self):
+                self.acquire()
                 return self
             def __exit__(self, *a):
                 pass
@@ -439,22 +440,25 @@ class TestRunnerThreadSafety:
         errors = []
         def start_project(path):
             try:
-                with patch.object(runner, "_run", return_value=None):
-                    runner.start(path)
+                runner.start(path)
             except Exception as e:
                 errors.append(e)
         paths = [f"/project/{i}" for i in range(20)]
         threads = [threading.Thread(target=start_project, args=(p,)) for p in paths]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(timeout=5)
+        # Keep the patches active until every thread (and any executor-submitted
+        # _run) has finished — per-thread patching races the unpatch.
+        with patch.object(runner, "_run", return_value=None), \
+             patch.object(runner, "_write_marker", return_value=None):
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=5)
         assert not errors
         assert len(runner._states) == 20
 
     def test_concurrent_stop_calls(self):
         runner = BackgroundRunner()
-        with patch.object(runner, "_run", return_value=None):
+        with patch.object(runner, "_run", return_value=None), patch.object(runner, "_write_marker", return_value=None):
             runner.start("/project/1")
         errors = []
         def stop_project():
@@ -471,7 +475,9 @@ class TestRunnerThreadSafety:
 
     def test_concurrent_get_status(self):
         runner = BackgroundRunner()
-        with patch.object(runner, "_run", return_value=None):
+        release = threading.Event()
+        with patch.object(runner, "_run", side_effect=lambda *a, **kw: release.wait(10)), \
+             patch.object(runner, "_write_marker", return_value=None):
             runner.start("/project/1")
             state = runner._states["/project/1"]
             state.current_task = "T001"
@@ -491,6 +497,7 @@ class TestRunnerThreadSafety:
             t.start()
         for t in threads:
             t.join(timeout=5)
+        release.set()
         assert not errors
         assert len(statuses) == 20
         for s in statuses:
@@ -551,11 +558,11 @@ class TestRunLoop:
         session = self._make_mock_session()
         orch = self._make_mock_orch()
         mcp = self._make_mock_mcp()
-        with patch("orchid.runner.Session") as mock_session_cls:
+        with patch("orchid.session.Session") as mock_session_cls:
             mock_session_cls.return_value = session
-            with patch("orchid.runner.Orchestrator") as mock_orch_cls:
+            with patch("orchid.orchestrator.Orchestrator") as mock_orch_cls:
                 mock_orch_cls.return_value = orch
-                with patch("orchid.runner.MCPManager") as mock_mcp_cls:
+                with patch("orchid.mcp.manager.MCPManager") as mock_mcp_cls:
                     mock_mcp_cls.return_value = mcp
                     state = _ProjectState()
                     runner._run("/fake/project", state)
@@ -565,11 +572,11 @@ class TestRunLoop:
         session = self._make_mock_session()
         orch = self._make_mock_orch()
         mcp = self._make_mock_mcp()
-        with patch("orchid.runner.Session") as mock_session_cls:
+        with patch("orchid.session.Session") as mock_session_cls:
             mock_session_cls.return_value = session
-            with patch("orchid.runner.Orchestrator") as mock_orch_cls:
+            with patch("orchid.orchestrator.Orchestrator") as mock_orch_cls:
                 mock_orch_cls.return_value = orch
-                with patch("orchid.runner.MCPManager") as mock_mcp_cls:
+                with patch("orchid.mcp.manager.MCPManager") as mock_mcp_cls:
                     mock_mcp_cls.return_value = mcp
                     state = _ProjectState()
                     runner._run("/fake/project", state)
@@ -580,11 +587,11 @@ class TestRunLoop:
         session = self._make_mock_session()
         orch = self._make_mock_orch()
         mcp = self._make_mock_mcp()
-        with patch("orchid.runner.Session") as mock_session_cls:
+        with patch("orchid.session.Session") as mock_session_cls:
             mock_session_cls.return_value = session
-            with patch("orchid.runner.Orchestrator") as mock_orch_cls:
+            with patch("orchid.orchestrator.Orchestrator") as mock_orch_cls:
                 mock_orch_cls.return_value = orch
-                with patch("orchid.runner.MCPManager") as mock_mcp_cls:
+                with patch("orchid.mcp.manager.MCPManager") as mock_mcp_cls:
                     mock_mcp_cls.return_value = mcp
                     state = _ProjectState()
                     state.cancel_event.set()
@@ -596,11 +603,11 @@ class TestRunLoop:
         session = self._make_mock_session()
         orch = self._make_mock_orch()
         mcp = self._make_mock_mcp()
-        with patch("orchid.runner.Session") as mock_session_cls:
+        with patch("orchid.session.Session") as mock_session_cls:
             mock_session_cls.return_value = session
-            with patch("orchid.runner.Orchestrator") as mock_orch_cls:
+            with patch("orchid.orchestrator.Orchestrator") as mock_orch_cls:
                 mock_orch_cls.return_value = orch
-                with patch("orchid.runner.MCPManager") as mock_mcp_cls:
+                with patch("orchid.mcp.manager.MCPManager") as mock_mcp_cls:
                     mock_mcp_cls.return_value = mcp
                     state = _ProjectState()
                     runner._run("/fake/project", state)
@@ -608,7 +615,7 @@ class TestRunLoop:
 
 class TestStreamEmitters:
     def test_emitter_wired_when_registered(self):
-        from orchid.web.server import _stream_emitters
+        from orchid.output.emitter import _stream_emitters
         runner = BackgroundRunner()
         session = MagicMock()
         session.tasks = []
@@ -617,11 +624,11 @@ class TestStreamEmitters:
         web_emitter = MagicMock()
         _stream_emitters["/fake/project"] = web_emitter
         try:
-            with patch("orchid.runner.Session") as mock_session_cls:
+            with patch("orchid.session.Session") as mock_session_cls:
                 mock_session_cls.return_value = session
-                with patch("orchid.runner.Orchestrator") as mock_orch_cls:
+                with patch("orchid.orchestrator.Orchestrator") as mock_orch_cls:
                     mock_orch_cls.return_value = orch
-                    with patch("orchid.runner.MCPManager") as mock_mcp:
+                    with patch("orchid.mcp.manager.MCPManager") as mock_mcp:
                         mock_mcp_instance = MagicMock()
                         mock_mcp.return_value = mock_mcp_instance
                         mock_mcp_instance.connect = MagicMock()
@@ -634,7 +641,7 @@ class TestStreamEmitters:
             _stream_emitters.pop("/fake/project", None)
 
     def test_null_emitter_when_no_web_emitter(self):
-        from orchid.web.server import _stream_emitters
+        from orchid.output.emitter import _stream_emitters
         runner = BackgroundRunner()
         session = MagicMock()
         session.tasks = []
@@ -642,11 +649,11 @@ class TestStreamEmitters:
         orch = MagicMock()
         _stream_emitters.pop("/fake/project", None)
         try:
-            with patch("orchid.runner.Session") as mock_session_cls:
+            with patch("orchid.session.Session") as mock_session_cls:
                 mock_session_cls.return_value = session
-                with patch("orchid.runner.Orchestrator") as mock_orch_cls:
+                with patch("orchid.orchestrator.Orchestrator") as mock_orch_cls:
                     mock_orch_cls.return_value = orch
-                    with patch("orchid.runner.MCPManager") as mock_mcp:
+                    with patch("orchid.mcp.manager.MCPManager") as mock_mcp:
                         mock_mcp_instance = MagicMock()
                         mock_mcp.return_value = mock_mcp_instance
                         mock_mcp_instance.connect = MagicMock()
@@ -664,11 +671,11 @@ class TestMCPConnection:
         session.tasks = []
         session.project_name = "test-project"
         orch = MagicMock()
-        with patch("orchid.runner.Session") as mock_session_cls:
+        with patch("orchid.session.Session") as mock_session_cls:
             mock_session_cls.return_value = session
-            with patch("orchid.runner.Orchestrator") as mock_orch_cls:
+            with patch("orchid.orchestrator.Orchestrator") as mock_orch_cls:
                 mock_orch_cls.return_value = orch
-                with patch("orchid.runner.MCPManager") as mock_mcp:
+                with patch("orchid.mcp.manager.MCPManager") as mock_mcp:
                     mock_mcp_instance = MagicMock()
                     mock_mcp.return_value = mock_mcp_instance
                     mock_mcp_instance.connect.side_effect = RuntimeError("MCP failed")
@@ -682,11 +689,11 @@ class TestMCPConnection:
         session.tasks = []
         session.project_name = "test-project"
         orch = MagicMock()
-        with patch("orchid.runner.Session") as mock_session_cls:
+        with patch("orchid.session.Session") as mock_session_cls:
             mock_session_cls.return_value = session
-            with patch("orchid.runner.Orchestrator") as mock_orch_cls:
+            with patch("orchid.orchestrator.Orchestrator") as mock_orch_cls:
                 mock_orch_cls.return_value = orch
-                with patch("orchid.runner.MCPManager") as mock_mcp:
+                with patch("orchid.mcp.manager.MCPManager") as mock_mcp:
                     mock_mcp_instance = MagicMock()
                     mock_mcp.return_value = mock_mcp_instance
                     mock_mcp_instance.connect = MagicMock()
@@ -702,11 +709,11 @@ class TestMCPConnection:
         session.project_name = "test-project"
         orch = MagicMock()
         orch._execute_task.side_effect = RuntimeError("task error")
-        with patch("orchid.runner.Session") as mock_session_cls:
+        with patch("orchid.session.Session") as mock_session_cls:
             mock_session_cls.return_value = session
-            with patch("orchid.runner.Orchestrator") as mock_orch_cls:
+            with patch("orchid.orchestrator.Orchestrator") as mock_orch_cls:
                 mock_orch_cls.return_value = orch
-                with patch("orchid.runner.MCPManager") as mock_mcp:
+                with patch("orchid.mcp.manager.MCPManager") as mock_mcp:
                     mock_mcp_instance = MagicMock()
                     mock_mcp.return_value = mock_mcp_instance
                     mock_mcp_instance.connect = MagicMock()
@@ -723,11 +730,11 @@ class TestSessionEvents:
         session.tasks = []
         session.project_name = "test-project"
         orch = MagicMock()
-        with patch("orchid.runner.Session") as mock_session_cls:
+        with patch("orchid.session.Session") as mock_session_cls:
             mock_session_cls.return_value = session
-            with patch("orchid.runner.Orchestrator") as mock_orch_cls:
+            with patch("orchid.orchestrator.Orchestrator") as mock_orch_cls:
                 mock_orch_cls.return_value = orch
-                with patch("orchid.runner.MCPManager") as mock_mcp:
+                with patch("orchid.mcp.manager.MCPManager") as mock_mcp:
                     mock_mcp_instance = MagicMock()
                     mock_mcp.return_value = mock_mcp_instance
                     mock_mcp_instance.connect = MagicMock()
@@ -741,11 +748,11 @@ class TestSessionEvents:
         session.tasks = []
         session.project_name = "test-project"
         orch = MagicMock()
-        with patch("orchid.runner.Session") as mock_session_cls:
+        with patch("orchid.session.Session") as mock_session_cls:
             mock_session_cls.return_value = session
-            with patch("orchid.runner.Orchestrator") as mock_orch_cls:
+            with patch("orchid.orchestrator.Orchestrator") as mock_orch_cls:
                 mock_orch_cls.return_value = orch
-                with patch("orchid.runner.MCPManager") as mock_mcp:
+                with patch("orchid.mcp.manager.MCPManager") as mock_mcp:
                     mock_mcp_instance = MagicMock()
                     mock_mcp.return_value = mock_mcp_instance
                     mock_mcp_instance.connect = MagicMock()
@@ -759,11 +766,11 @@ class TestSessionEvents:
         session.tasks = []
         session.project_name = "test-project"
         orch = MagicMock()
-        with patch("orchid.runner.Session") as mock_session_cls:
+        with patch("orchid.session.Session") as mock_session_cls:
             mock_session_cls.return_value = session
-            with patch("orchid.runner.Orchestrator") as mock_orch_cls:
+            with patch("orchid.orchestrator.Orchestrator") as mock_orch_cls:
                 mock_orch_cls.return_value = orch
-                with patch("orchid.runner.MCPManager") as mock_mcp:
+                with patch("orchid.mcp.manager.MCPManager") as mock_mcp:
                     mock_mcp_instance = MagicMock()
                     mock_mcp.return_value = mock_mcp_instance
                     mock_mcp_instance.connect = MagicMock()
@@ -777,11 +784,11 @@ class TestSessionEvents:
         session.tasks = []
         session.project_name = "test-project"
         orch = MagicMock()
-        with patch("orchid.runner.Session") as mock_session_cls:
+        with patch("orchid.session.Session") as mock_session_cls:
             mock_session_cls.return_value = session
-            with patch("orchid.runner.Orchestrator") as mock_orch_cls:
+            with patch("orchid.orchestrator.Orchestrator") as mock_orch_cls:
                 mock_orch_cls.return_value = orch
-                with patch("orchid.runner.MCPManager") as mock_mcp:
+                with patch("orchid.mcp.manager.MCPManager") as mock_mcp:
                     mock_mcp_instance = MagicMock()
                     mock_mcp.return_value = mock_mcp_instance
                     mock_mcp_instance.connect = MagicMock()

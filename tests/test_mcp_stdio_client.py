@@ -2,7 +2,7 @@
 
 import subprocess
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 from orchid.mcp.stdio_client import StdioMCPClient
 from orchid.mcp.types import MCPResult
@@ -20,19 +20,14 @@ class TestStdioMCPClient(unittest.TestCase):
         mock_proc.stdout = MagicMock()
         mock_popen.return_value = mock_proc
 
-        # connect() calls _send_request("initialize") [1 read],
-        # _send_request("notifications/initialized") [1 read],
-        # _read_notification() [1 read], list_tools [1 read].
-        # Total = 4 readline calls during connect().
+        # connect() calls _send_request("initialize") [1 read], sends
+        # notifications/initialized as a fire-and-forget notification [0 reads],
+        # then list_tools [1 read]. Total = 2 readline calls during connect().
         mock_proc.stdout.readline.side_effect = [
             # 1st: initialize response (from _send_request)
             '{"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2024-11-05"}}',
-            # 2nd: notifications/initialized response
-            '{"jsonrpc": "2.0", "id": 2}',
-            # 3rd: notification (no id) — consumed by _read_notification
-            '{"jsonrpc": "2.0", "method": "notifications/initialized"}',
-            # 4th: tools/list response
-            '{"jsonrpc": "2.0", "id": 3, "result": {"tools": [{"name": "echo", "description": "Echoes a message", "inputSchema": {"type": "object"}}]}}',
+            # 2nd: tools/list response
+            '{"jsonrpc": "2.0", "id": 2, "result": {"tools": [{"name": "echo", "description": "Echoes a message", "inputSchema": {"type": "object"}}]}}',
         ]
 
         client = StdioMCPClient(command=["python", "server.py"])
@@ -44,6 +39,7 @@ class TestStdioMCPClient(unittest.TestCase):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            env=ANY,
         )
 
         # Verify stdin received the initialize request
@@ -102,18 +98,14 @@ class TestStdioMCPClient(unittest.TestCase):
         mock_proc.stdout = MagicMock()
         mock_popen.return_value = mock_proc
 
-        # connect() needs 4 readline calls, then call_tool needs 1 more
+        # connect() needs 2 readline calls, then call_tool needs 1 more
         mock_proc.stdout.readline.side_effect = [
             # 1st: initialize response (from _send_request)
             '{"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2024-11-05"}}',
-            # 2nd: notifications/initialized response
-            '{"jsonrpc": "2.0", "id": 2}',
-            # 3rd: notification (no id) — consumed by _read_notification
-            '{"jsonrpc": "2.0", "method": "notifications/initialized"}',
-            # 4th: tools/list response (empty)
-            '{"jsonrpc": "2.0", "id": 3, "result": {"tools": []}}',
-            # 5th: tools/call response
-            '{"jsonrpc": "2.0", "id": 4, "result": {"content": [{"text": "hello world"}], "isError": false}}',
+            # 2nd: tools/list response (empty)
+            '{"jsonrpc": "2.0", "id": 2, "result": {"tools": []}}',
+            # 3rd: tools/call response
+            '{"jsonrpc": "2.0", "id": 3, "result": {"content": [{"text": "hello world"}], "isError": false}}',
         ]
 
         client = StdioMCPClient(command=["python", "server.py"])

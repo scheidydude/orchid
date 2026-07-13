@@ -36,6 +36,18 @@ def reset_shutdown_event():
 
 
 @pytest.fixture(autouse=True)
+def reset_hook_registry_singleton():
+    """Reset the HookRegistry singleton between tests.
+
+    HookRegistry() is a process-wide singleton; hooks registered by one test
+    file otherwise leak into every later Session(), firing stale handlers.
+    """
+    from orchid.hooks.registry import HookRegistry
+    yield
+    HookRegistry._instance = None
+
+
+@pytest.fixture(autouse=True)
 def reset_agent_registry():
     """Clear the agent registry between tests."""
     import orchid.agent_registry as ar

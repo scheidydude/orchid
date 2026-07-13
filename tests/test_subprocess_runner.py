@@ -26,7 +26,8 @@ def test_run_task_isolated_success():
     mock_proc.wait.return_value = 0
     mock_proc.stdin = MagicMock()
 
-    with patch("orchid.subprocess_runner.subprocess.Popen", return_value=mock_proc):
+    with patch("orchid.config.get", side_effect=lambda key, default=None: default), \
+         patch("orchid.subprocess_runner.subprocess.Popen", return_value=mock_proc):
         actual = SubprocessRunner().run_task_isolated(ctx, None, None)
 
     assert actual.success is True
@@ -59,7 +60,8 @@ def test_run_task_isolated_calls_stream_callback():
     def stream_callback(data: dict) -> None:
         events_collected.append(data)
 
-    with patch("orchid.subprocess_runner.subprocess.Popen", return_value=mock_proc):
+    with patch("orchid.config.get", side_effect=lambda key, default=None: default), \
+         patch("orchid.subprocess_runner.subprocess.Popen", return_value=mock_proc):
         SubprocessRunner().run_task_isolated(ctx, stream_callback, None)
 
     assert len(events_collected) == 1
@@ -88,7 +90,8 @@ def test_run_task_isolated_timeout_kills_process():
 
     mock_proc.wait.side_effect = wait_side_effect
 
-    with patch("orchid.subprocess_runner.subprocess.Popen", return_value=mock_proc):
+    with patch("orchid.config.get", side_effect=lambda key, default=None: default), \
+         patch("orchid.subprocess_runner.subprocess.Popen", return_value=mock_proc):
         actual = SubprocessRunner().run_task_isolated(ctx, None, timeout_s=5)
 
     assert actual.success is False

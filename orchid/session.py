@@ -80,10 +80,13 @@ class Session:
             from orchid.hooks.loader import HookLoader
             loader = HookLoader(self.project_dir)
             count = loader.load()
-            # Merge loaded hooks into this session's registry
-            if loader.registry:
+            # Merge loaded hooks into this session's registry. HookRegistry is a
+            # singleton, so loader.registry is normally the same object as
+            # self._hook_registry — appending while iterating the same list
+            # never terminates. Only merge distinct registries, over a copy.
+            if loader.registry and loader.registry is not self._hook_registry:
                 for event_type, handlers in loader.registry._handlers.items():
-                    for handler in handlers:
+                    for handler in list(handlers):
                         self._hook_registry._handlers[event_type].append(handler)
                 logger.info("Loaded %d hook(s) for session", count)
         except Exception as e:

@@ -17,9 +17,8 @@ def proj(tmp_path):
     return tmp_path
 
 
-@pytest.fixture
-def planning_session(proj):
-    """Return a PlanningSession with mocked provider."""
+def _make_session(proj):
+    """Create a PlanningSession with the provider registry mocked out."""
     from orchid.planning import PlanningSession
 
     with patch("orchid.planning._get_provider_registry") as mock_reg:
@@ -31,34 +30,34 @@ def planning_session(proj):
         return session
 
 
+@pytest.fixture
+def planning_session(proj):
+    """Return a PlanningSession with mocked provider."""
+    return _make_session(proj)
+
+
 # ── Initialization ────────────────────────────────────────────────────────────
 
 
 def test_planning_session_creates_history_file(proj):
-    from orchid.planning import PlanningSession
-
-    session = PlanningSession(str(proj))
+    session = _make_session(proj)
     assert session.history_file.parent.exists()
     assert session.conversation == []
 
 
 def test_planning_session_loads_existing_history(proj):
-    from orchid.planning import PlanningSession
-
     history = {"conversation": [{"role": "user", "content": "Hello"}]}
     (proj / ".orchid" / "planning_history.json").write_text(json.dumps(history))
 
-    session = PlanningSession(str(proj))
+    session = _make_session(proj)
     assert len(session.conversation) == 1
     assert session.conversation[0]["content"] == "Hello"
 
 
 def test_planning_session_handles_corrupt_history(proj):
-    from orchid.planning import PlanningSession
-
     (proj / ".orchid" / "planning_history.json").write_text("not valid json")
 
-    session = PlanningSession(str(proj))
+    session = _make_session(proj)
     assert session.conversation == []
 
 

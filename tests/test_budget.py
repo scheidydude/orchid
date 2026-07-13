@@ -265,7 +265,7 @@ class TestExecutorBudget:
         from orchid.cron.executor import TaskExecutor, _exec_local
 
         # Patch _run_shell to inject fake cost
-        def _fake_shell(config):
+        def _fake_shell(config, owner_id=""):
             _exec_local.cost_usd = getattr(_exec_local, "cost_usd", 0.0) + 0.0042
             return "ok"
 

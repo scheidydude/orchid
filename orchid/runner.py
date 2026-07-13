@@ -270,7 +270,7 @@ class BackgroundRunner:
         session_start_ts = time.monotonic()
 
         # Try to wire into the web-stream emitter if one is registered
-        from orchid.web.server import _stream_emitters
+        from orchid.output.emitter import _stream_emitters
         web_emitter = _stream_emitters.get(project_path)
         if web_emitter is not None:
             emitter = web_emitter
