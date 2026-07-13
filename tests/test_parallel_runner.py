@@ -123,7 +123,13 @@ class TestProviderSemaphores:
         def acquire_and_hold():
             sem.acquire()
             acquired.append(threading.current_thread().name)
-            barrier.wait()
+            # Barrier(2) only pairs the first two holders; the third thread
+            # arrives alone, so it must time out rather than wait forever
+            # (a non-daemon thread stuck here keeps the interpreter alive).
+            try:
+                barrier.wait(timeout=2)
+            except threading.BrokenBarrierError:
+                pass
             time.sleep(0.1)
             sem.release()
         t1 = threading.Thread(target=acquire_and_hold, name="t1")
@@ -453,13 +459,17 @@ class TestRunnerThreadSafety:
                 t.start()
             for t in threads:
                 t.join(timeout=5)
+            # The executor resolves self._run when the future actually runs,
+            # so the patch must stay active until every future has finished —
+            # otherwise the real _run executes and blocks interpreter exit.
+            for st in runner._states.values():
+                if st.future:
+                    st.future.result(timeout=5)
         assert not errors
         assert len(runner._states) == 20
 
     def test_concurrent_stop_calls(self):
         runner = BackgroundRunner()
-        with patch.object(runner, "_run", return_value=None), patch.object(runner, "_write_marker", return_value=None):
-            runner.start("/project/1")
         errors = []
         def stop_project():
             try:
@@ -467,21 +477,21 @@ class TestRunnerThreadSafety:
             except Exception as e:
                 errors.append(e)
         threads = [threading.Thread(target=stop_project) for _ in range(10)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(timeout=5)
+        # Patch stays active until the submitted future finishes — the executor
+        # resolves self._run lazily, and an unpatched _run blocks interpreter exit.
+        with patch.object(runner, "_run", return_value=None), \
+             patch.object(runner, "_write_marker", return_value=None):
+            runner.start("/project/1")
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=5)
+            runner._states["/project/1"].future.result(timeout=5)
         assert not errors
 
     def test_concurrent_get_status(self):
         runner = BackgroundRunner()
         release = threading.Event()
-        with patch.object(runner, "_run", side_effect=lambda *a, **kw: release.wait(10)), \
-             patch.object(runner, "_write_marker", return_value=None):
-            runner.start("/project/1")
-            state = runner._states["/project/1"]
-            state.current_task = "T001"
-            state.tasks_done = 5
         errors = []
         statuses = []
         lock = threading.Lock()
@@ -493,11 +503,20 @@ class TestRunnerThreadSafety:
             except Exception as e:
                 errors.append(e)
         threads = [threading.Thread(target=get_status) for _ in range(20)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(timeout=5)
-        release.set()
+        # Patch stays active until the future finishes (see stop-calls test);
+        # _run blocks on `release` so the run stays live while statuses are read.
+        with patch.object(runner, "_run", side_effect=lambda *a, **kw: release.wait(10)), \
+             patch.object(runner, "_write_marker", return_value=None):
+            runner.start("/project/1")
+            state = runner._states["/project/1"]
+            state.current_task = "T001"
+            state.tasks_done = 5
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=5)
+            release.set()
+            state.future.result(timeout=5)
         assert not errors
         assert len(statuses) == 20
         for s in statuses:
