@@ -24,4 +24,6 @@ jobs:
         run: uv run ruff check orchid/
 
       - name: Test
-        run: uv run python -m pytest tests/ -x -q -m "not network" --timeout=120
+        # ulimit: suite leaks fds across ~1700 tests and trips the runner's
+        # default soft limit of 1024 near the end (see fd-leak issue).
+        run: ulimit -n 4096 && uv run python -m pytest tests/ -x -q -m "not network" --timeout=120
