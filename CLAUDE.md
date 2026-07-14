@@ -171,8 +171,8 @@ Multi-user OS phases all done + post-v3 items complete. Test breakdown: 87 (Phas
 *   Earlier: T051 shell allowlist, T053 V2 lifecycle, T054/55 web planning/streaming, T056 prompt cache, T061 CentralBot, T068 systemd, T285–T297 cron engine.
 
 **Known pre-existing test issues (not from post-v3 work):**
-- `test_parallel_runner.py::TestExecuteTaskWithSemaphore::test_semaphore_acquisition_failure_sets_blocked` — hangs forever; `threading.Semaphore(0)` acquire never unblocks.
-- `test_worktree.py::TestWorktreeManager` — ERRORs when run at end of full suite (fd exhaustion from 1700+ accumulated tmp_path dirs); passes when run in isolation.
+- `test_worktree.py::TestWorktreeManager` — ERRORs when run at end of full suite on macOS (fd exhaustion from 1700+ accumulated tmp_path dirs); passes when run in isolation and on CI's Linux runners.
+- (fixed) `test_semaphore_acquisition_failure_sets_blocked` removed — it hung forever on a blocking `Semaphore(0)` acquire; coverage lives in `test_semaphore_released_on_acquisition_failure`. CI runs pytest with `--timeout=120` (pytest-timeout) and a 20-min job cap so a hang can never burn 6h again.
 
 ## Tooling
 Prefer `codeindex` CLI via Bash over MCP tools for symbol lookup and indexing operations.

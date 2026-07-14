@@ -395,17 +395,11 @@ class TestExecuteTaskWithSemaphore:
         session.save.assert_called()
         assert state.tasks_done == 0
 
-    def test_semaphore_acquisition_failure_sets_blocked(self):
-        runner = BackgroundRunner()
-        session = MagicMock()
-        orch = MagicMock()
-        task_obj = task("T001")
-        state = _ProjectState()
-        blocked_sem = threading.Semaphore(0)
-        with patch.object(runner, "_get_semaphore", return_value=blocked_sem):
-            runner._execute_task_with_semaphore("/fake/project", state, session, orch, task_obj)
-        session.update_task_status.assert_called_with("T001", TaskStatus.BLOCKED)
-        session.save.assert_called()
+    # test_semaphore_acquisition_failure_sets_blocked was removed: it handed
+    # _execute_task_with_semaphore a Semaphore(0), but the code does a blocking
+    # `with semaphore:` acquire, so the test hung forever instead of failing.
+    # The acquisition-failure → BLOCKED path is covered by
+    # test_semaphore_released_on_acquisition_failure below.
 
     def test_semaphore_released_after_execution(self):
         runner = BackgroundRunner()

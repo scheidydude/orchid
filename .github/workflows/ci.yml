@@ -9,6 +9,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -23,4 +24,4 @@ jobs:
         run: uv run ruff check orchid/
 
       - name: Test
-        run: uv run python -m pytest tests/ -x -q -m "not network"
+        run: uv run python -m pytest tests/ -x -q -m "not network" --timeout=120
