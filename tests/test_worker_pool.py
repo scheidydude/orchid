@@ -1,6 +1,8 @@
 """Tests for WorkerPool and resource limits — Phase 3."""
 
 import json
+import subprocess
+import sys
 import threading
 from unittest.mock import MagicMock
 
@@ -34,24 +36,43 @@ class TestChildCpu:
 
 class TestApplyResourceLimits:
     def test_does_not_raise_on_linux(self):
-        """_apply_resource_limits must not crash regardless of OS."""
-        mock_cfg = MagicMock()
-        mock_cfg.get.return_value = {"max_as_gb": 4, "max_cpu_s": 600, "max_files": 256}
-        # May raise ValueError/PermissionError on some kernels — that's caught internally
-        _apply_resource_limits(mock_cfg)
+        """_apply_resource_limits must not crash regardless of OS.
+
+        Must run in a throwaway subprocess: it setrlimits the *calling*
+        process, and RLIMIT_NOFILE hard=256 on the pytest process itself
+        starves every later test of file descriptors (irreversibly — a
+        lowered hard limit cannot be raised back without privileges).
+        """
+        code = (
+            "from unittest.mock import MagicMock\n"
+            "from orchid.subprocess_runner import _apply_resource_limits\n"
+            "cfg = MagicMock()\n"
+            "cfg.get.return_value = {'max_as_gb': 4, 'max_cpu_s': 600, 'max_files': 256}\n"
+            "_apply_resource_limits(cfg)\n"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", code], capture_output=True, text=True, timeout=30
+        )
+        assert proc.returncode == 0, proc.stderr
 
     def test_import_error_is_silent(self):
-        """Windows-style ImportError from 'resource' module must not raise."""
-        import sys
+        """Windows-style ImportError from 'resource' module must not raise.
+
+        sys.modules entry must be set to None — merely popping it lets a
+        fresh import succeed, so the function ran for real and setrlimit'd
+        the pytest process to 256 fds (hard), starving every later test.
+        """
         mock_cfg = MagicMock()
         mock_cfg.get.return_value = {}
-        # Temporarily hide the resource module
-        resource_mod = sys.modules.pop("resource", None)
+        resource_mod = sys.modules.get("resource")
+        sys.modules["resource"] = None  # import raises ImportError for None entries
         try:
             _apply_resource_limits(mock_cfg)  # must not raise
         finally:
             if resource_mod is not None:
                 sys.modules["resource"] = resource_mod
+            else:
+                sys.modules.pop("resource", None)
 
 
 class TestPoolWorkerMocked:

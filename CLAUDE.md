@@ -170,9 +170,9 @@ Multi-user OS phases all done + post-v3 items complete. Test breakdown: 87 (Phas
 *   **Stretch** CPU daily cap with auto-reset, Task Monitor page (`GET /api/admin/runs`), System Config page (`GET/PUT /api/admin/config`), `multi_user` section in `orchid.defaults.yaml`.
 *   Earlier: T051 shell allowlist, T053 V2 lifecycle, T054/55 web planning/streaming, T056 prompt cache, T061 CentralBot, T068 systemd, T285–T297 cron engine.
 
-**Known pre-existing test issues (not from post-v3 work):**
-- `test_worktree.py::TestWorktreeManager` — ERRORs when run at end of full suite on macOS (fd exhaustion from 1700+ accumulated tmp_path dirs); passes when run in isolation and on CI's Linux runners.
-- (fixed) `test_semaphore_acquisition_failure_sets_blocked` removed — it hung forever on a blocking `Semaphore(0)` acquire; coverage lives in `test_semaphore_released_on_acquisition_failure`. CI runs pytest with `--timeout=120` (pytest-timeout) and a 20-min job cap so a hang can never burn 6h again.
+**Formerly-known test issues (all fixed):**
+- End-of-suite "Too many open files" was NOT an fd leak: `test_worker_pool.py::TestApplyResourceLimits` ran `_apply_resource_limits` in the pytest process, hard-clamping RLIMIT_NOFILE to 256 (irreversible without privileges) and starving every later test (`test_worktree` ERRORs). Tests now run it in a throwaway subprocess / with `sys.modules["resource"] = None` (popping the entry does NOT cause ImportError — reimport succeeds).
+- `test_semaphore_acquisition_failure_sets_blocked` removed — it hung forever on a blocking `Semaphore(0)` acquire; coverage lives in `test_semaphore_released_on_acquisition_failure`. CI runs pytest with `--timeout=120` (pytest-timeout) and a 20-min job cap so a hang can never burn 6h again.
 
 ## Tooling
 Prefer `codeindex` CLI via Bash over MCP tools for symbol lookup and indexing operations.
