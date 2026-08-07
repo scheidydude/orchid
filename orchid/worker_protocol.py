@@ -38,6 +38,12 @@ class WorkerResult:
     error: str = ""
     duration_s: float = 0.0
     cpu_seconds: float = 0.0  # Phase 6: child CPU time (user + sys)
+    # P07: additive, container-runner-only diagnostics. Unset ("" / None) for
+    # non-container isolation paths (SubprocessRunner) — do not rely on these
+    # being present for every WorkerResult.
+    stdout: str = ""
+    stderr: str = ""
+    exit_code: int | None = None
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))

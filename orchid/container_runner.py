@@ -3,9 +3,11 @@ import logging
 import shutil
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
+from orchid import config as cfg
 from orchid.worker_protocol import TaskContext, WorkerResult
 
 logger = logging.getLogger(__name__)
@@ -61,18 +63,7 @@ class ContainerRunner:
 
         try:
             proc = subprocess.Popen(
-                [
-                    "docker",
-                    "run",
-                    "--rm",
-                    "-i",
-                    "-w",
-                    self.WORKDIR,
-                    self.image,
-                    sys.executable,
-                    "-m",
-                    "orchid.worker_subprocess",
-                ],
+                self._build_docker_command(),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -83,14 +74,25 @@ class ContainerRunner:
             proc.stdin.flush()
             proc.stdin.close()
 
+            # Drain stderr concurrently so a chatty child can't fill the pipe
+            # buffer and deadlock while we're still reading stdout below.
+            stderr_chunks: list[str] = []
+            stderr_thread = threading.Thread(
+                target=lambda: stderr_chunks.append(proc.stderr.read()),
+                daemon=True,
+            )
+            stderr_thread.start()
+
             worker_result: WorkerResult | None = None
+            stdout_lines: list[str] = []
 
             for line in proc.stdout:
-                line = line.strip()
-                if not line:
+                stdout_lines.append(line)
+                stripped = line.strip()
+                if not stripped:
                     continue
                 try:
-                    data: dict[str, Any] = json.loads(line)
+                    data: dict[str, Any] = json.loads(stripped)
                 except json.JSONDecodeError:
                     continue
 
@@ -103,25 +105,50 @@ class ContainerRunner:
                 proc.wait(timeout=int(timeout_s) if timeout_s else None)
             except subprocess.TimeoutExpired:
                 proc.kill()
+                proc.wait()  # reap now that it's killed — avoid a zombie and get a real returncode
                 worker_result = WorkerResult(
                     task_id=ctx.task_id,
                     success=False,
                     error=f"Worker timed out after {timeout_s}s",
                 )
 
-            if worker_result is not None:
-                return worker_result
+            stderr_thread.join(timeout=5)
 
-            return WorkerResult(
-                task_id=ctx.task_id,
-                success=False,
-                error="Worker exited without result",
-            )
+            if worker_result is None:
+                worker_result = WorkerResult(
+                    task_id=ctx.task_id,
+                    success=False,
+                    error="Worker exited without result",
+                )
+
+            worker_result.exit_code = proc.returncode
+            worker_result.stdout = "".join(stdout_lines)
+            worker_result.stderr = "".join(stderr_chunks)
+            return worker_result
 
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
     # -- internals ----------------------------------------------------------
+
+    def _build_docker_command(self) -> list[str]:
+        """Build the `docker run` argv, applying isolation.* config (P07)."""
+        cmd = ["docker", "run", "--rm", "-i", "-w", self.WORKDIR]
+
+        runtime = cfg.get("isolation.container_runtime", "")
+        if runtime:
+            cmd += ["--runtime", str(runtime)]
+
+        memory_mb = cfg.get("isolation.container_memory_mb", 0)
+        if memory_mb:
+            cmd += ["--memory", f"{int(memory_mb)}m"]
+
+        cpus = cfg.get("isolation.container_cpus", 0)
+        if cpus:
+            cmd += ["--cpus", str(cpus)]
+
+        cmd += [self.image, sys.executable, "-m", "orchid.worker_subprocess"]
+        return cmd
 
     @staticmethod
     def _docker_available() -> bool:
