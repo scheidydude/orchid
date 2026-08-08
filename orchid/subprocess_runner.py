@@ -348,6 +348,14 @@ class SubprocessRunner:
                                              timeout_s=timeout_s)
             logger.warning("container_enabled=true but docker not found — falling back to subprocess")
 
+        if cfg.get("isolation.firecracker_enabled", False):
+            from orchid.firecracker_runner import FirecrackerRunner
+            _fr = FirecrackerRunner()
+            if _fr.is_available():
+                return _fr.run_task_isolated(ctx, stream_callback=stream_callback,
+                                             timeout_s=timeout_s)
+            logger.warning("firecracker_enabled=true but firecracker/kernel/rootfs not found — falling back to subprocess")
+
         pool_size = cfg.get("isolation.subprocess_workers", 0)
         if pool_size and pool_size > 0:
             return _get_pool(int(pool_size)).submit(ctx, stream_callback, timeout_s)

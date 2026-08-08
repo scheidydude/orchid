@@ -347,6 +347,12 @@ isolation:
   container_egress_allowlist: []      # P07: domains the sandbox may reach via the Squid sidecar; [] = --network none (default-deny)
   container_env: {}                   # P07: explicit, opt-in env vars forwarded into the container (e.g. LLAMA_BASE_URL); default forwards nothing
   syscall_trace_enabled: false         # P07: gVisor strace/debug-log per execution (runsc only) — needs --allow-flag-override on the runsc Docker runtime, see findings.md
+  firecracker_enabled: false          # P08: true = use Firecracker microVM isolation (alternative to container_enabled)
+  firecracker_bin: "~/.local/bin/firecracker"   # P08: path to the firecracker binary
+  firecracker_kernel_path: "~/.local/opt/firecracker/artifacts/vmlinux-6.18.39"   # P08: CI-published guest kernel, see project-08-firecracker-sandbox/findings.md
+  firecracker_rootfs_path: "~/.local/opt/firecracker/artifacts/ubuntu-24.04.ext4" # P08: guest rootfs image, built per project-08-firecracker-sandbox/findings.md
+  firecracker_memory_mb: 256          # P08: microVM mem_size_mib
+  firecracker_vcpus: 1                # P08: microVM vcpu_count
   watchdog_threshold_s: 1800          # seconds before a stuck task is marked BLOCKED
   resource_limits:
     max_as_gb: 4                      # child address space cap (GB)
