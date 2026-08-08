@@ -22,13 +22,16 @@ sized undertaking, not yet attempted.
 from __future__ import annotations
 
 import base64
+import dataclasses
 import json
 import logging
 import os
+import queue
 import select
 import shutil
 import socket
 import subprocess
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -101,56 +104,78 @@ class FirecrackerRunner:
         proc: subprocess.Popen | None = None
 
         try:
-            rootfs_copy = self._prepare_rootfs_copy(work_dir)
-            cfg_path, uds_path = self._write_vm_config(work_dir, rootfs_copy)
-
-            api_sock = work_dir / "api.sock"
-            proc = subprocess.Popen(
-                [str(self._bin_path()), "--api-sock", str(api_sock),
-                 "--config-file", str(cfg_path), "--no-seccomp"],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-            )
-            os.set_blocking(proc.stdout.fileno(), False)
-
-            boot_deadline = time.monotonic() + min(timeout_s or 15.0, 15.0)
-            buf = self._wait_for_ready(proc, boot_deadline)
-            if buf is None:
+            proc, uds_path = self._boot_vm(work_dir, timeout_s)
+            if proc is None:
                 return WorkerResult(
                     task_id=ctx.task_id, success=False,
                     error="Firecracker microVM did not reach a ready guest shell in time",
                 )
 
-            self._start_guest_listener(proc)
-
             response = self._send_task_over_vsock(
                 uds_path, ctx.task_description, timeout_s
             )
-            if response is None:
-                return WorkerResult(
-                    task_id=ctx.task_id, success=False,
-                    error="No response from guest vsock task handler",
-                )
-
             duration_s = time.monotonic() - t0
-            return WorkerResult(
-                task_id=ctx.task_id,
-                success=bool(response.get("success", False)),
-                result="" if response.get("success") else "",
-                error="" if response.get("success") else str(response.get("stderr", "")),
-                duration_s=duration_s,
-                stdout=response.get("stdout", ""),
-                stderr=response.get("stderr", ""),
-                exit_code=response.get("exit_code"),
-            )
+            return self._worker_result_from_response(ctx.task_id, response, duration_s)
         finally:
             self._shutdown(proc)
             shutil.rmtree(work_dir, ignore_errors=True)
 
     # -- internals ------------------------------------------------------
+
+    @staticmethod
+    def _worker_result_from_response(
+        task_id: str, response: dict | None, duration_s: float
+    ) -> WorkerResult:
+        if response is None:
+            return WorkerResult(
+                task_id=task_id, success=False,
+                error="No response from guest vsock task handler",
+                duration_s=duration_s,
+            )
+        success = bool(response.get("success", False))
+        return WorkerResult(
+            task_id=task_id,
+            success=success,
+            error="" if success else str(response.get("stderr", "")),
+            duration_s=duration_s,
+            stdout=response.get("stdout", ""),
+            stderr=response.get("stderr", ""),
+            exit_code=response.get("exit_code"),
+        )
+
+    def _boot_vm(
+        self, work_dir: Path, timeout_s: float | None
+    ) -> tuple[subprocess.Popen | None, Path | None]:
+        """Boot a microVM and bootstrap its guest vsock listener.
+
+        Shared by run_task_isolated() (boot-use-discard) and
+        FirecrackerPool (pre-boot many, hand out warm ones on demand) --
+        the whole point of Phase 3's pool is to move this exact call off
+        the request path, so it must not embed any per-task assumptions.
+        """
+        rootfs_copy = self._prepare_rootfs_copy(work_dir)
+        cfg_path, uds_path = self._write_vm_config(work_dir, rootfs_copy)
+
+        api_sock = work_dir / "api.sock"
+        proc = subprocess.Popen(
+            [str(self._bin_path()), "--api-sock", str(api_sock),
+             "--config-file", str(cfg_path), "--no-seccomp"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        os.set_blocking(proc.stdout.fileno(), False)
+
+        boot_deadline = time.monotonic() + min(timeout_s or 15.0, 15.0)
+        buf = self._wait_for_ready(proc, boot_deadline)
+        if buf is None:
+            self._shutdown(proc)
+            return None, None
+
+        self._start_guest_listener(proc)
+        return proc, uds_path
 
     def _prepare_rootfs_copy(self, work_dir: Path) -> Path:
         """Per-task copy of the shared base rootfs image.
@@ -289,3 +314,123 @@ class FirecrackerRunner:
             "isolation.firecracker_rootfs_path",
             "~/.local/opt/firecracker/artifacts/ubuntu-24.04.ext4",
         )).expanduser()
+
+
+# ── FirecrackerPool (P08 Phase 3) ───────────────────────────────────────────
+
+
+@dataclasses.dataclass
+class _WarmVM:
+    proc: subprocess.Popen
+    uds_path: Path
+    work_dir: Path
+    booted_at: float
+
+
+class FirecrackerPool:
+    """Pool of pre-booted, idle Firecracker microVMs.
+
+    Each VM is one-shot: assigned to exactly one task, then discarded
+    and replaced. This isn't a shortcut -- a microVM that already ran
+    one task's shell command isn't a clean isolation boundary for the
+    next one (matches ContainerRunner/Firecracker's own "short-lived
+    per-task" model, not a reusable-worker pool like SubprocessRunner's
+    WorkerPool). What the pool buys is moving _boot_vm()'s ~1.2s cost
+    off the request path: pre-booted VMs sit warm and ready, so
+    submit() only pays for the vsock round trip when one's available.
+    """
+
+    def __init__(self, size: int = 2, runner: FirecrackerRunner | None = None) -> None:
+        self._size = max(1, size)
+        self._runner = runner or FirecrackerRunner()
+        self._warm: queue.Queue[_WarmVM] = queue.Queue()
+        self._closed = False
+
+    def start(self) -> None:
+        """Kick off pre-warming the pool. Async -- does not block."""
+        if not self._runner.is_available():
+            logger.warning("FirecrackerPool: firecracker unavailable, not pre-warming")
+            return
+        for _ in range(self._size):
+            self._spawn_warm_vm_async()
+
+    def warm_count(self) -> int:
+        return self._warm.qsize()
+
+    def submit(
+        self,
+        ctx: TaskContext,
+        stream_callback: Any | None = None,
+        timeout_s: float | None = None,
+    ) -> WorkerResult:
+        if self._closed:
+            return WorkerResult(task_id=ctx.task_id, success=False, error="Pool is closed")
+
+        t0 = time.monotonic()
+        wait_budget = min(timeout_s, 20.0) if timeout_s else 20.0
+        try:
+            vm = self._warm.get(timeout=wait_budget)
+        except queue.Empty:
+            # Pool exhausted (undersized, or replenishment hasn't caught
+            # up with demand) -- cold-boot a fallback rather than fail
+            # the task outright. Logged, not silent: a real deployment
+            # would want to know its pool is too small for its load.
+            logger.warning(
+                "FirecrackerPool exhausted (size=%d), cold-booting a fallback for task %s",
+                self._size, ctx.task_id,
+            )
+            vm = self._boot_one("pool-cold", timeout_s)
+            if vm is None:
+                return WorkerResult(
+                    task_id=ctx.task_id, success=False,
+                    error="Pool exhausted and cold-boot fallback also failed to reach a ready guest shell",
+                )
+
+        try:
+            response = self._runner._send_task_over_vsock(
+                vm.uds_path, ctx.task_description, timeout_s
+            )
+            duration_s = time.monotonic() - t0
+            return self._runner._worker_result_from_response(ctx.task_id, response, duration_s)
+        finally:
+            self._runner._shutdown(vm.proc)
+            shutil.rmtree(vm.work_dir, ignore_errors=True)
+            if not self._closed:
+                self._spawn_warm_vm_async()
+
+    def shutdown(self) -> None:
+        self._closed = True
+        while True:
+            try:
+                vm = self._warm.get_nowait()
+            except queue.Empty:
+                break
+            self._runner._shutdown(vm.proc)
+            shutil.rmtree(vm.work_dir, ignore_errors=True)
+
+    # -- internals ------------------------------------------------------
+
+    def _boot_one(self, label: str, timeout_s: float | None) -> _WarmVM | None:
+        work_dir = Path(f"/tmp/orchid-fc-{label}-{uuid.uuid4().hex[:8]}")
+        work_dir.mkdir(parents=True, exist_ok=True)
+        proc, uds_path = self._runner._boot_vm(work_dir, timeout_s)
+        if proc is None:
+            shutil.rmtree(work_dir, ignore_errors=True)
+            return None
+        return _WarmVM(proc=proc, uds_path=uds_path, work_dir=work_dir, booted_at=time.monotonic())
+
+    def _spawn_warm_vm_async(self) -> None:
+        def _boot() -> None:
+            if self._closed:
+                return
+            vm = self._boot_one("pool", timeout_s=15.0)
+            if vm is None:
+                logger.warning("FirecrackerPool: pre-warm boot failed")
+                return
+            if self._closed:
+                self._runner._shutdown(vm.proc)
+                shutil.rmtree(vm.work_dir, ignore_errors=True)
+                return
+            self._warm.put(vm)
+
+        threading.Thread(target=_boot, daemon=True).start()
