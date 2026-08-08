@@ -37,6 +37,11 @@ def test_workerresult_defaults():
     assert result.result == ""
     assert result.error == ""
     assert result.duration_s == 0.0
+    # P07: additive container-runner diagnostics default to unset
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert result.exit_code is None
+    assert result.syscall_log_path == ""
 
 
 def test_workerresult_to_json_roundtrip():

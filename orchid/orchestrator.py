@@ -335,6 +335,7 @@ class Orchestrator:
             timeout_s=float(max_s) if max_s else None,
         )
         self._last_subprocess_cpu_s = wresult.cpu_seconds  # Phase 6
+        self._last_syscall_log_path = wresult.syscall_log_path  # P07 Phase 5
         if not wresult.success:
             raise RuntimeError(f"Worker subprocess failed: {wresult.error}")
         return wresult.result
@@ -594,6 +595,7 @@ class Orchestrator:
                 _cancel_timer.start()
 
             self._last_subprocess_cpu_s = 0.0  # reset per-task
+            self._last_syscall_log_path = ""  # reset per-task (P07 Phase 5)
             _subprocess_mode = cfg.get("isolation.subprocess_enabled", False)
             _fallback_codes: set[int] = set(cfg.get("providers.fallback_on_errors", [429, 503, 502]))
             _max_attempts = int(cfg.get("providers.max_fallback_attempts", 3))
@@ -697,6 +699,7 @@ class Orchestrator:
                     model=decision.model,
                     result_text=result_text,
                     cpu_seconds=_task_cpu_s,
+                    syscall_log_path=getattr(self, "_last_syscall_log_path", ""),
                 )
                 # T096: Fire task_failed hook
                 self._fire_task_failed_hook(task, result_text)
@@ -732,6 +735,7 @@ class Orchestrator:
                     elapsed=_task_run_elapsed,
                     model=decision.model,
                     cpu_seconds=_task_cpu_s,
+                    syscall_log_path=getattr(self, "_last_syscall_log_path", ""),
                 )
                 # T096: Fire task_complete hook
                 self._fire_task_complete_hook(task, result_text, files_written)
@@ -1301,6 +1305,7 @@ class Orchestrator:
         model: str,
         result_text: str = "",
         cpu_seconds: float = 0.0,
+        syscall_log_path: str = "",
     ) -> None:
         """Write a structured metrics record to .orchid/task_metrics.jsonl (T085)."""
         metrics_path = self.session.project_dir / ".orchid" / "task_metrics.jsonl"
@@ -1323,6 +1328,13 @@ class Orchestrator:
             "session_id": session_id,
             "timestamp": datetime.now(UTC).isoformat(),
         }
+
+        if syscall_log_path:
+            record["syscall_log_path"] = syscall_log_path
+            from orchid.sandbox_syscall_log import summarize as _summarize_syscalls
+            summary = _summarize_syscalls(syscall_log_path)
+            if summary:
+                record["syscall_summary"] = summary
 
         if status == "blocked":
             record["blocker"] = {

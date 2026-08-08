@@ -1,0 +1,29 @@
+# P07: Squid config for the sandbox egress-allowlist proxy.
+# Mounted read-only into the proxy container by orchid/sandbox_egress.py.
+# The domain allowlist itself lives in a separate mounted file
+# (see ALLOWLIST_FILENAME in sandbox_egress.py) so it can be
+# regenerated without restarting Squid.
+
+http_port 3128
+
+acl SSL_ports port 443
+acl Safe_ports port 80
+acl Safe_ports port 443
+acl Safe_ports port 8081-8082  # LAN LLM inference endpoints (nomic-embed-text, Qwen) — see findings.md
+acl CONNECT method CONNECT
+
+acl allowed_dst_domains dstdomain "/etc/squid/allowlist.txt"
+
+# Standard safety: only allow CONNECT to the HTTPS port, only allow
+# plain HTTP/HTTPS ports at all.
+http_access deny !Safe_ports
+http_access deny CONNECT !SSL_ports
+
+# The actual allowlist enforcement.
+http_access allow allowed_dst_domains
+http_access deny all
+
+# No caching needed for this use case; keep the proxy stateless.
+cache deny all
+
+access_log /var/log/squid/access.log squid
