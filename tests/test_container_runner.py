@@ -173,6 +173,47 @@ def test_build_docker_command_syscall_trace_requires_runsc_and_flag(tmp_path: Pa
         assert expected_dir.is_dir()  # created eagerly so the mount/annotation target exists
 
 
+# ── P07 Phase 6: per-tenant quota resolution ────────────────────────────────
+
+def test_build_docker_command_tenant_quota_overrides_global(tmp_path: Path) -> None:
+    """A tenant_id with a matching isolation.tenant_quotas entry overrides the
+    global container_memory_mb/container_cpus for that one task."""
+    overrides = {
+        "isolation.container_memory_mb": 256,
+        "isolation.container_cpus": 1,
+        "isolation.tenant_quotas": {
+            "tenant-low": {"memory_mb": 64, "cpus": 0.5},
+            "tenant-high": {"memory_mb": 512, "cpus": 2},
+        },
+    }
+    with patch("orchid.container_runner.cfg.get", side_effect=_cfg_side_effect(overrides)):
+        cmd_low = ContainerRunner()._build_docker_command(tmp_path, "T-LOW", tenant_id="tenant-low")
+        cmd_high = ContainerRunner()._build_docker_command(tmp_path, "T-HIGH", tenant_id="tenant-high")
+
+        assert cmd_low[cmd_low.index("--memory") + 1] == "64m"
+        assert cmd_low[cmd_low.index("--cpus") + 1] == "0.5"
+        assert cmd_high[cmd_high.index("--memory") + 1] == "512m"
+        assert cmd_high[cmd_high.index("--cpus") + 1] == "2"
+
+
+def test_build_docker_command_unknown_or_empty_tenant_falls_back_to_global(tmp_path: Path) -> None:
+    """No tenant_id, or a tenant_id absent from tenant_quotas, uses the
+    existing global container_memory_mb/container_cpus unchanged."""
+    overrides = {
+        "isolation.container_memory_mb": 256,
+        "isolation.container_cpus": 1,
+        "isolation.tenant_quotas": {"tenant-low": {"memory_mb": 64, "cpus": 0.5}},
+    }
+    with patch("orchid.container_runner.cfg.get", side_effect=_cfg_side_effect(overrides)):
+        cmd_no_tenant = ContainerRunner()._build_docker_command(tmp_path, "T-NONE")
+        cmd_unknown_tenant = ContainerRunner()._build_docker_command(
+            tmp_path, "T-UNKNOWN", tenant_id="tenant-nonexistent"
+        )
+        for cmd in (cmd_no_tenant, cmd_unknown_tenant):
+            assert cmd[cmd.index("--memory") + 1] == "256m"
+            assert cmd[cmd.index("--cpus") + 1] == "1"
+
+
 def test_run_task_isolated_populates_additive_fields_on_no_docker_failure(tmp_path: Path) -> None:
     """Even the no-Docker failure path leaves the new fields at their safe defaults."""
     with patch.object(shutil, "which", return_value=None):

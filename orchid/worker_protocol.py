@@ -11,6 +11,10 @@ class TaskContext:
     model_key: str
     project_dir: str
     injection_queue_path: str
+    # P07 Phase 6: optional tenant identifier for per-tenant quota
+    # resolution (isolation.tenant_quotas). "" = no tenant, resolve
+    # quotas from the existing global isolation.container_* config.
+    tenant_id: str = ""
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))

@@ -75,7 +75,7 @@ class ContainerRunner:
 
         try:
             proc = subprocess.Popen(
-                self._build_docker_command(tmp_dir, ctx.task_id),
+                self._build_docker_command(tmp_dir, ctx.task_id, ctx.tenant_id),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -148,7 +148,9 @@ class ContainerRunner:
 
     # -- internals ----------------------------------------------------------
 
-    def _build_docker_command(self, project_dir: Path, task_id: str) -> list[str]:
+    def _build_docker_command(
+        self, project_dir: Path, task_id: str, tenant_id: str = ""
+    ) -> list[str]:
         """Build the `docker run` argv, applying isolation.* config (P07).
 
         Mounts *project_dir* (the copy `_prepare_project` made) at
@@ -167,11 +169,20 @@ class ContainerRunner:
         if runtime:
             cmd += ["--runtime", str(runtime)]
 
-        memory_mb = cfg.get("isolation.container_memory_mb", 0)
+        # P07 Phase 6: a tenant-specific quota (isolation.tenant_quotas[tenant_id])
+        # overrides the global container_memory_mb/container_cpus for that one
+        # task, so two concurrent tenants can carry independently enforced
+        # caps. Unknown/empty tenant_id, or a tenant with no quota entry,
+        # falls back to the existing global keys unchanged.
+        tenant_quota = {}
+        if tenant_id:
+            tenant_quota = (cfg.get("isolation.tenant_quotas", {}) or {}).get(tenant_id) or {}
+
+        memory_mb = tenant_quota.get("memory_mb", cfg.get("isolation.container_memory_mb", 0))
         if memory_mb:
             cmd += ["--memory", f"{int(memory_mb)}m"]
 
-        cpus = cfg.get("isolation.container_cpus", 0)
+        cpus = tenant_quota.get("cpus", cfg.get("isolation.container_cpus", 0))
         if cpus:
             cmd += ["--cpus", str(cpus)]
 
