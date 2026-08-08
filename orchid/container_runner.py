@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from orchid import config as cfg
+from orchid import sandbox_egress
 from orchid.worker_protocol import TaskContext, WorkerResult
 
 logger = logging.getLogger(__name__)
@@ -146,6 +147,20 @@ class ContainerRunner:
         cpus = cfg.get("isolation.container_cpus", 0)
         if cpus:
             cmd += ["--cpus", str(cpus)]
+
+        allowlist = cfg.get("isolation.container_egress_allowlist", []) or []
+        if allowlist:
+            proxy_url = sandbox_egress.ensure_egress_proxy(list(allowlist))
+            cmd += [
+                "--network", sandbox_egress.INTERNAL_NETWORK,
+                "-e", f"HTTP_PROXY={proxy_url}",
+                "-e", f"HTTPS_PROXY={proxy_url}",
+            ]
+        else:
+            # FR-3: default-deny. Previously no --network flag was set at
+            # all, which meant the default Docker bridge (full internet
+            # access) — an intentional behavior change, not a bug.
+            cmd += ["--network", "none"]
 
         cmd += [self.image, sys.executable, "-m", "orchid.worker_subprocess"]
         return cmd

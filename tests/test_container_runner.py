@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
+from orchid import sandbox_egress
 from orchid.container_runner import ContainerRunner
 from orchid.worker_protocol import TaskContext, WorkerResult
 
@@ -66,13 +67,32 @@ def _cfg_side_effect(overrides: dict) -> "callable":
 
 
 def test_build_docker_command_default_has_no_runtime_or_limits() -> None:
-    """With isolation.* unset, the docker run command is unchanged (no --runtime/--memory/--cpus)."""
+    """With isolation.* unset: no --runtime/--memory/--cpus, but --network none by
+    default (FR-3 default-deny — a deliberate behavior change, see ADR-004)."""
     with patch("orchid.container_runner.cfg.get", side_effect=_cfg_side_effect({})):
         cmd = ContainerRunner()._build_docker_command()
         assert "--runtime" not in cmd
         assert "--memory" not in cmd
         assert "--cpus" not in cmd
         assert cmd[:6] == ["docker", "run", "--rm", "-i", "-w", ContainerRunner.WORKDIR]
+        assert "--network" in cmd
+        assert cmd[cmd.index("--network") + 1] == "none"
+
+
+def test_build_docker_command_with_allowlist_uses_egress_proxy() -> None:
+    """isolation.container_egress_allowlist routes through the Squid sidecar network + proxy env vars."""
+    overrides = {"isolation.container_egress_allowlist": ["example.com"]}
+    with patch("orchid.container_runner.cfg.get", side_effect=_cfg_side_effect(overrides)), \
+         patch("orchid.container_runner.sandbox_egress.ensure_egress_proxy",
+               return_value="http://orchid-sandbox-egress-proxy:3128") as mock_ensure:
+        cmd = ContainerRunner()._build_docker_command()
+        mock_ensure.assert_called_once_with(["example.com"])
+        assert "--network" in cmd
+        assert cmd[cmd.index("--network") + 1] == sandbox_egress.INTERNAL_NETWORK
+        assert "-e" in cmd
+        env_flags = [cmd[i + 1] for i, v in enumerate(cmd) if v == "-e"]
+        assert "HTTP_PROXY=http://orchid-sandbox-egress-proxy:3128" in env_flags
+        assert "HTTPS_PROXY=http://orchid-sandbox-egress-proxy:3128" in env_flags
 
 
 def test_build_docker_command_applies_runsc_runtime_and_limits() -> None:

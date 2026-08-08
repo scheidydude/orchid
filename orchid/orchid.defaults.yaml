@@ -343,6 +343,7 @@ isolation:
   container_runtime: ""               # P07: Docker runtime for container isolation, e.g. "runsc" (gVisor); "" = Docker default (runc)
   container_memory_mb: 0              # P07: container --memory cap in MB; 0 = no limit
   container_cpus: 0                   # P07: container --cpus cap; 0 = no limit
+  container_egress_allowlist: []      # P07: domains the sandbox may reach via the Squid sidecar; [] = --network none (default-deny)
   watchdog_threshold_s: 1800          # seconds before a stuck task is marked BLOCKED
   resource_limits:
     max_as_gb: 4                      # child address space cap (GB)
