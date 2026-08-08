@@ -9,6 +9,7 @@ http_port 3128
 acl SSL_ports port 443
 acl Safe_ports port 80
 acl Safe_ports port 443
+acl Safe_ports port 8081-8082  # LAN LLM inference endpoints (nomic-embed-text, Qwen) — see findings.md
 acl CONNECT method CONNECT
 
 acl allowed_dst_domains dstdomain "/etc/squid/allowlist.txt"

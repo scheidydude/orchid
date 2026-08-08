@@ -29,6 +29,13 @@ class ContainerRunner:
     IMAGE: str = DOCKER_IMAGE  # backward compat alias
     WORKDIR: str = "/orchid"
 
+    # Repo root, e.g. /home/dave/LocalAI/orchid — mounted read-only so the
+    # container can import `orchid` via the same editable install the host
+    # uses (see sys.executable below). Fixes a pre-existing gap: nothing
+    # previously made the orchid package importable inside the container
+    # at all.
+    ORCHID_ROOT: Path = Path(__file__).resolve().parent.parent
+
     def __init__(self, image: str | None = None) -> None:
         self.image = image or self.IMAGE
 
@@ -64,7 +71,7 @@ class ContainerRunner:
 
         try:
             proc = subprocess.Popen(
-                self._build_docker_command(),
+                self._build_docker_command(tmp_dir),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -132,9 +139,20 @@ class ContainerRunner:
 
     # -- internals ----------------------------------------------------------
 
-    def _build_docker_command(self) -> list[str]:
-        """Build the `docker run` argv, applying isolation.* config (P07)."""
+    def _build_docker_command(self, project_dir: Path) -> list[str]:
+        """Build the `docker run` argv, applying isolation.* config (P07).
+
+        Mounts *project_dir* (the copy `_prepare_project` made) at
+        `self.WORKDIR`, plus whatever `sys.executable` (this process's own
+        venv interpreter) needs to actually run inside the container —
+        previously nothing was mounted at all, so `orchid.worker_subprocess`
+        could never be imported regardless of image or runtime.
+        """
         cmd = ["docker", "run", "--rm", "-i", "-w", self.WORKDIR]
+        cmd += ["-v", f"{project_dir}:{self.WORKDIR}"]
+        cmd += ["-v", f"{self.ORCHID_ROOT}:{self.ORCHID_ROOT}:ro"]
+        for extra in self._venv_extra_mount_dirs():
+            cmd += ["-v", f"{extra}:{extra}:ro"]
 
         runtime = cfg.get("isolation.container_runtime", "")
         if runtime:
@@ -147,6 +165,15 @@ class ContainerRunner:
         cpus = cfg.get("isolation.container_cpus", 0)
         if cpus:
             cmd += ["--cpus", str(cpus)]
+
+        # Explicit, opt-in only — nothing from the host environment is
+        # forwarded by default. An isolated task's own LLM calls (e.g.
+        # TesterAgent's ReAct loop) need *something* to reach the model
+        # endpoint; this lets that be configured deliberately per-key
+        # rather than leaking the whole host environment (secrets and
+        # all) into the sandbox.
+        for key, value in (cfg.get("isolation.container_env", {}) or {}).items():
+            cmd += ["-e", f"{key}={value}"]
 
         allowlist = cfg.get("isolation.container_egress_allowlist", []) or []
         if allowlist:
@@ -164,6 +191,21 @@ class ContainerRunner:
 
         cmd += [self.image, sys.executable, "-m", "orchid.worker_subprocess"]
         return cmd
+
+    @staticmethod
+    def _venv_extra_mount_dirs() -> list[Path]:
+        """Real (non-ORCHID_ROOT) directories `sys.executable` needs at
+        runtime — e.g. a uv-managed standalone Python toolchain living
+        outside the repo. Mounted read-only at their real host paths so
+        `.venv`'s internal symlinks and `pyvenv.cfg` still resolve
+        correctly inside the container. Empty if the interpreter lives
+        entirely under ORCHID_ROOT (e.g. a plain venv over system Python).
+        """
+        resolved = Path(sys.executable).resolve()
+        if str(resolved).startswith(str(ContainerRunner.ORCHID_ROOT)):
+            return []
+        uv_root = Path.home() / ".local" / "share" / "uv"
+        return [uv_root] if uv_root.exists() else []
 
     @staticmethod
     def _docker_available() -> bool:
@@ -185,7 +227,7 @@ class ContainerRunner:
 
         The container mounts this directory at ``self.WORKDIR``.
         """
-        tmp_dir = Path(ctx.project_path) if ctx.project_path else Path.cwd()
+        tmp_dir = Path(ctx.project_dir) if ctx.project_dir else Path.cwd()
         dest = Path("/tmp/orchid-container-") / str(ctx.task_id)
         dest.mkdir(parents=True, exist_ok=True)
         # Copy the project contents into the temp dir so the worker can
@@ -195,5 +237,8 @@ class ContainerRunner:
             for item in src.iterdir():
                 if item.name in (".venv", "__pycache__", ".git"):
                     continue
-                shutil.copytree(item, dest / item.name, dirs_exist_ok=True)
+                if item.is_dir():
+                    shutil.copytree(item, dest / item.name, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(item, dest / item.name)
         return dest
