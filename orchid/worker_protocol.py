@@ -44,6 +44,7 @@ class WorkerResult:
     stdout: str = ""
     stderr: str = ""
     exit_code: int | None = None
+    syscall_log_path: str = ""  # P07 Phase 5: gVisor debug-log dir, when syscall tracing is enabled
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))

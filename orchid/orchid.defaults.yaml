@@ -345,6 +345,7 @@ isolation:
   container_cpus: 0                   # P07: container --cpus cap; 0 = no limit
   container_egress_allowlist: []      # P07: domains the sandbox may reach via the Squid sidecar; [] = --network none (default-deny)
   container_env: {}                   # P07: explicit, opt-in env vars forwarded into the container (e.g. LLAMA_BASE_URL); default forwards nothing
+  syscall_trace_enabled: false         # P07: gVisor strace/debug-log per execution (runsc only) — needs --allow-flag-override on the runsc Docker runtime, see findings.md
   watchdog_threshold_s: 1800          # seconds before a stuck task is marked BLOCKED
   resource_limits:
     max_as_gb: 4                      # child address space cap (GB)

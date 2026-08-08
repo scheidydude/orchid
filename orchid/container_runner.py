@@ -36,6 +36,10 @@ class ContainerRunner:
     # at all.
     ORCHID_ROOT: Path = Path(__file__).resolve().parent.parent
 
+    # P07 Phase 5: per-task gVisor syscall-trace logs land here, one
+    # directory per task_id, so they're directly retrievable by task ID.
+    SYSCALL_LOG_ROOT: Path = Path.home() / ".orchid" / "sandbox_syscall_logs"
+
     def __init__(self, image: str | None = None) -> None:
         self.image = image or self.IMAGE
 
@@ -71,7 +75,7 @@ class ContainerRunner:
 
         try:
             proc = subprocess.Popen(
-                self._build_docker_command(tmp_dir),
+                self._build_docker_command(tmp_dir, ctx.task_id),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -132,6 +136,11 @@ class ContainerRunner:
             worker_result.exit_code = proc.returncode
             worker_result.stdout = "".join(stdout_lines)
             worker_result.stderr = "".join(stderr_chunks)
+
+            log_dir = self._syscall_log_dir(ctx.task_id)
+            if log_dir.exists() and any(log_dir.iterdir()):
+                worker_result.syscall_log_path = str(log_dir)
+
             return worker_result
 
         finally:
@@ -139,7 +148,7 @@ class ContainerRunner:
 
     # -- internals ----------------------------------------------------------
 
-    def _build_docker_command(self, project_dir: Path) -> list[str]:
+    def _build_docker_command(self, project_dir: Path, task_id: str) -> list[str]:
         """Build the `docker run` argv, applying isolation.* config (P07).
 
         Mounts *project_dir* (the copy `_prepare_project` made) at
@@ -166,6 +175,20 @@ class ContainerRunner:
         if cpus:
             cmd += ["--cpus", str(cpus)]
 
+        # FR-5: per-execution syscall trace, only meaningful under runsc.
+        # Uses gVisor's documented per-container flag-override annotations
+        # (dev.gvisor.flag.<name>=<value>) rather than a global runtime
+        # flag, so tracing is opt-in per task, not host-wide. Requires
+        # --allow-flag-override on the runsc Docker runtime — see
+        # findings.md; without it, Docker rejects the annotation outright.
+        if runtime == "runsc" and cfg.get("isolation.syscall_trace_enabled", False):
+            log_dir = self._syscall_log_dir(task_id)
+            log_dir.mkdir(parents=True, exist_ok=True)
+            cmd += [
+                "--annotation", "dev.gvisor.flag.strace=true",
+                "--annotation", f"dev.gvisor.flag.debug-log={log_dir}/",
+            ]
+
         # Explicit, opt-in only — nothing from the host environment is
         # forwarded by default. An isolated task's own LLM calls (e.g.
         # TesterAgent's ReAct loop) need *something* to reach the model
@@ -191,6 +214,11 @@ class ContainerRunner:
 
         cmd += [self.image, sys.executable, "-m", "orchid.worker_subprocess"]
         return cmd
+
+    @classmethod
+    def _syscall_log_dir(cls, task_id: str) -> Path:
+        """Per-task directory for gVisor's --debug-log output (FR-5)."""
+        return cls.SYSCALL_LOG_ROOT / task_id
 
     @staticmethod
     def _venv_extra_mount_dirs() -> list[Path]:

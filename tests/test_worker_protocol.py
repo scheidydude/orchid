@@ -41,6 +41,7 @@ def test_workerresult_defaults():
     assert result.stdout == ""
     assert result.stderr == ""
     assert result.exit_code is None
+    assert result.syscall_log_path == ""
 
 
 def test_workerresult_to_json_roundtrip():

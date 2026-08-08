@@ -70,7 +70,7 @@ def test_build_docker_command_default_has_no_runtime_or_limits(tmp_path: Path) -
     """With isolation.* unset: no --runtime/--memory/--cpus, but --network none by
     default (FR-3 default-deny — a deliberate behavior change, see ADR-004)."""
     with patch("orchid.container_runner.cfg.get", side_effect=_cfg_side_effect({})):
-        cmd = ContainerRunner()._build_docker_command(tmp_path)
+        cmd = ContainerRunner()._build_docker_command(tmp_path, "T-TEST")
         assert "--runtime" not in cmd
         assert "--memory" not in cmd
         assert "--cpus" not in cmd
@@ -85,7 +85,7 @@ def test_build_docker_command_with_allowlist_uses_egress_proxy(tmp_path: Path) -
     with patch("orchid.container_runner.cfg.get", side_effect=_cfg_side_effect(overrides)), \
          patch("orchid.container_runner.sandbox_egress.ensure_egress_proxy",
                return_value="http://orchid-sandbox-egress-proxy:3128") as mock_ensure:
-        cmd = ContainerRunner()._build_docker_command(tmp_path)
+        cmd = ContainerRunner()._build_docker_command(tmp_path, "T-TEST")
         mock_ensure.assert_called_once_with(["example.com"])
         assert "--network" in cmd
         assert cmd[cmd.index("--network") + 1] == sandbox_egress.INTERNAL_NETWORK
@@ -103,7 +103,7 @@ def test_build_docker_command_applies_runsc_runtime_and_limits(tmp_path: Path) -
         "isolation.container_cpus": 1,
     }
     with patch("orchid.container_runner.cfg.get", side_effect=_cfg_side_effect(overrides)):
-        cmd = ContainerRunner()._build_docker_command(tmp_path)
+        cmd = ContainerRunner()._build_docker_command(tmp_path, "T-TEST")
         assert "--runtime" in cmd
         assert cmd[cmd.index("--runtime") + 1] == "runsc"
         assert "--memory" in cmd
@@ -116,7 +116,7 @@ def test_build_docker_command_mounts_project_and_orchid_root(tmp_path: Path) -> 
     """P07: the container must actually be able to import orchid and see the
     project — previously no -v mount existed at all for either."""
     with patch("orchid.container_runner.cfg.get", side_effect=_cfg_side_effect({})):
-        cmd = ContainerRunner()._build_docker_command(tmp_path)
+        cmd = ContainerRunner()._build_docker_command(tmp_path, "T-TEST")
         mount_args = [cmd[i + 1] for i, v in enumerate(cmd) if v == "-v"]
         assert f"{tmp_path}:{ContainerRunner.WORKDIR}" in mount_args
         assert f"{ContainerRunner.ORCHID_ROOT}:{ContainerRunner.ORCHID_ROOT}:ro" in mount_args
@@ -143,6 +143,34 @@ def test_prepare_project_uses_project_dir_field(tmp_path: Path) -> None:
         assert (dest / "example.txt").read_text() == "hello"
     finally:
         shutil.rmtree(dest, ignore_errors=True)
+
+
+def test_build_docker_command_syscall_trace_requires_runsc_and_flag(tmp_path: Path, monkeypatch) -> None:
+    """FR-5: --annotation strace/debug-log only added when both
+    isolation.syscall_trace_enabled AND runtime=runsc are set."""
+    monkeypatch.setattr(ContainerRunner, "SYSCALL_LOG_ROOT", tmp_path / "synlogs")
+
+    # Neither set: no annotations.
+    with patch("orchid.container_runner.cfg.get", side_effect=_cfg_side_effect({})):
+        cmd = ContainerRunner()._build_docker_command(tmp_path, "T-TRACE-1")
+        assert "--annotation" not in cmd
+
+    # Trace enabled but runc (no runtime set): still no annotations — tracing
+    # is a gVisor-specific mechanism, meaningless (and untested) under runc.
+    with patch("orchid.container_runner.cfg.get",
+               side_effect=_cfg_side_effect({"isolation.syscall_trace_enabled": True})):
+        cmd = ContainerRunner()._build_docker_command(tmp_path, "T-TRACE-2")
+        assert "--annotation" not in cmd
+
+    # Both set: annotations present, pointing at a per-task-id directory.
+    overrides = {"isolation.container_runtime": "runsc", "isolation.syscall_trace_enabled": True}
+    with patch("orchid.container_runner.cfg.get", side_effect=_cfg_side_effect(overrides)):
+        cmd = ContainerRunner()._build_docker_command(tmp_path, "T-TRACE-3")
+        annotations = [cmd[i + 1] for i, v in enumerate(cmd) if v == "--annotation"]
+        assert "dev.gvisor.flag.strace=true" in annotations
+        expected_dir = ContainerRunner._syscall_log_dir("T-TRACE-3")
+        assert f"dev.gvisor.flag.debug-log={expected_dir}/" in annotations
+        assert expected_dir.is_dir()  # created eagerly so the mount/annotation target exists
 
 
 def test_run_task_isolated_populates_additive_fields_on_no_docker_failure(tmp_path: Path) -> None:
