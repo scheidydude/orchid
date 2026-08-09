@@ -186,6 +186,26 @@ class FirecrackerRunner:
         self._start_guest_listener(proc)
         return _BootedVM(proc=proc, uds_path=uds_path, api_sock=api_sock)
 
+    def _spawn_bare_process(self, api_sock: Path) -> subprocess.Popen:
+        """Start a Firecracker process with no --config-file (P08 Phase 5).
+
+        Firecracker's own docs are explicit: a snapshot-load target
+        process must be pristine -- no boot-source/drives/machine-config
+        applied before the PUT /snapshot/load call. This is the restore
+        counterpart to _boot_vm(), which always boots fresh via a config
+        file; the two are not interchangeable.
+        """
+        proc = subprocess.Popen(
+            [str(self._bin_path()), "--api-sock", str(api_sock), "--no-seccomp"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        os.set_blocking(proc.stdout.fileno(), False)
+        return proc
+
     def _prepare_rootfs_copy(self, work_dir: Path) -> Path:
         """Per-task copy of the shared base rootfs image.
 
