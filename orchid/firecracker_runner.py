@@ -17,6 +17,17 @@ real contract parity (same TaskContext -> WorkerResult shape as
 ContainerRunner), not a full orchid worker_subprocess/agent loop running
 inside the guest — that would be a much larger, ContainerRunner-Phase-4-
 sized undertaking, not yet attempted.
+
+P08 Phase 6: checkpoint/resume. The guest handler also writes its result
+to /tmp/task_result.json, in addition to the vsock response -- Phase
+4/5 already proved that a checkpoint/restore cycle severs whatever
+vsock connection was open when it happened, so the *connection* can
+never be the durable record of a task's outcome. The file can be read
+back over a *fresh* connection after a restore, for any task, not just
+ones whose own command happens to redirect its own output somewhere.
+See firecracker_checkpoint.py for the checkpoint metadata store and
+FirecrackerRunner.checkpoint_task()/the checkpoint-aware branch in
+run_task_isolated() for how this is actually used.
 """
 
 from __future__ import annotations
@@ -38,9 +49,18 @@ from pathlib import Path
 from typing import Any
 
 from orchid import config as cfg
+from orchid import firecracker_snapshot as _snapshot
+from orchid.firecracker_checkpoint import FirecrackerCheckpoint, FirecrackerCheckpointStore
 from orchid.worker_protocol import TaskContext, WorkerResult
 
 logger = logging.getLogger(__name__)
+
+# Live VMs currently executing a task, keyed by task_id -- lets an
+# external caller (FirecrackerRunner.checkpoint_task(), P08 Phase 6)
+# find and pause/snapshot/kill a VM whose run_task_isolated() call is
+# still blocked waiting for a vsock response, in a different thread.
+_live_vms: dict[str, "_BootedVM"] = {}
+_live_vms_lock = threading.Lock()
 
 READY_MARKER = "job control turned off"
 VSOCK_PORT = 5252
@@ -49,6 +69,8 @@ VSOCK_GUEST_CID = 3
 # Runs once per vsock connection (socat's `fork` spawns a fresh interpreter
 # per client). Reads exactly one JSON line describing the command to run,
 # writes exactly one JSON line back with the result.
+TASK_RESULT_FILE = "/tmp/task_result.json"
+
 _GUEST_HANDLER_SRC = """\
 import json, subprocess, sys
 line = sys.stdin.readline()
@@ -62,6 +84,8 @@ except subprocess.TimeoutExpired:
     result = {"stdout": "", "stderr": "timed out", "exit_code": None, "success": False}
 except Exception as e:
     result = {"stdout": "", "stderr": str(e), "exit_code": None, "success": False}
+with open("/tmp/task_result.json", "w") as f:
+    json.dump(result, f)
 sys.stdout.write(json.dumps(result) + "\\n")
 sys.stdout.flush()
 """
@@ -105,11 +129,21 @@ class FirecrackerRunner:
                 error="Firecracker is not available (binary/kernel/rootfs missing)",
             )
 
+        # P08 Phase 6: a prior run of this exact task_id may have been
+        # checkpointed (see checkpoint_task() below) -- resume from it
+        # instead of booting fresh. This is the entire "resume" trigger:
+        # whatever re-attempts a task_id (a retry, a re-queue) gets this
+        # transparently, no separate API needed.
+        checkpoint = FirecrackerCheckpointStore().load_for_task(ctx.task_id)
+        if checkpoint is not None:
+            return self._resume_from_checkpoint(checkpoint, timeout_s)
+
         t0 = time.monotonic()
         work_dir = Path(f"/tmp/orchid-fc-{ctx.task_id}-{uuid.uuid4().hex[:8]}")
         work_dir.mkdir(parents=True, exist_ok=True)
 
         vm: _BootedVM | None = None
+        checkpointed = False
         try:
             vm = self._boot_vm(work_dir, timeout_s)
             if vm is None:
@@ -118,14 +152,152 @@ class FirecrackerRunner:
                     error="Firecracker microVM did not reach a ready guest shell in time",
                 )
 
+            with _live_vms_lock:
+                _live_vms[ctx.task_id] = vm
+
             response = self._send_task_over_vsock(
                 vm.uds_path, ctx.task_description, timeout_s
             )
             duration_s = time.monotonic() - t0
+
+            if response is None and FirecrackerCheckpointStore().has_checkpoint(ctx.task_id):
+                # checkpoint_task() ran concurrently, killed the VM (which
+                # is exactly what made the vsock read above return None),
+                # and already wrote the checkpoint record before doing so.
+                checkpointed = True
+                return WorkerResult(
+                    task_id=ctx.task_id, success=False,
+                    error="Task checkpointed mid-execution",
+                    duration_s=duration_s, checkpoint_id=ctx.task_id,
+                )
+
             return self._worker_result_from_response(ctx.task_id, response, duration_s)
         finally:
-            self._shutdown(vm.proc if vm else None)
+            with _live_vms_lock:
+                _live_vms.pop(ctx.task_id, None)
+            if not checkpointed:
+                self._shutdown(vm.proc if vm else None)
+                shutil.rmtree(work_dir, ignore_errors=True)
+            # else: checkpoint_task() already killed the VM and the
+            # work_dir must survive -- it's exactly what the checkpoint
+            # references (see firecracker_checkpoint.py).
+
+    def checkpoint_task(self, task_id: str) -> bool:
+        """Pause, snapshot, and kill a live task's VM (P08 Phase 6).
+
+        Callable from any thread while the task's own run_task_isolated()
+        call is still blocked in another thread waiting for a vsock
+        response -- killing the VM here is what unblocks it (Phase 4/5
+        already proved a killed connection surfaces as a clean EOF on the
+        reading side). Returns False if the task isn't a live Firecracker
+        VM (already finished, never started, or run by a different
+        backend) -- checked by the caller before falling back to another
+        suspend mechanism.
+        """
+        with _live_vms_lock:
+            vm = _live_vms.get(task_id)
+        if vm is None:
+            return False
+
+        if not _snapshot.pause_vm(vm.api_sock):
+            logger.warning("checkpoint_task(%s): pause failed", task_id)
+            return False
+
+        work_dir = vm.uds_path.parent
+        snapshot_path = work_dir / "snapshot_file"
+        mem_path = work_dir / "mem_file"
+        if not _snapshot.create_snapshot(vm.api_sock, snapshot_path, mem_path):
+            logger.warning("checkpoint_task(%s): snapshot failed", task_id)
+            _snapshot.resume_vm(vm.api_sock)
+            return False
+
+        # Write the checkpoint record BEFORE killing -- run_task_isolated()'s
+        # waiting thread only unblocks once the kill actually lands, so by
+        # then this is guaranteed to already be on disk (no race).
+        checkpoint = FirecrackerCheckpoint(
+            task_id=task_id,
+            work_dir=str(work_dir),
+            snapshot_path=str(snapshot_path),
+            mem_file_path=str(mem_path),
+            rootfs_path=str(work_dir / "rootfs.ext4"),
+            vsock_uds_path=str(vm.uds_path),
+        )
+        FirecrackerCheckpointStore().save(checkpoint)
+
+        vm.proc.kill()
+        try:
+            vm.proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        logger.info("checkpoint_task(%s): checkpointed and killed", task_id)
+        return True
+
+    def resume_task(self, task_id: str, timeout_s: float | None = None) -> WorkerResult | None:
+        """Direct resume entry point for orchid.runner.BackgroundRunner
+        (P08 Phase 6) -- unlike run_task_isolated(), takes just a task_id,
+        no TaskContext, since _resume_from_checkpoint() never needs
+        anything from the original context beyond the task_id already
+        recorded in the checkpoint itself. Returns None if no checkpoint
+        exists for task_id (caller falls back to another resume path).
+        """
+        checkpoint = FirecrackerCheckpointStore().load_for_task(task_id)
+        if checkpoint is None:
+            return None
+        return self._resume_from_checkpoint(checkpoint, timeout_s)
+
+    def _resume_from_checkpoint(
+        self, checkpoint: FirecrackerCheckpoint, timeout_s: float | None
+    ) -> WorkerResult:
+        t0 = time.monotonic()
+        work_dir = Path(checkpoint.work_dir)
+        new_api_sock = work_dir / f"api-restored-{uuid.uuid4().hex[:8]}.sock"
+        new_proc = self._spawn_bare_process(new_api_sock)
+
+        self._wait_for_file(new_api_sock, timeout_s=5.0)
+        loaded = self._retry_load_snapshot(new_api_sock, checkpoint, timeout_s=5.0)
+
+        if not loaded:
+            self._shutdown(new_proc)
             shutil.rmtree(work_dir, ignore_errors=True)
+            FirecrackerCheckpointStore().delete(checkpoint.task_id)
+            return WorkerResult(
+                task_id=checkpoint.task_id, success=False,
+                error="Failed to load Firecracker checkpoint into a new process",
+            )
+
+        response = self._read_task_result_file(
+            Path(checkpoint.vsock_uds_path), timeout_s or 30.0
+        )
+        duration_s = time.monotonic() - t0
+        result = self._worker_result_from_response(checkpoint.task_id, response, duration_s)
+
+        self._shutdown(new_proc)
+        shutil.rmtree(work_dir, ignore_errors=True)
+        FirecrackerCheckpointStore().delete(checkpoint.task_id)
+        return result
+
+    def _read_task_result_file(self, uds_path: Path, timeout_s: float) -> dict | None:
+        """Fresh vsock connection, poll TASK_RESULT_FILE until it exists
+        (the restored task may still be finishing) or timeout_s elapses."""
+        deadline = time.monotonic() + timeout_s
+        poll_iterations = max(1, int(timeout_s / 0.1))
+        cmd = (
+            f"for i in $(seq 1 {poll_iterations}); do "
+            f"[ -f {TASK_RESULT_FILE} ] && break; sleep 0.1; done; cat {TASK_RESULT_FILE}"
+        )
+        while time.monotonic() < deadline:
+            response = self._send_task_over_vsock(uds_path, cmd, timeout_s)
+            if response is None:
+                time.sleep(0.2)
+                continue
+            stdout = response.get("stdout", "").strip()
+            if not stdout:
+                return None
+            try:
+                return json.loads(stdout)
+            except json.JSONDecodeError:
+                return None
+        return None
 
     # -- internals ------------------------------------------------------
 
@@ -256,6 +428,29 @@ class FirecrackerRunner:
             if proc.poll() is not None:
                 return None
         return None
+
+    @staticmethod
+    def _wait_for_file(path: Path, timeout_s: float) -> bool:
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            if path.exists():
+                return True
+            time.sleep(0.02)
+        return path.exists()
+
+    @staticmethod
+    def _retry_load_snapshot(
+        api_sock: Path, checkpoint: FirecrackerCheckpoint, timeout_s: float
+    ) -> bool:
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            if _snapshot.load_snapshot(
+                api_sock, Path(checkpoint.snapshot_path), Path(checkpoint.mem_file_path),
+                Path(checkpoint.vsock_uds_path), resume_vm=True,
+            ):
+                return True
+            time.sleep(0.1)
+        return False
 
     def _start_guest_listener(self, proc: subprocess.Popen) -> None:
         b64 = base64.b64encode(_GUEST_HANDLER_SRC.encode()).decode()

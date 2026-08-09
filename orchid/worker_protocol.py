@@ -49,6 +49,11 @@ class WorkerResult:
     stderr: str = ""
     exit_code: int | None = None
     syscall_log_path: str = ""  # P07 Phase 5: gVisor debug-log dir, when syscall tracing is enabled
+    # P08 Phase 6: set (to task_id) when a Firecracker task was checkpointed
+    # rather than completed -- success=False, but this isn't a normal
+    # failure: re-attempting the same task_id will resume from the
+    # checkpoint instead of booting fresh. "" for every other outcome.
+    checkpoint_id: str = ""
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))

@@ -153,10 +153,34 @@ class BackgroundRunner:
             pass
 
     # -- Phase 4: suspend / resume --
+    #
+    # P08 Phase 6: a third branch, tried after in-process/subprocess-pool,
+    # for tasks running under isolation.firecracker_enabled. There's no
+    # task-level state machine to hook a "CHECKPOINT" status into (see
+    # project-08-firecracker-sandbox/findings.md) -- this existing
+    # suspend/resume surface is Orchid's real "pause a running task"
+    # entry point, so it's the correct integration point, not a new one.
+    #
+    # Semantically different from the other two: SIGSTOP/in-process-park
+    # truly freeze a live call in place, and resume just unblocks the
+    # *same* call. Firecracker's checkpoint kills the VM outright
+    # (Phase 4/5 found no clean way to pause-in-place across an
+    # observable connection) -- "resume" here means loading the snapshot
+    # into a new process and running the remainder of the task to
+    # completion synchronously, right here, not unblocking anything.
+    # It can take real wall-clock time, unlike the near-instant SIGCONT
+    # path. The resulting WorkerResult is logged but not (yet) threaded
+    # into task_metrics.jsonl/TaskStatus -- doing that would mean
+    # changing orchestrator.py's shared scheduling code, which is exactly
+    # the elevated-risk territory this phase's own handoff flagged; the
+    # two existing suspend/resume paths don't write task_metrics on
+    # suspend/resume either (only at a task's normal end), so this
+    # matches existing behavior rather than falling short of it.
 
     def suspend_task(self, task_id: str) -> bool:
         """Suspend a running task. In-process agents pause at iteration boundary;
-        subprocess pool workers receive SIGSTOP. Returns True if found."""
+        subprocess pool workers receive SIGSTOP; Firecracker-backed tasks are
+        checkpointed (paused, snapshotted, killed). Returns True if found."""
         from orchid import agent_registry as _ar
         from orchid.subprocess_runner import pool_suspend_task
         agent = _ar.get(task_id)
@@ -166,6 +190,10 @@ class BackgroundRunner:
             return True
         if pool_suspend_task(task_id):
             logger.info("[runner] Suspended subprocess task %s via SIGSTOP", task_id)
+            return True
+        from orchid.firecracker_runner import FirecrackerRunner
+        if FirecrackerRunner().checkpoint_task(task_id):
+            logger.info("[runner] Checkpointed Firecracker task %s", task_id)
             return True
         return False
 
@@ -181,15 +209,26 @@ class BackgroundRunner:
         if pool_resume_task(task_id):
             logger.info("[runner] Resumed subprocess task %s via SIGCONT", task_id)
             return True
+        from orchid.firecracker_runner import FirecrackerRunner
+        result = FirecrackerRunner().resume_task(task_id)
+        if result is not None:
+            logger.info(
+                "[runner] Resumed Firecracker task %s from checkpoint: success=%s",
+                task_id, result.success,
+            )
+            return True
         return False
 
     def is_suspended(self, task_id: str) -> bool:
         from orchid import agent_registry as _ar
+        from orchid.firecracker_checkpoint import FirecrackerCheckpointStore
         from orchid.subprocess_runner import pool_is_suspended
         agent = _ar.get(task_id)
         if agent is not None:
             return getattr(agent, "_suspended", False)
-        return pool_is_suspended(task_id)
+        if pool_is_suspended(task_id):
+            return True
+        return FirecrackerCheckpointStore().has_checkpoint(task_id)
 
     # -- Orphan recovery (Phase 2) --
 

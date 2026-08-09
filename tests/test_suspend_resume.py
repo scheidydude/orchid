@@ -191,3 +191,56 @@ class TestAgentRegistryIntegration:
         runner._provider_concurrency = {}
 
         assert runner.suspend_task("T_UNKNOWN") is False
+
+
+class TestFirecrackerSuspendResumeIntegration:
+    """P08 Phase 6: BackgroundRunner's suspend/resume falls through to
+    Firecracker checkpoint/restore when no in-process agent or subprocess
+    pool worker is found for task_id."""
+
+    @staticmethod
+    def _bare_runner():
+        from orchid.runner import BackgroundRunner
+        runner = BackgroundRunner.__new__(BackgroundRunner)
+        runner._lock = threading.Lock()
+        runner._states = {}
+        runner._sem_lock = threading.Lock()
+        runner._semaphores = {}
+        runner._provider_concurrency = {}
+        return runner
+
+    def test_suspend_falls_through_to_firecracker_checkpoint(self):
+        from orchid.firecracker_runner import FirecrackerRunner
+        runner = self._bare_runner()
+        with patch.object(FirecrackerRunner, "checkpoint_task", return_value=True) as mock_ckpt:
+            assert runner.suspend_task("T_FC") is True
+            mock_ckpt.assert_called_once_with("T_FC")
+
+    def test_suspend_returns_false_when_firecracker_has_no_live_vm(self):
+        from orchid.firecracker_runner import FirecrackerRunner
+        runner = self._bare_runner()
+        with patch.object(FirecrackerRunner, "checkpoint_task", return_value=False):
+            assert runner.suspend_task("T_NONE") is False
+
+    def test_resume_falls_through_to_firecracker_restore(self):
+        from orchid.firecracker_runner import FirecrackerRunner
+        from orchid.worker_protocol import WorkerResult
+        runner = self._bare_runner()
+        fake_result = WorkerResult(task_id="T_FC", success=True, stdout="resumed\n")
+        with patch.object(FirecrackerRunner, "resume_task", return_value=fake_result) as mock_resume:
+            assert runner.resume_task("T_FC") is True
+            mock_resume.assert_called_once_with("T_FC")
+
+    def test_resume_returns_false_when_no_checkpoint_exists(self):
+        from orchid.firecracker_runner import FirecrackerRunner
+        runner = self._bare_runner()
+        with patch.object(FirecrackerRunner, "resume_task", return_value=None):
+            assert runner.resume_task("T_NONE") is False
+
+    def test_is_suspended_checks_firecracker_checkpoint_store(self):
+        from orchid.firecracker_checkpoint import FirecrackerCheckpointStore
+        runner = self._bare_runner()
+        with patch.object(FirecrackerCheckpointStore, "has_checkpoint", return_value=True):
+            assert runner.is_suspended("T_FC") is True
+        with patch.object(FirecrackerCheckpointStore, "has_checkpoint", return_value=False):
+            assert runner.is_suspended("T_NONE") is False

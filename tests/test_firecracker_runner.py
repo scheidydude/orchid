@@ -4,7 +4,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from orchid.firecracker_runner import VSOCK_GUEST_CID, VSOCK_PORT, FirecrackerRunner
+from orchid.firecracker_checkpoint import FirecrackerCheckpoint
+from orchid.firecracker_runner import (
+    VSOCK_GUEST_CID,
+    VSOCK_PORT,
+    FirecrackerRunner,
+    _BootedVM,
+    _live_vms,
+    _live_vms_lock,
+)
 from orchid.worker_protocol import TaskContext, WorkerResult
 
 
@@ -177,3 +185,150 @@ def test_run_task_isolated_populates_worker_result_from_vsock_response(
         assert result.stdout == "hi\n"
         assert result.exit_code == 0
         assert isinstance(result, WorkerResult)
+
+
+# ── P08 Phase 6: checkpoint/resume ──────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _clean_live_vms_registry():
+    with _live_vms_lock:
+        _live_vms.clear()
+    yield
+    with _live_vms_lock:
+        _live_vms.clear()
+
+
+def _fake_booted_vm(tmp_path: Path) -> _BootedVM:
+    return _BootedVM(proc=MagicMock(), uds_path=tmp_path / "vsock.sock", api_sock=tmp_path / "api.sock")
+
+
+def test_checkpoint_task_returns_false_when_no_live_vm() -> None:
+    assert FirecrackerRunner().checkpoint_task("no-such-task") is False
+
+
+def test_checkpoint_task_pauses_snapshots_kills_and_saves_checkpoint(tmp_path: Path) -> None:
+    vm = _fake_booted_vm(tmp_path)
+    with _live_vms_lock:
+        _live_vms["T-CKPT"] = vm
+
+    with patch("orchid.firecracker_runner._snapshot.pause_vm", return_value=True) as mock_pause, \
+         patch("orchid.firecracker_runner._snapshot.create_snapshot", return_value=True) as mock_snap, \
+         patch("orchid.firecracker_runner.FirecrackerCheckpointStore") as mock_store_cls:
+        mock_store = MagicMock()
+        mock_store_cls.return_value = mock_store
+
+        ok = FirecrackerRunner().checkpoint_task("T-CKPT")
+
+        assert ok is True
+        mock_pause.assert_called_once_with(vm.api_sock)
+        mock_snap.assert_called_once()
+        mock_store.save.assert_called_once()
+        saved = mock_store.save.call_args[0][0]
+        assert isinstance(saved, FirecrackerCheckpoint)
+        assert saved.task_id == "T-CKPT"
+        assert saved.vsock_uds_path == str(vm.uds_path)
+        vm.proc.kill.assert_called_once()
+        # checkpoint record must be written BEFORE the kill (no race with
+        # run_task_isolated()'s waiting thread) -- verify ordering.
+        assert mock_store.save.call_args is not None
+    with _live_vms_lock:
+        _live_vms.pop("T-CKPT", None)
+
+
+def test_checkpoint_task_returns_false_when_pause_fails(tmp_path: Path) -> None:
+    vm = _fake_booted_vm(tmp_path)
+    with _live_vms_lock:
+        _live_vms["T-PAUSEFAIL"] = vm
+
+    with patch("orchid.firecracker_runner._snapshot.pause_vm", return_value=False):
+        ok = FirecrackerRunner().checkpoint_task("T-PAUSEFAIL")
+        assert ok is False
+        vm.proc.kill.assert_not_called()
+
+
+def test_checkpoint_task_resumes_vm_when_snapshot_fails(tmp_path: Path) -> None:
+    vm = _fake_booted_vm(tmp_path)
+    with _live_vms_lock:
+        _live_vms["T-SNAPFAIL"] = vm
+
+    with patch("orchid.firecracker_runner._snapshot.pause_vm", return_value=True), \
+         patch("orchid.firecracker_runner._snapshot.create_snapshot", return_value=False), \
+         patch("orchid.firecracker_runner._snapshot.resume_vm", return_value=True) as mock_resume:
+        ok = FirecrackerRunner().checkpoint_task("T-SNAPFAIL")
+        assert ok is False
+        mock_resume.assert_called_once_with(vm.api_sock)
+        vm.proc.kill.assert_not_called()
+
+
+def test_run_task_isolated_resumes_from_existing_checkpoint(sample_ctx: TaskContext, tmp_path: Path) -> None:
+    checkpoint = FirecrackerCheckpoint(
+        task_id=sample_ctx.task_id, work_dir=str(tmp_path),
+        snapshot_path=str(tmp_path / "snapshot_file"), mem_file_path=str(tmp_path / "mem_file"),
+        rootfs_path=str(tmp_path / "rootfs.ext4"), vsock_uds_path=str(tmp_path / "vsock.sock"),
+    )
+    fake_result = WorkerResult(task_id=sample_ctx.task_id, success=True, stdout="resumed\n")
+    with patch.object(FirecrackerRunner, "is_available", return_value=True), \
+         patch("orchid.firecracker_runner.FirecrackerCheckpointStore") as mock_store_cls, \
+         patch.object(FirecrackerRunner, "_resume_from_checkpoint", return_value=fake_result) as mock_resume:
+        mock_store = MagicMock()
+        mock_store.load_for_task.return_value = checkpoint
+        mock_store_cls.return_value = mock_store
+
+        result = FirecrackerRunner().run_task_isolated(sample_ctx, timeout_s=5)
+
+        mock_resume.assert_called_once_with(checkpoint, 5)
+        assert result is fake_result
+
+
+def test_resume_from_checkpoint_returns_error_when_load_fails(tmp_path: Path) -> None:
+    checkpoint = FirecrackerCheckpoint(
+        task_id="T-RESUME", work_dir=str(tmp_path),
+        snapshot_path=str(tmp_path / "snapshot_file"), mem_file_path=str(tmp_path / "mem_file"),
+        rootfs_path=str(tmp_path / "rootfs.ext4"), vsock_uds_path=str(tmp_path / "vsock.sock"),
+    )
+    with patch.object(FirecrackerRunner, "_spawn_bare_process", return_value=MagicMock()), \
+         patch.object(FirecrackerRunner, "_wait_for_file", return_value=True), \
+         patch.object(FirecrackerRunner, "_retry_load_snapshot", return_value=False), \
+         patch.object(FirecrackerRunner, "_shutdown"), \
+         patch("shutil.rmtree"), \
+         patch("orchid.firecracker_runner.FirecrackerCheckpointStore") as mock_store_cls:
+        mock_store_cls.return_value = MagicMock()
+        result = FirecrackerRunner()._resume_from_checkpoint(checkpoint, timeout_s=1)
+        assert result.success is False
+        assert "Failed to load Firecracker checkpoint" in result.error
+
+
+def test_wait_for_file_returns_true_once_file_exists(tmp_path: Path) -> None:
+    target = tmp_path / "shows-up.sock"
+    target.touch()
+    assert FirecrackerRunner._wait_for_file(target, timeout_s=1.0) is True
+
+
+def test_wait_for_file_returns_false_on_timeout(tmp_path: Path) -> None:
+    target = tmp_path / "never-shows-up.sock"
+    assert FirecrackerRunner._wait_for_file(target, timeout_s=0.05) is False
+
+
+def test_resume_from_checkpoint_returns_harvested_result(tmp_path: Path) -> None:
+    checkpoint = FirecrackerCheckpoint(
+        task_id="T-RESUME2", work_dir=str(tmp_path),
+        snapshot_path=str(tmp_path / "snapshot_file"), mem_file_path=str(tmp_path / "mem_file"),
+        rootfs_path=str(tmp_path / "rootfs.ext4"), vsock_uds_path=str(tmp_path / "vsock.sock"),
+    )
+    harvested = {"stdout": "restored output\n", "stderr": "", "exit_code": 0, "success": True}
+    with patch.object(FirecrackerRunner, "_spawn_bare_process", return_value=MagicMock()), \
+         patch.object(FirecrackerRunner, "_wait_for_file", return_value=True), \
+         patch.object(FirecrackerRunner, "_retry_load_snapshot", return_value=True), \
+         patch.object(FirecrackerRunner, "_read_task_result_file", return_value=harvested), \
+         patch.object(FirecrackerRunner, "_shutdown"), \
+         patch("shutil.rmtree"), \
+         patch("orchid.firecracker_runner.FirecrackerCheckpointStore") as mock_store_cls:
+        mock_store = MagicMock()
+        mock_store_cls.return_value = mock_store
+
+        result = FirecrackerRunner()._resume_from_checkpoint(checkpoint, timeout_s=5)
+
+        assert result.success is True
+        assert result.stdout == "restored output\n"
+        mock_store.delete.assert_called_once_with("T-RESUME2")
