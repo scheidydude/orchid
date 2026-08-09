@@ -71,6 +71,13 @@ class FirecrackerRunnerError(Exception):
     pass
 
 
+@dataclasses.dataclass
+class _BootedVM:
+    proc: subprocess.Popen
+    uds_path: Path      # vsock UDS, for task request/response
+    api_sock: Path       # Firecracker's own management API (pause/snapshot/resume)
+
+
 class FirecrackerRunner:
     """Run a task inside a short-lived Firecracker microVM."""
 
@@ -101,23 +108,23 @@ class FirecrackerRunner:
         t0 = time.monotonic()
         work_dir = Path(f"/tmp/orchid-fc-{ctx.task_id}-{uuid.uuid4().hex[:8]}")
         work_dir.mkdir(parents=True, exist_ok=True)
-        proc: subprocess.Popen | None = None
 
+        vm: _BootedVM | None = None
         try:
-            proc, uds_path = self._boot_vm(work_dir, timeout_s)
-            if proc is None:
+            vm = self._boot_vm(work_dir, timeout_s)
+            if vm is None:
                 return WorkerResult(
                     task_id=ctx.task_id, success=False,
                     error="Firecracker microVM did not reach a ready guest shell in time",
                 )
 
             response = self._send_task_over_vsock(
-                uds_path, ctx.task_description, timeout_s
+                vm.uds_path, ctx.task_description, timeout_s
             )
             duration_s = time.monotonic() - t0
             return self._worker_result_from_response(ctx.task_id, response, duration_s)
         finally:
-            self._shutdown(proc)
+            self._shutdown(vm.proc if vm else None)
             shutil.rmtree(work_dir, ignore_errors=True)
 
     # -- internals ------------------------------------------------------
@@ -145,13 +152,15 @@ class FirecrackerRunner:
 
     def _boot_vm(
         self, work_dir: Path, timeout_s: float | None
-    ) -> tuple[subprocess.Popen | None, Path | None]:
+    ) -> _BootedVM | None:
         """Boot a microVM and bootstrap its guest vsock listener.
 
-        Shared by run_task_isolated() (boot-use-discard) and
-        FirecrackerPool (pre-boot many, hand out warm ones on demand) --
-        the whole point of Phase 3's pool is to move this exact call off
-        the request path, so it must not embed any per-task assumptions.
+        Shared by run_task_isolated() (boot-use-discard), FirecrackerPool
+        (pre-boot many, hand out warm ones on demand), and the snapshot
+        path (P08 Phase 4/5, needs the returned api_sock to pause/
+        snapshot/resume the VM) -- the whole point of Phase 3's pool was
+        to move this exact call off the request path, so it must not
+        embed any per-task or per-feature assumptions.
         """
         rootfs_copy = self._prepare_rootfs_copy(work_dir)
         cfg_path, uds_path = self._write_vm_config(work_dir, rootfs_copy)
@@ -172,10 +181,10 @@ class FirecrackerRunner:
         buf = self._wait_for_ready(proc, boot_deadline)
         if buf is None:
             self._shutdown(proc)
-            return None, None
+            return None
 
         self._start_guest_listener(proc)
-        return proc, uds_path
+        return _BootedVM(proc=proc, uds_path=uds_path, api_sock=api_sock)
 
     def _prepare_rootfs_copy(self, work_dir: Path) -> Path:
         """Per-task copy of the shared base rootfs image.
@@ -323,6 +332,7 @@ class FirecrackerRunner:
 class _WarmVM:
     proc: subprocess.Popen
     uds_path: Path
+    api_sock: Path
     work_dir: Path
     booted_at: float
 
@@ -413,11 +423,12 @@ class FirecrackerPool:
     def _boot_one(self, label: str, timeout_s: float | None) -> _WarmVM | None:
         work_dir = Path(f"/tmp/orchid-fc-{label}-{uuid.uuid4().hex[:8]}")
         work_dir.mkdir(parents=True, exist_ok=True)
-        proc, uds_path = self._runner._boot_vm(work_dir, timeout_s)
-        if proc is None:
+        booted = self._runner._boot_vm(work_dir, timeout_s)
+        if booted is None:
             shutil.rmtree(work_dir, ignore_errors=True)
             return None
-        return _WarmVM(proc=proc, uds_path=uds_path, work_dir=work_dir, booted_at=time.monotonic())
+        return _WarmVM(proc=booted.proc, uds_path=booted.uds_path, api_sock=booted.api_sock,
+                        work_dir=work_dir, booted_at=time.monotonic())
 
     def _spawn_warm_vm_async(self) -> None:
         def _boot() -> None:

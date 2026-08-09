@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from orchid.firecracker_runner import FirecrackerPool, FirecrackerRunner, _WarmVM
+from orchid.firecracker_runner import FirecrackerPool, FirecrackerRunner, _BootedVM, _WarmVM
 from orchid.worker_protocol import TaskContext, WorkerResult
 
 
@@ -24,7 +24,7 @@ def sample_ctx(tmp_path: Path) -> TaskContext:
 def _fake_boot_vm(work_dir: Path, timeout_s):
     """Stand-in for FirecrackerRunner._boot_vm: no real Firecracker process."""
     work_dir.mkdir(parents=True, exist_ok=True)
-    return object(), work_dir / "vsock.sock"
+    return _BootedVM(proc=object(), uds_path=work_dir / "vsock.sock", api_sock=work_dir / "api.sock")
 
 
 def _wait_until(predicate, timeout=2.0):
@@ -64,7 +64,7 @@ def test_submit_uses_a_warm_vm_and_replenishes(sample_ctx: TaskContext, tmp_path
          patch.object(FirecrackerRunner, "_send_task_over_vsock", return_value=fake_response) as mock_send, \
          patch.object(FirecrackerRunner, "_shutdown") as mock_shutdown:
         pool = FirecrackerPool(size=1, runner=runner)
-        vm = _WarmVM(proc=object(), uds_path=tmp_path / "vsock.sock",
+        vm = _WarmVM(proc=object(), uds_path=tmp_path / "vsock.sock", api_sock=tmp_path / "api.sock",
                      work_dir=tmp_path, booted_at=time.monotonic())
         pool._warm.put(vm)
 
@@ -94,7 +94,7 @@ def test_submit_cold_boots_a_fallback_when_pool_is_empty(sample_ctx: TaskContext
 
 def test_submit_returns_error_when_cold_boot_fallback_also_fails(sample_ctx: TaskContext) -> None:
     runner = FirecrackerRunner()
-    with patch.object(FirecrackerRunner, "_boot_vm", return_value=(None, None)):
+    with patch.object(FirecrackerRunner, "_boot_vm", return_value=None):
         pool = FirecrackerPool(size=1, runner=runner)
         result = pool.submit(sample_ctx, timeout_s=0.2)
         assert result.success is False
@@ -115,6 +115,7 @@ def test_shutdown_drains_and_shuts_down_all_warm_vms(tmp_path: Path) -> None:
         pool = FirecrackerPool(size=2, runner=runner)
         for i in range(2):
             pool._warm.put(_WarmVM(proc=object(), uds_path=tmp_path / f"v{i}.sock",
+                                    api_sock=tmp_path / f"a{i}.sock",
                                     work_dir=tmp_path, booted_at=time.monotonic()))
         pool.shutdown()
         assert pool.warm_count() == 0
