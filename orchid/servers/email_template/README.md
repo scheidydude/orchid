@@ -25,7 +25,7 @@ content source  →  agent curates  →  render_* tool   →  email MCP
 One Orchid task, one prompt, three tools called in sequence:
 1. **content** — fetch or search for source material
 2. **render_\*** (this server) — turn curated content into HTML
-3. **email send** — pass the returned HTML string as the message body
+3. **email send** — pass the returned HTML (or, in file mode, the returned file path as `html_body_file`) as the message body
 
 See `AGENT_PROMPT.md` for an example task prompt.
 
@@ -45,8 +45,13 @@ pre-knowledge required.
 | `render_alert_email` | `alert.html.j2` | Single urgent message: incidents, threshold breaches |
 | `render_recap_email` | `recap.html.j2` | Periodic summary: metric cards, highlights, detail sections |
 
-Every HTML render tool returns a complete HTML string. Pass it directly to the
-email-send tool as the body — nothing in between should touch it.
+Every HTML render tool returns a complete HTML string by default. Pass it
+directly to the email-send tool as the body — nothing in between should touch it.
+
+With `output="file"` (or `RENDER_OUTPUT=file`) the tool instead writes the HTML
+to a temp file and returns a message containing the path. Pass that path to the
+send tool as `html_body_file`, not `html_body`. Use this with local LLMs, which
+cannot reliably JSON-encode multi-KB HTML into a tool argument.
 
 ### Plain-text companions
 
@@ -88,6 +93,7 @@ template-specific required fields:
 | `logo_alt` | string | Alt text for the logo (recommended for accessibility). |
 | `unsubscribe_url` | string | Renders as an Unsubscribe link in the footer. |
 | `strip_subject_emoji` | bool | Strip emoji from the subject before rendering. Default `false`. |
+| `output` | `"html"` \| `"file"` | `html` returns the markup; `file` saves a temp file and returns its path for `html_body_file`. Default from `RENDER_OUTPUT` (else `html`). |
 
 Plain-text tools accept `unsubscribe_url` (renders as `Unsubscribe: <url>` in the footer) but not `preheader`, `logo_url`, or `logo_alt`.
 
