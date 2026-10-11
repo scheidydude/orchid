@@ -1,7 +1,7 @@
 # Single-prompt agent instructions for daily digest task
 
 Use this as the agent's task prompt in Orchid. It assumes the agent has
-three tools available: a search tool, this server's `render_email` tool,
+three tools available: a search tool, this server's `render_digest_email` tool,
 and an email-send tool (e.g. Gmail's send/create_draft, or SES).
 
 ---
@@ -16,24 +16,26 @@ You are running a daily AI/infra digest. Follow these steps in order:
    duplicate coverage. Group them into 2-4 logical sections with short,
    plain headings (e.g. "MCP & Agent Tooling", "Local Inference").
 
-3. **Render**: call the `render_email` tool with:
+3. **Render**: call the `render_digest_email` tool with:
    - `subject`: a short descriptive subject line including today's date
    - `sections`: your curated items, each with `title`, `summary` (1-3
      plain sentences, no markdown), `url`, `source`, and an optional `tag`
      (e.g. "new", "security") if it's notable
    - `intro`: one optional sentence framing the digest
    - `footer_note`: optional run stats (sources scanned, items found)
+   - `output`: `"file"` (saves the HTML to a temp file and returns its path)
 
    Do NOT write any HTML or markdown formatting yourself. Pass only plain
    text fields -- the tool handles all layout and styling.
 
-   If your search turned up nothing substantive, do not call `render_email`.
+   If your search turned up nothing substantive, do not call `render_digest_email`.
    Instead send a short plain-text email saying there were no notable
    updates today.
 
-4. **Send**: take the HTML string returned by `render_email` and pass it
-   directly as the body of the email-send tool, with the same subject line.
-   Do not modify, re-wrap, or re-summarize the returned HTML.
+4. **Send**: the render tool returns a message containing the path of the saved
+   HTML file. Pass that path as `html_body_file` to the email-send tool, with
+   the same subject line. Do NOT pass `html_body`, and do not read, modify,
+   re-wrap, or re-summarize the HTML.
 
 Recipient: [your email]
 Send time context: this runs once daily via scheduled task.
