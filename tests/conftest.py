@@ -54,3 +54,22 @@ def reset_agent_registry():
     ar._registry.clear()
     yield
     ar._registry.clear()
+
+
+@pytest.fixture(autouse=True)
+def isolate_provider_routing_env(monkeypatch):
+    """Neutralise provider-routing env vars that a developer's local .env sets.
+
+    ``orchid.config`` calls ``load_dotenv()`` on import, so a repo-root ``.env``
+    with ``ORCHID_<AGENT>_PROVIDER=local`` leaks into every test and forces
+    resolution to ``local``. Set to empty (not delete) so ``load_dotenv`` in
+    subprocess-based tests does not re-populate them; empty is treated as unset.
+    """
+    for var in (
+        "ORCHID_ORCHESTRATOR_PROVIDER",
+        "ORCHID_REVIEWER_PROVIDER",
+        "ORCHID_DEVELOPER_PROVIDER",
+        "ORCHID_RESEARCHER_PROVIDER",
+        "ORCHID_OFFLINE_MODE",
+    ):
+        monkeypatch.setenv(var, "")

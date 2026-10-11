@@ -554,15 +554,16 @@ class Orchestrator:
 
             # T113: Inject MCP tools into the agent's tool registry
             if self._mcp_manager is not None:
-                mcp_tools = self._mcp_manager.list_tools()
-                for tool in mcp_tools:
-                    def _make_mcp_tool_fn(adapter, tool_name: str) -> Callable[..., str]:
-                        def _fn(**kwargs: Any) -> str:
-                            result = adapter.call_tool(tool_name, kwargs)
-                            return str(result.content) if result else ""
-                        return _fn
-                    fn = _make_mcp_tool_fn(self._mcp_manager.get_adapter(tool.server_name) or self._mcp_manager, tool.name)
-                    agent.tools[tool.name] = fn
+                def _make_mcp_tool_fn(adapter, tool_name: str) -> Callable[..., str]:
+                    def _fn(**kwargs: Any) -> str:
+                        result = adapter.call_tool(tool_name, kwargs)
+                        return str(result.content) if result else ""
+                    return _fn
+
+                for _server, _server_tools in self._mcp_manager.list_tools_by_server().items():
+                    _adapter = self._mcp_manager.get_adapter(_server) or self._mcp_manager
+                    for tool in _server_tools:
+                        agent.tools[tool.name] = _make_mcp_tool_fn(_adapter, tool.name)
 
             # Wrap write_file to record paths (T045)
             _orig_write = agent.tools.get("write_file")
