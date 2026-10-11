@@ -53,6 +53,12 @@ to a temp file and returns a message containing the path. Pass that path to the
 send tool as `html_body_file`, not `html_body`. Use this with local LLMs, which
 cannot reliably JSON-encode multi-KB HTML into a tool argument.
 
+> **Orchid note:** this copy of the server defaults `RENDER_OUTPUT` to `file`
+> (set in `server.py` via `os.environ.setdefault`), so tools return a file path
+> unless you pass `output="html"` or set `RENDER_OUTPUT=html`. It also keeps a
+> deprecated `render_email` alias for `render_digest_email`. Everything else
+> tracks upstream (`mcp-servers/email-template`).
+
 ### Plain-text companions
 
 Each HTML tool has a plain-text counterpart for multipart MIME email. Pass
