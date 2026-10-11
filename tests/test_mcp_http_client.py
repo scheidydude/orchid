@@ -93,5 +93,73 @@ class TestHTTPMCPClient(unittest.TestCase):
         self.assertEqual(ctx.exception.code, -32601)
 
 
+def _sse(obj: dict) -> str:
+    return f"event: message\ndata: {json.dumps(obj)}\n\n"
+
+
+class TestStreamableHTTP(unittest.TestCase):
+    """Streamable HTTP behaviour: SSE bodies, session id, 202 notifications."""
+
+    def _client_with(self, responses):
+        route = respx.post("").mock(side_effect=responses)
+        client = HTTPMCPClient(url="https://example.test/mcp/")
+        return client, route
+
+    @respx.mock
+    def test_sse_session_id_and_notification(self):
+        init = httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream", "mcp-session-id": "sess-1"},
+            text=_sse({"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2025-03-26"}}),
+        )
+        notif = httpx.Response(202)
+        tools = httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            # a server notification precedes the real response and must be skipped
+            text=_sse({"jsonrpc": "2.0", "method": "notifications/message", "params": {}})
+            + _sse({"jsonrpc": "2.0", "id": 2, "result": {"tools": [{"name": "t", "inputSchema": {}}]}}),
+        )
+        client, route = self._client_with([init, notif, tools])
+        client.connect()
+
+        self.assertEqual([t.name for t in client.list_tools()], ["t"])
+        reqs = [c.request for c in route.calls]
+        self.assertIn("text/event-stream", reqs[0].headers["accept"])
+        self.assertNotIn("mcp-session-id", reqs[0].headers)
+        self.assertEqual(reqs[1].headers["mcp-session-id"], "sess-1")
+        self.assertEqual(reqs[2].headers["mcp-session-id"], "sess-1")
+        # notifications carry no id
+        self.assertNotIn("id", json.loads(reqs[1].content))
+        self.assertEqual(json.loads(reqs[1].content)["method"], "notifications/initialized")
+
+    @respx.mock
+    def test_disconnect_deletes_session(self):
+        init = httpx.Response(200, headers={"mcp-session-id": "sess-2"},
+                              json={"jsonrpc": "2.0", "id": 1, "result": {}})
+        empty_tools = httpx.Response(200, json={"jsonrpc": "2.0", "id": 2, "result": {"tools": []}})
+        client, _ = self._client_with([init, httpx.Response(202), empty_tools])
+        delete = respx.delete("").mock(return_value=httpx.Response(200))
+        client.connect()
+        client.disconnect()
+        self.assertTrue(delete.called)
+        self.assertEqual(delete.calls[0].request.headers["mcp-session-id"], "sess-2")
+
+    @respx.mock
+    def test_http_error_status_raises(self):
+        from orchid.mcp.client import MCPClientError
+
+        client, _ = self._client_with([httpx.Response(401, text="bad credentials")])
+        with self.assertRaises(MCPClientError) as ctx:
+            client.connect()
+        self.assertEqual(ctx.exception.code, 401)
+
+    def test_sse_without_matching_response_raises(self):
+        from orchid.mcp.client import MCPClientError
+
+        with self.assertRaises(MCPClientError):
+            HTTPMCPClient._parse_sse(_sse({"jsonrpc": "2.0", "id": 99, "result": {}}), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
