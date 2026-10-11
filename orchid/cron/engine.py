@@ -12,6 +12,37 @@ from orchid.cron.types import TaskRun
 logger = logging.getLogger(__name__)
 
 
+_DOW_NAMES = ("sun", "mon", "tue", "wed", "thu", "fri", "sat")
+
+
+def _cron_dow_to_names(value: str) -> str:
+    """Translate a standard-cron day-of-week field to APScheduler day names.
+
+    Standard cron numbers days 0/7=Sunday, 1=Monday ... 6=Saturday, but
+    APScheduler numbers 0=Monday ... 6=Sunday, so ``1-5`` would silently mean
+    Tue-Sat. Names are unambiguous in both, so numeric fields are expanded to
+    an explicit comma list of names. Fields that already use names are
+    returned unchanged.
+    """
+    if any(c.isalpha() for c in value):
+        return value
+    days: set[int] = set()
+    for part in value.split(","):
+        rng, _, step_s = part.partition("/")
+        step = int(step_s) if step_s else 1
+        if rng == "*":
+            lo, hi = 0, 6
+        elif "-" in rng:
+            lo_s, hi_s = rng.split("-", 1)
+            lo, hi = int(lo_s), int(hi_s)
+        else:
+            lo = int(rng)
+            hi = 6 if step_s else lo
+        days.update(d % 7 for d in range(lo, hi + 1, step))
+    return ",".join(_DOW_NAMES[d] for d in sorted(days))
+
+
+
 class CronEngine:
     """Manages scheduled task dispatch via APScheduler BackgroundScheduler.
 
@@ -63,7 +94,9 @@ class CronEngine:
                                    ("day", day), ("month", month),
                                    ("day_of_week", dow)]:
             if value != "*":
-                kwargs[field_name] = value
+                kwargs[field_name] = (
+                    _cron_dow_to_names(value) if field_name == "day_of_week" else value
+                )
         return kwargs
 
     def add_or_update_task(self, owner_id: str, task_dict: dict) -> None:

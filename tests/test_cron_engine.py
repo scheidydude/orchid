@@ -1,4 +1,5 @@
 import time
+from datetime import UTC
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -188,3 +189,36 @@ class TestCronEngineTaskManagement:
         )
         time.sleep(0.2)
         mock_run_task.assert_called_once_with("u1", {"task_id": "t1", "name": "T"})
+
+
+class TestCronDayOfWeek:
+    """Standard cron numbers Sunday=0/7, Monday=1; APScheduler numbers Monday=0."""
+
+    @pytest.mark.parametrize(
+        "field,expected",
+        [
+            ("1-5", "mon,tue,wed,thu,fri"),
+            ("0", "sun"),
+            ("7", "sun"),
+            ("0,6", "sun,sat"),
+            ("*/2", "sun,tue,thu,sat"),
+            ("1-5/2", "mon,wed,fri"),
+            ("mon-fri", "mon-fri"),
+        ],
+    )
+    def test_translates_numeric_dow(self, field, expected):
+        from orchid.cron.engine import _cron_dow_to_names
+
+        assert _cron_dow_to_names(field) == expected
+
+    def test_weekday_schedule_skips_weekend(self):
+        from datetime import datetime
+
+        from apscheduler.triggers.cron import CronTrigger
+
+        kwargs = CronEngine()._parse_cron_expression("0 9 * * 1-5")
+        trigger = CronTrigger(timezone=UTC, **kwargs)
+        # Fri 2026-10-09 -> next fire is Mon 2026-10-12 (not Sat 10-10)
+        nxt = trigger.get_next_fire_time(None, datetime(2026, 10, 9, 10, 0, tzinfo=UTC))
+        assert nxt.weekday() == 0
+        assert nxt.day == 12
