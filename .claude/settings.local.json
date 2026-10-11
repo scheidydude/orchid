@@ -53,7 +53,8 @@
       "Bash(tee /tmp/suite_run.txt)",
       "Bash(grep -v \"^$\")",
       "Bash(timeout 5 npx -y @resend/mcp-server)",
-      "Bash(ruff check *)"
+      "Bash(ruff check *)",
+      "Bash(python3 /tmp/claude-1000/-home-dave-LocalAI-orchid/5ea75005-1455-4399-afb9-99c4f3da96b4/scratchpad/apply_email_changes.py)"
     ]
   },
   "enabledMcpjsonServers": [
