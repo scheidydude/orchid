@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Infra Digest — June 20, 2026</title>
+</head>
+<body style="margin:0; padding:0; background-color:#f4f5f7; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+
+  <!-- Preheader (hidden, shows in inbox preview) -->
+  
+  <div style="display:none; max-height:0; overflow:hidden; mso-hide:all;">MCP registry updates, Bedrock pricing change, and 2 more</div>
+  
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f5f7;">
+    <tr>
+      <td align="center" style="padding: 24px 16px;">
+
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px; max-width:600px; background-color:#ffffff; border-radius:8px; overflow:hidden;">
+
+          <!-- Header bar -->
+          <tr>
+            <td style="background-color:#1a1f2e; padding:20px 28px;">
+              <span style="color:#ffffff; font-size:18px; font-weight:600; letter-spacing:0.2px;">AI Infra Digest — June 20, 2026</span>
+            </td>
+          </tr>
+
+          
+          <tr>
+            <td style="padding:20px 28px 4px 28px;">
+              <p style="margin:0; color:#444444; font-size:14px; line-height:1.5;">Here's what came up in today's scan across agentic AI, MCP/A2A, and inference infra.</p>
+            </td>
+          </tr>
+          
+
+          <!-- Sections -->
+          
+          <tr>
+            <td style="padding: 20px 28px 4px 28px;">
+              <p style="margin:0 0 4px 0; color:#1a1f2e; font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:0.6px; border-bottom:2px solid #e8eaed; padding-bottom:8px;">
+                MCP & Agent Tooling
+              </p>
+            </td>
+          </tr>
+
+          
+          <tr>
+            <td style="padding: 14px 28px; border-bottom:1px solid #f0f1f3;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="vertical-align:top;">
+                    <p style="margin:0 0 4px 0;">
+                      
+                      <a href="https://example.com/mcp-apps-update" style="color:#1a56db; font-size:15px; font-weight:600; text-decoration:none; line-height:1.4;">Anthropic publishes MCP Apps spec update</a>
+                      
+                      
+                      <span style="display:inline-block; margin-left:6px; padding:2px 8px; background-color:#eef2ff; color:#4338ca; font-size:11px; font-weight:600; border-radius:10px; text-transform:uppercase; vertical-align:middle;">new</span>
+                      
+                    </p>
+                    <p style="margin:0 0 4px 0; color:#555555; font-size:13.5px; line-height:1.5;">New guidance on third-party connector UX patterns, including consent flows for consumer-facing tools. Relevant if Orchid ever exposes agent tools externally.</p>
+                    
+                    <p style="margin:0; color:#9aa0a6; font-size:12px;">Anthropic Engineering Blog</p>
+                    
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          
+          <tr>
+            <td style="padding: 14px 28px; ">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="vertical-align:top;">
+                    <p style="margin:0 0 4px 0;">
+                      
+                      <a href="https://example.com/litellm-patch" style="color:#1a56db; font-size:15px; font-weight:600; text-decoration:none; line-height:1.4;">LiteLLM patches gateway auth bypass</a>
+                      
+                      
+                      <span style="display:inline-block; margin-left:6px; padding:2px 8px; background-color:#eef2ff; color:#4338ca; font-size:11px; font-weight:600; border-radius:10px; text-transform:uppercase; vertical-align:middle;">security</span>
+                      
+                    </p>
+                    <p style="margin:0 0 4px 0; color:#555555; font-size:13.5px; line-height:1.5;">Follow-up patch to a previously flagged CVE class. Worth a quick diff check against your gateway config if still tracking that advisory internally.</p>
+                    
+                    <p style="margin:0; color:#9aa0a6; font-size:12px;">GitHub Security Advisories</p>
+                    
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          
+          
+          <tr>
+            <td style="padding: 20px 28px 4px 28px;">
+              <p style="margin:0 0 4px 0; color:#1a1f2e; font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:0.6px; border-bottom:2px solid #e8eaed; padding-bottom:8px;">
+                Local Inference
+              </p>
+            </td>
+          </tr>
+
+          
+          <tr>
+            <td style="padding: 14px 28px; ">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="vertical-align:top;">
+                    <p style="margin:0 0 4px 0;">
+                      
+                      <a href="https://example.com/llamacpp-vulkan" style="color:#1a56db; font-size:15px; font-weight:600; text-decoration:none; line-height:1.4;">llama.cpp adds improved Vulkan batching</a>
+                      
+                      
+                    </p>
+                    <p style="margin:0 0 4px 0; color:#555555; font-size:13.5px; line-height:1.5;">Reports of 15-20% throughput gains on AMD GPUs with multi-request batching enabled. Could matter for your Qwen3.6 35B A3B setup on the NucBox.</p>
+                    
+                    <p style="margin:0; color:#9aa0a6; font-size:12px;">Hacker News</p>
+                    
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          
+          
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding: 20px 28px; background-color:#fafafa; border-top:1px solid #eeeeee;">
+              <p style="margin:0; color:#9aa0a6; font-size:12px; line-height:1.5;">
+                Sources scanned: 14 · Items surfaced: 4 · Run time: 42s<br>
+                Generated automatically by Orchid &middot; Jun 20, 2026 05:08 PM
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ subject }}</title>
+<style type="text/css">
+  @media (prefers-color-scheme: dark) {
+    .em-bg    { background-color: #111827 !important; }
+    .em-card  { background-color: #1f2937 !important; }
+    .em-hdr   { background-color: #0d1117 !important; }
+    .em-str   { color: #f9fafb !important; }
+    .em-txt   { color: #d1d5db !important; }
+    .em-muted { color: #9ca3af !important; }
+    .em-lnk   { color: #60a5fa !important; }
+    .em-ftr   { background-color: #111827 !important; border-top-color: #374151 !important; }
+    .em-lede  { border-left-color: #60a5fa !important; }
+    .em-cta   { background-color: #2563eb !important; }
+  }
+</style>
+</head>
+<body style="margin:0; padding:0; background-color:#f4f5f7; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+
+  {% if preheader %}
+  <div style="display:none; max-height:0; overflow:hidden; mso-hide:all;">{{ preheader }}</div>
+  {% endif %}
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" class="em-bg" style="background-color:#f4f5f7;">
+    <tr>
+      <td align="center" style="padding: 24px 16px;">
+
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" class="em-card" style="width:600px; max-width:600px; background-color:#ffffff; border-radius:8px; overflow:hidden;">
+
+          <!-- Header bar -->
+          <tr>
+            <td class="em-hdr" style="background-color:#1a1f2e; padding:20px 28px;">
+              {% if logo_url %}
+              <img src="{{ logo_url }}" alt="{{ logo_alt }}" height="32" border="0" style="display:block; margin-bottom:10px; max-width:160px; height:32px;">
+              {% endif %}
+              <span style="color:#ffffff; font-size:18px; font-weight:600; letter-spacing:0.2px;">{{ subject }}</span>
+            </td>
+          </tr>
+
+          <!-- Intro / lede -->
+          {% if intro %}
+          <tr>
+            <td style="padding:24px 28px 0 28px;">
+              <p class="em-str em-lede" style="margin:0; color:#1a1f2e; font-size:15px; font-weight:600; line-height:1.5; border-left:3px solid #1a56db; padding-left:12px;">{{ intro }}</p>
+            </td>
+          </tr>
+          {% endif %}
+
+          <!-- Body paragraphs -->
+          <tr>
+            <td style="padding:24px 28px {% if not cta_text %}28px{% else %}16px{% endif %} 28px;">
+              {% for para in paragraphs %}
+              <p class="em-txt" style="margin:0 0 {% if not loop.last %}16px{% else %}0{% endif %} 0; color:#333333; font-size:14.5px; line-height:1.65;">{{ para }}</p>
+              {% endfor %}
+            </td>
+          </tr>
+
+          <!-- CTA button (optional) -->
+          {% if cta_text and cta_url %}
+          <tr>
+            <td style="padding:8px 28px 28px 28px;">
+              <table role="presentation" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td class="em-cta" style="background-color:#1a56db; border-radius:6px;">
+                    <a href="{{ cta_url }}" style="display:inline-block; padding:12px 24px; color:#ffffff; font-size:14px; font-weight:600; text-decoration:none; letter-spacing:0.2px;">{{ cta_text }}</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          {% endif %}
+
+          <!-- Footer -->
+          <tr>
+            <td class="em-ftr" style="padding: 20px 28px; background-color:#fafafa; border-top:1px solid #eeeeee;">
+              <p class="em-muted" style="margin:0; color:#9aa0a6; font-size:12px; line-height:1.5;">
+                {% if footer_note %}{{ footer_note }}<br>{% endif %}
+                Generated automatically by Orchid &middot; {{ generated_at }} &middot; v{{ server_version }}
+                {% if unsubscribe_url %}
+                <br><a href="{{ unsubscribe_url }}" class="em-muted" style="color:#9aa0a6; text-decoration:underline; font-size:11px;">Unsubscribe</a>
+                {% endif %}
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
