@@ -552,3 +552,56 @@ class TestTaskExecutorNeverRaises:
         assert isinstance(run, TaskRun)
         assert run.status == "failure"
         assert "SystemExit" in run.error
+
+
+class TestDatePlaceholders:
+    NOW = __import__("datetime").datetime(2026, 10, 10, 21, 0)
+
+    def test_today_and_long(self):
+        from orchid.cron.executor import expand_date_placeholders as f
+
+        assert f("{today}", self.NOW) == "2026-10-10"
+        assert f("on {today_long}.", self.NOW) == "on October 10, 2026."
+
+    def test_offsets(self):
+        from orchid.cron.executor import expand_date_placeholders as f
+
+        assert f("pushed:>{today-30d}", self.NOW) == "pushed:>2026-09-10"
+        assert f("{today-2w}", self.NOW) == "2026-09-26"
+        assert f("{today+1d}", self.NOW) == "2026-10-11"
+
+    def test_unknown_braces_untouched(self):
+        from orchid.cron.executor import expand_date_placeholders as f
+
+        text = 'json {"a": 1} and {name} and {today-xd}'
+        assert f(text, self.NOW) == text
+
+    def test_agent_tool_expands_prompt(self):
+        from orchid.cron import executor
+
+        seen = {}
+
+        class _Prov:
+            def complete_with_tools(self, messages, tools, dispatch_fn, system, **kw):
+                seen["prompt"] = messages[0]["content"]
+                seen["system"] = system
+                return "ok"
+
+        class _Reg:
+            def resolve(self, agent_type):
+                return _Prov()
+
+        class _Adapter:
+            def connect(self): ...
+            def list_tools(self): return []
+
+        class _Mgr:
+            def get_adapter(self, name): return _Adapter()
+
+        with patch("orchid.providers.registry.get_registry", return_value=_Reg()), \
+             patch.object(executor, "_build_mcp_manager", return_value=_Mgr()):
+            out = executor._run_agent_tool(
+                {"servers": ["x"], "prompt": "since {today-1d} on {today}", "system": "It is {today_long}"}
+            )
+        assert out == "ok"
+        assert "{today" not in seen["prompt"] and "{today" not in seen["system"]

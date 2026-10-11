@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from orchid.cron.types import TaskRun, _utcnow
@@ -57,6 +59,35 @@ class TaskExecutionError(Exception):
     """Raised for known, non-retriable config errors."""
 
 
+_DATE_PLACEHOLDER = re.compile(r"\{(today|today_long)(?:([+-])(\d+)([dw]))?\}")
+
+
+def expand_date_placeholders(text: str, now: datetime | None = None) -> str:
+    """Replace date placeholders in a task prompt with real dates.
+
+    Local models have no clock and invent dates, so tasks use placeholders that
+    are filled in at run time (local time):
+
+      ``{today}``        2026-10-10
+      ``{today_long}``   October 10, 2026
+      ``{today-30d}``    date 30 days earlier (``d`` = days, ``w`` = weeks; ``+`` also works)
+
+    Unknown ``{...}`` text is left untouched.
+    """
+    base = now or datetime.now().astimezone()
+
+    def _sub(m: re.Match) -> str:
+        day = base
+        if m.group(2):
+            n = int(m.group(3)) * (7 if m.group(4) == "w" else 1)
+            day = base + timedelta(days=n if m.group(2) == "+" else -n)
+        if m.group(1) == "today_long":
+            return f"{day:%B} {day.day}, {day.year}"
+        return f"{day:%Y-%m-%d}"
+
+    return _DATE_PLACEHOLDER.sub(_sub, text)
+
+
 def _run_agent_prompt(config: dict, owner_id: str = "") -> str:
     """Execute an agent_prompt type task."""
     from orchid.providers.registry import get_registry
@@ -66,6 +97,7 @@ def _run_agent_prompt(config: dict, owner_id: str = "") -> str:
         raise TaskExecutionError(
             "agent_prompt config missing required field: 'prompt'"
         )
+    prompt = expand_date_placeholders(prompt)
 
     system_parts: list[str] = []
 
@@ -167,6 +199,7 @@ def _run_agent_tool(config: dict, owner_id: str = "") -> str:
     Config fields:
         servers        list[str]  Required. MCP server names from catalog/config.
         prompt         str        Required. Initial user message.
+                                  Supports {today}, {today_long}, {today-30d} (see expand_date_placeholders).
         system         str        Optional. System prompt override.
         provider       str        Optional. Provider key (defaults to registry resolve).
         max_tokens     int        Optional. Max tokens per API call (default 4096).
@@ -183,10 +216,11 @@ def _run_agent_tool(config: dict, owner_id: str = "") -> str:
     prompt = config.get("prompt", "").strip()
     if not prompt:
         raise TaskExecutionError("agent_tool config missing required field: 'prompt'")
+    prompt = expand_date_placeholders(prompt)
 
     max_iters  = int(config.get("max_iterations", _AGENT_TOOL_MAX_ITERS))
     max_tokens = int(config.get("max_tokens", _AGENT_TOOL_MAX_TOKENS))
-    system     = config.get("system", "You are a helpful assistant.")
+    system     = expand_date_placeholders(config.get("system", "You are a helpful assistant."))
 
     registry = get_registry()
     provider_key = config.get("provider", "").strip()
